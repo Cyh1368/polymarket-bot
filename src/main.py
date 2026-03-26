@@ -11,6 +11,7 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
+from .backtester import format_backtest_report, run_backtest
 from .edge_calculator import find_opportunities
 from .market_scanner import fetch_markets
 from .models import Prediction
@@ -69,10 +70,12 @@ async def run_cycle(
             question=market.question[:80],
         )
 
-        # Fetch news
-        articles = []
-        if news_key:
-            articles = await fetch_news(market.question, news_key)
+        # Fetch news (multi-source: free + paid if key provided)
+        articles = await fetch_news(
+            question=market.question,
+            api_key=news_key,
+            category=market.category,
+        )
 
         if len(articles) < 3:
             log_structured(
@@ -138,8 +141,18 @@ async def run_cycle(
 @click.option("--live", is_flag=True, default=False, help="Enable live trading")
 @click.option("--report", is_flag=True, default=False, help="Generate performance report")
 @click.option("--backtest", is_flag=True, default=False, help="Run backtest on historical data")
+@click.option("--backtest-markets", default=20, type=int, help="Number of markets to backtest")
+@click.option("--backtest-category", default="", help="Filter backtest by category")
 @click.option("--once", is_flag=True, default=False, help="Run once instead of on schedule")
-def main(simulate: bool, live: bool, report: bool, backtest: bool, once: bool) -> None:
+def main(
+    simulate: bool,
+    live: bool,
+    report: bool,
+    backtest: bool,
+    backtest_markets: int,
+    backtest_category: str,
+    once: bool,
+) -> None:
     """Polymarket AI Prediction Trading Bot."""
     tracker = Tracker()
     risk_manager = RiskManager()
@@ -150,7 +163,13 @@ def main(simulate: bool, live: bool, report: bool, backtest: bool, once: bool) -
         return
 
     if backtest:
-        click.echo("Backtest mode not yet implemented.")
+        click.echo("Running backtest on resolved markets...")
+        results = asyncio.run(run_backtest(
+            tracker=tracker,
+            num_markets=backtest_markets,
+            category=backtest_category,
+        ))
+        click.echo(format_backtest_report(results))
         return
 
     # Safety: require explicit opt-in for live trading
