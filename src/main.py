@@ -42,13 +42,16 @@ async def run_cycle(
     tracker: Tracker,
     risk_manager: RiskManager,
     live: bool = False,
+    llm_provider: str = "",
+    llm_model: str = "",
 ) -> dict:
     """Run one full scan → estimate → trade cycle."""
+    provider = llm_provider or os.environ.get("LLM_PROVIDER", "claude")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
     news_key = os.environ.get("NEWS_API_KEY", "")
     polymarket_key = os.environ.get("POLYMARKET_API_KEY")
 
-    if not anthropic_key:
+    if provider == "claude" and not anthropic_key:
         log_structured(action="error", message="ANTHROPIC_API_KEY not set")
         return {"error": "ANTHROPIC_API_KEY not set"}
 
@@ -92,6 +95,8 @@ async def run_cycle(
             yes_price=market.yes_price,
             articles=articles,
             api_key=anthropic_key,
+            provider=provider,
+            model=llm_model,
         )
         predictions.append(prediction)
         tracker.save_prediction(prediction)
@@ -144,6 +149,8 @@ async def run_cycle(
 @click.option("--backtest-markets", default=20, type=int, help="Number of markets to backtest")
 @click.option("--backtest-category", default="", help="Filter backtest by category")
 @click.option("--once", is_flag=True, default=False, help="Run once instead of on schedule")
+@click.option("--llm-provider", default="", help="LLM provider: 'claude' (default) or 'ollama'")
+@click.option("--llm-model", default="", help="Model name (e.g. qwen3.5:122b, llama3.3, claude-sonnet-4-20250514)")
 def main(
     simulate: bool,
     live: bool,
@@ -152,6 +159,8 @@ def main(
     backtest_markets: int,
     backtest_category: str,
     once: bool,
+    llm_provider: str,
+    llm_model: str,
 ) -> None:
     """Polymarket AI Prediction Trading Bot."""
     tracker = Tracker()
@@ -161,6 +170,16 @@ def main(
         rpt = tracker.generate_report()
         click.echo(json.dumps(rpt, indent=2))
         return
+
+    # Resolve provider for display
+    provider = llm_provider or os.environ.get("LLM_PROVIDER", "claude")
+    model = llm_model or os.environ.get(
+        "OLLAMA_MODEL" if provider == "ollama" else "CLAUDE_MODEL", ""
+    )
+    if provider == "ollama":
+        click.echo(f"Using local LLM: {model or 'qwen3.5:122b'} via Ollama")
+    elif model:
+        click.echo(f"Using Claude model: {model}")
 
     if backtest:
         click.echo("Running backtest on resolved markets...")
@@ -185,13 +204,25 @@ def main(
         click.echo("Running in SIMULATION mode (no real money)")
 
     if once:
-        result = asyncio.run(run_cycle(tracker, risk_manager, live=live))
+        result = asyncio.run(run_cycle(
+            tracker, risk_manager, live=live,
+            llm_provider=llm_provider, llm_model=llm_model,
+        ))
         click.echo(json.dumps(result, indent=2))
     else:
-        _run_scheduled(tracker, risk_manager, live=live)
+        _run_scheduled(
+            tracker, risk_manager, live=live,
+            llm_provider=llm_provider, llm_model=llm_model,
+        )
 
 
-def _run_scheduled(tracker: Tracker, risk_manager: RiskManager, live: bool) -> None:
+def _run_scheduled(
+    tracker: Tracker,
+    risk_manager: RiskManager,
+    live: bool,
+    llm_provider: str = "",
+    llm_model: str = "",
+) -> None:
     """Run the bot on a 4-hour schedule."""
     from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -199,7 +230,10 @@ def _run_scheduled(tracker: Tracker, risk_manager: RiskManager, live: bool) -> N
 
     def job():
         risk_manager.reset_daily()  # Reset at start of each cycle
-        result = asyncio.run(run_cycle(tracker, risk_manager, live=live))
+        result = asyncio.run(run_cycle(
+            tracker, risk_manager, live=live,
+            llm_provider=llm_provider, llm_model=llm_model,
+        ))
         log_structured(action="cycle_complete", **result)
 
     # Run immediately, then every 4 hours

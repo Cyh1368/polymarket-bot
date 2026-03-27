@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Polymarket Bot (simulate, single run)",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["/tmp/polymarket-bot-repo/run.py", "--simulate", "--once"],
+      "port": 8000
+    }
+  ]
+}
