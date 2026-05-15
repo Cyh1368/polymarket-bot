@@ -1,7 +1,11 @@
 __pycache__/
 *.pyc
 *.pyo
+.DS_Store
 data/*.db
+data/live_orderbooks/
+*.sqlite
+*.sqlite-*
 .env
 .pytest_cache/
-.venv
+.venv/
