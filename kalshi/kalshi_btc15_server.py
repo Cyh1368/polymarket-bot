@@ -46,7 +46,7 @@ def load_dotenv(path: Path = Path(".env")) -> None:
 
 load_dotenv()
 
-HOST = os.getenv("HOST", "127.0.0.1")
+HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8090"))
 BASE_URL = os.getenv("KALSHI_API_BASE_URL", "https://external-api.kalshi.com/trade-api/v2")
 SERIES_TICKER = os.getenv("KALSHI_SERIES_TICKER", "KXBTC15M")
