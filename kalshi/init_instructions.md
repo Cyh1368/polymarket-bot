@@ -1,0 +1,3 @@
+Write a python server at port 8090 that displays the odds and order book of kalshi's 15-minute bitcoin futures in real time. It should refresh every 10 seconds; in other words, you should fetch the odds every 10 seconds. It should also have a plot of odds vs. time that updates every time a new odds is fetched. Ensure smooth transition from one 15-minute contract to the next. Save the odds and orderbook of every contract over time to a individual CSV file with exact timestamps.
+
+Use the Kalshi API. https://docs.kalshi.com/api-reference/exchange/[specific-api-type] If you need an API key, fetch KALSHI_API_ID and KALSHI_PRIVATE_KEY from .env 
