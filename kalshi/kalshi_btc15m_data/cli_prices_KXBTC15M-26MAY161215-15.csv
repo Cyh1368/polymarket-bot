@@ -1,0 +1,4 @@
+timestamp_utc,kalshi_ticker,polymarket_ticker,kalshi_price,polymarket_price,kalshi_yes_bid,kalshi_yes_ask,kalshi_no_bid,kalshi_no_ask,polymarket_yes_bid,polymarket_yes_ask,polymarket_no_bid,polymarket_no_ask,arbitrage_direction,arbitrage_kalshi_price,arbitrage_polymarket_price,kalshi_spend,polymarket_spend,expected_profit,guaranteed_payout
+2026-05-16T16:06:09.864Z,KXBTC15M-26MAY161215-15,btc-updown-15m-1778947200,0.735,0.485,0.73,0.74,0.26,0.27,0.48,0.49,0.29,0.3,buy_kalshi_no_buy_polymarket_yes,0.27,0.49,0.35526315789473684,0.6447368421052632,0.3157894736842106,1.3157894736842106
+2026-05-16T16:11:15.169Z,KXBTC15M-26MAY161215-15,btc-updown-15m-1778947200,0.345,0.615,0.34,0.35,0.65,0.66,0.61,0.62,0.81,0.82,,,,,,0.0,
+2026-05-16T16:14:31.674Z,KXBTC15M-26MAY161215-15,btc-updown-15m-1778947200,0.13,0.355,0.12,0.14,0.86,0.88,0.35,0.36,0.9,0.91,,,,,,0.0,

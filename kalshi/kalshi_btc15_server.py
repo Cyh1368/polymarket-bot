@@ -7,6 +7,7 @@ import os
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -455,9 +456,16 @@ def polymarket_clob_orderbooks(market: dict[str, Any]) -> dict[str, Any]:
 
     up_index = outcomes.index("up") if "up" in outcomes else 0
     down_index = outcomes.index("down") if "down" in outcomes else 1
+    up_token = token_ids[up_index]
+    down_token = token_ids[down_index]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        up_future = executor.submit(clob_get, "/book", {"token_id": up_token})
+        down_future = executor.submit(clob_get, "/book", {"token_id": down_token})
+        up_book = up_future.result()
+        down_book = down_future.result()
     return {
-        "up": clob_get("/book", {"token_id": token_ids[up_index]}),
-        "down": clob_get("/book", {"token_id": token_ids[down_index]}),
+        "up": up_book,
+        "down": down_book,
     }
 
 
@@ -465,14 +473,10 @@ def make_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) -> dict[str
     yes_levels, no_levels = orderbook_levels(orderbook)
     best_yes_bid, best_yes_bid_qty = best_level(yes_levels)
     best_no_bid, best_no_bid_qty = best_level(no_levels)
-    yes_bid = market_price(market, "yes_bid_dollars", "yes_bid", "bid", "last_price") or best_yes_bid
-    yes_ask = market_price(market, "yes_ask_dollars", "yes_ask", "ask")
-    if yes_ask is None and best_no_bid is not None:
-        yes_ask = 1.0 - best_no_bid
-    no_bid = market_price(market, "no_bid_dollars", "no_bid") or best_no_bid
-    no_ask = market_price(market, "no_ask_dollars", "no_ask")
-    if no_ask is None and best_yes_bid is not None:
-        no_ask = 1.0 - best_yes_bid
+    yes_bid = best_yes_bid
+    yes_ask = invert_price(best_no_bid)
+    no_bid = best_no_bid
+    no_ask = invert_price(best_yes_bid)
     midpoint = None
     if yes_bid is not None and yes_ask is not None:
         midpoint = (yes_bid + yes_ask) / 2.0
@@ -521,14 +525,14 @@ def make_polymarket_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) 
     stats = (orderbook.get("marketData") or orderbook).get("stats") or {}
 
     yes_bid = (
-        nested_price(market.get("bestBidQuote"))
+        best_yes_bid
+        or nested_price(market.get("bestBidQuote"))
         or market_price(market, "bestBid", "best_bid")
-        or best_yes_bid
     )
     yes_ask = (
-        nested_price(market.get("bestAskQuote"))
+        best_yes_ask
+        or nested_price(market.get("bestAskQuote"))
         or market_price(market, "bestAsk", "best_ask")
-        or best_yes_ask
     )
     no_bid = best_no_bid if best_no_bid is not None else invert_price(yes_ask)
     no_ask = best_no_ask if best_no_ask is not None else invert_price(yes_bid)
@@ -678,7 +682,7 @@ def polling_loop() -> None:
                 STATE["consecutive_errors"] = int(STATE.get("consecutive_errors", 0)) + 1
                 STATE["last_traceback"] = traceback.format_exc(limit=3)
         elapsed = time.monotonic() - started
-        sleep_for = max(1.0, POLL_SECONDS - elapsed)
+        sleep_for = max(0.0, POLL_SECONDS - elapsed)
         with STATE_LOCK:
             STATE["next_fetch_at"] = seconds_from_now(sleep_for)
         time.sleep(sleep_for)

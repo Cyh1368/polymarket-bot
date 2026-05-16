@@ -1,0 +1,7 @@
+2026-05-16T14:18:23.718Z | Kalshi mid 21.50c YES 21.00c/22.00c NO 78.00c/79.00c | Polymarket mid 50.50c YES 50.00c/51.00c NO 77.00c/78.00c | arb asks K YES 22.00c + P NO 78.00c = 100.00c; K NO 79.00c + P YES 51.00c = 130.00c | no arb
+2026-05-16T14:18:25.637Z | Kalshi mid 21.50c YES 21.00c/22.00c NO 78.00c/79.00c | Polymarket mid 50.50c YES 50.00c/51.00c NO 76.00c/77.00c | arb asks K YES 22.00c + P NO 77.00c = 99.00c; K NO 79.00c + P YES 51.00c = 130.00c | ARB buy_kalshi_yes_buy_polymarket_no | legs Kalshi YES @ 22.00c + Polymarket NO @ 77.00c = 99.00c | Kalshi spend $0.2222 | Polymarket spend $0.7778 | profit $0.0101
+
+what you save in the csv remains the same, for the display instead of that I want
+
+14:18:23.7 | K + NP = 22 + 78 = 100 | NK + P = 79 + 51 = 130 | NO ARB
+14.18.25.6 | K + NP = 22 + 77 = 99  | NK + P = 79 + 51 = 130 | ARB K = $0.2222, NP = $0.7778, +$0.0101
