@@ -224,6 +224,14 @@ def kalshi_post_order(
     return order
 
 
+def is_kalshi_fok_liquidity_error(exc: Exception) -> bool:
+    text = str(exc)
+    return (
+        "fill_or_kill_insufficient_resting_volume" in text
+        or "insufficient resting volume" in text.lower()
+    )
+
+
 def kalshi_current_bid(ticker: str, side: str) -> float | None:
     orderbook = btc.kalshi_get(f"/markets/{ticker}/orderbook", {"depth": btc.ORDERBOOK_DEPTH})
     yes_levels, no_levels = btc.orderbook_levels(orderbook)
@@ -554,27 +562,34 @@ def trade_preflight(
     kalshi_snapshot: dict[str, Any],
     polymarket_market: dict[str, Any],
     arbitrage: dict[str, Any],
-    contracts: int,
+    max_contracts: int,
     min_adjusted_profit: float,
 ) -> dict[str, Any]:
     kalshi_side = arbitrage["kalshi_contract"].lower()
     polymarket_contract = arbitrage["polymarket_contract"]
     kalshi_price = arbitrage["kalshi_price"]
     fallback_poly_price = polymarket_execution_price(arbitrage["polymarket_price"])
-    poly_price, poly_liquidity, poly_plan = polymarket_execution_plan(
-        polymarket_market,
-        polymarket_contract,
-        contracts,
-    )
-    poly_order_price = poly_price or fallback_poly_price
-    total_cost = kalshi_price + poly_order_price
-    adjusted_profit = (1.0 / total_cost) - 1.0 if 0 < total_cost < 1 else 0.0
     kalshi_plan = kalshi_liquidity_plan_for_buy(
         str(kalshi_snapshot["ticker"]),
         kalshi_side,
         kalshi_price,
     )
     kalshi_liquidity = as_float(kalshi_plan.get("liquidity"))
+    poly_price, poly_liquidity, poly_plan = polymarket_execution_plan(
+        polymarket_market,
+        polymarket_contract,
+        max_contracts,
+    )
+    executable_contracts = min(max_contracts, int(kalshi_liquidity), int(poly_liquidity))
+    if executable_contracts > 0 and executable_contracts < max_contracts:
+        poly_price, poly_liquidity, poly_plan = polymarket_execution_plan(
+            polymarket_market,
+            polymarket_contract,
+            executable_contracts,
+        )
+    poly_order_price = poly_price or fallback_poly_price
+    total_cost = kalshi_price + poly_order_price
+    adjusted_profit = (1.0 / total_cost) - 1.0 if 0 < total_cost < 1 else 0.0
     vwap_price = poly_plan.get("vwap_price")
     vwap_total_cost = kalshi_price + vwap_price if isinstance(vwap_price, float) else None
     vwap_profit = (
@@ -584,23 +599,28 @@ def trade_preflight(
     )
 
     decision = "PLACE"
-    reason = "liquidity ok"
-    if poly_price is None:
+    reason = f"sizing {executable_contracts:g}/{max_contracts:g} contracts"
+    if executable_contracts <= 0:
         decision = "SKIP"
-        reason = f"Polymarket liquidity {poly_liquidity:g} < {contracts}"
+        if kalshi_liquidity < 1:
+            reason = f"Kalshi liquidity {kalshi_liquidity:g} < 1"
+        else:
+            reason = f"Polymarket liquidity {poly_liquidity:g} < 1"
+    elif poly_price is None:
+        decision = "SKIP"
+        reason = f"Polymarket liquidity {poly_liquidity:g} < {executable_contracts}"
     elif adjusted_profit <= min_adjusted_profit:
         decision = "SKIP"
         reason = (
             f"adjusted profit {cli.fmt_money(adjusted_profit)} "
             f"<= {cli.fmt_money(min_adjusted_profit)}"
         )
-    elif kalshi_liquidity < contracts:
-        decision = "SKIP"
-        reason = f"Kalshi liquidity {kalshi_liquidity:g} < {contracts}"
 
     return {
         "decision": decision,
         "reason": reason,
+        "contracts": executable_contracts,
+        "max_contracts": max_contracts,
         "kalshi_side": kalshi_side,
         "kalshi_price": kalshi_price,
         "kalshi_liquidity": kalshi_liquidity,
@@ -618,6 +638,7 @@ def trade_preflight(
 def format_preflight(preflight: dict[str, Any]) -> str:
     return (
         f"CHECK {preflight['decision']} {preflight['reason']} | "
+        f"size {preflight['contracts']:g}/{preflight['max_contracts']:g} | "
         f"K {preflight['kalshi_side'].upper()} @ {cli.fmt_display_cents(preflight['kalshi_price'])}c "
         f"liq {preflight['kalshi_liquidity']:g} | "
         f"P {preflight['polymarket_contract']} @ {cli.fmt_display_cents(preflight['polymarket_price'])}c "
@@ -686,7 +707,7 @@ def format_orderbook_debug(preflight: dict[str, Any], contracts: int, max_levels
             f"executable {kalshi_plan['liquidity']:g}; levels {kalshi_text}"
         ),
         (
-            f"BOOK P {poly_contract} buy size {contracts:g}; "
+            f"BOOK P {poly_contract} buy size {preflight['contracts']:g}/{contracts:g}; "
             f"asks {poly_text}; selected limit "
             f"{cli.fmt_display_cents(preflight['polymarket_price'])}c; "
             f"available {preflight['polymarket_liquidity']:g}"
@@ -723,13 +744,14 @@ def execute_arbitrage(
             min_adjusted_profit,
         )
     poly_order_price = preflight["polymarket_price"]
+    trade_contracts = int(preflight["contracts"])
     if not live:
         if preflight["decision"] != "PLACE":
             return f"DRY RUN would skip: {preflight['reason']}"
         return (
             "DRY RUN would place "
-            f"Kalshi {kalshi_side.upper()} {contracts} @ {cli.fmt_display_cents(kalshi_price)}c and "
-            f"Polymarket {polymarket_contract} {contracts} @ {cli.fmt_display_cents(poly_order_price)}c "
+            f"Kalshi {kalshi_side.upper()} {trade_contracts} @ {cli.fmt_display_cents(kalshi_price)}c and "
+            f"Polymarket {polymarket_contract} {trade_contracts} @ {cli.fmt_display_cents(poly_order_price)}c "
             f"({preflight['reason']})"
         )
 
@@ -748,15 +770,35 @@ def execute_arbitrage(
     if live_preflight["decision"] != "PLACE":
         return f"SKIP live recheck: {live_preflight['reason']}"
     poly_order_price = live_preflight["polymarket_price"]
+    trade_contracts = int(live_preflight["contracts"])
 
     client_order_id = f"btc15-arb-{uuid.uuid4().hex[:20]}"
-    kalshi_order = kalshi_post_order(
-        str(kalshi_snapshot["ticker"]),
-        kalshi_side,
-        kalshi_price,
-        contracts,
-        client_order_id,
-    )
+    try:
+        kalshi_order = kalshi_post_order(
+            str(kalshi_snapshot["ticker"]),
+            kalshi_side,
+            kalshi_price,
+            trade_contracts,
+            client_order_id,
+        )
+    except RuntimeError as exc:
+        if not is_kalshi_fok_liquidity_error(exc):
+            raise
+        try:
+            fresh_plan = kalshi_liquidity_plan_for_buy(
+                str(kalshi_snapshot["ticker"]),
+                kalshi_side,
+                kalshi_price,
+            )
+            fresh_liquidity = as_float(fresh_plan.get("liquidity"))
+            fresh_text = f"; fresh Kalshi liquidity {fresh_liquidity:g}"
+        except Exception as fresh_exc:
+            fresh_text = f"; fresh Kalshi liquidity check failed: {type(fresh_exc).__name__}: {fresh_exc}"
+        return (
+            "SKIP Kalshi FOK rejected after live recheck "
+            f"for {trade_contracts:g} {kalshi_side.upper()} @ {cli.fmt_display_cents(kalshi_price)}c"
+            f"{fresh_text}; {exc}"
+        )
     kalshi_filled = fill_count(kalshi_order)
     if kalshi_filled <= 0:
         return f"KALSHI NOT FILLED status={kalshi_order.get('status', '--')} id={kalshi_order.get('order_id', '--')}"
@@ -766,7 +808,7 @@ def execute_arbitrage(
         polymarket_execution_plan(
             polymarket_market,
             polymarket_contract,
-            contracts,
+            int(kalshi_filled),
         )
     )
     if post_kalshi_poly_price is None:
@@ -786,7 +828,7 @@ def execute_arbitrage(
             exit_text = f"KALSHI EXIT FAILED: {type(exit_exc).__name__}: {exit_exc}"
         raise FatalTradeError(
             "Polymarket hedge liquidity disappeared after Kalshi fill; "
-            f"Polymarket liquidity {post_kalshi_poly_liquidity:g} < {contracts}; "
+            f"Polymarket liquidity {post_kalshi_poly_liquidity:g} < {int(kalshi_filled)}; "
             f"Kalshi fill {kalshi_filled:g} @ {cli.fmt_display_cents(kalshi_fill_price)}c; "
             f"{exit_text}"
         )
@@ -822,7 +864,7 @@ def execute_arbitrage(
             polymarket_market,
             polymarket_contract,
             poly_order_price,
-            contracts,
+            int(kalshi_filled),
         )
     except Exception as exc:
         try:
@@ -893,7 +935,7 @@ def parse_args() -> argparse.Namespace:
         default=0.10,
         help="Minimum executable adjusted profit required before live or dry-run trade placement.",
     )
-    parser.add_argument("--contracts", type=int, default=1, help="Matched contracts/shares per leg.")
+    parser.add_argument("--contracts", type=int, default=1, help="Maximum matched contracts/shares per leg.")
     parser.add_argument("--max-trades", type=int, default=1, help="Maximum live arbitrage executions.")
     parser.add_argument("--live", action="store_true", help="Actually submit orders. Omit for dry-run.")
     parser.add_argument("--once", action="store_true", help="Run one polling cycle and exit.")
