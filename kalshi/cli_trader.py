@@ -22,6 +22,8 @@ class FatalTradeError(RuntimeError):
 POLYMARKET_MARKET_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 KALSHI_MARKET_CACHE: dict[str, dict[str, Any]] = {}
 SETTLEMENT_PAYOUT_AFTER_FEES = 0.98
+CONTRACT_WINDOW_SECONDS = 15 * 60
+CONTRACT_BOUNDARY_NO_TRADE_SECONDS = 30.0
 
 
 def http_json(
@@ -87,15 +89,50 @@ def format_usdc_base_units(value: Any) -> str:
     return cli.fmt_money(as_float(value) / 1_000_000.0)
 
 
-def kalshi_balance_summary() -> str:
+def kalshi_balance_dollars(value: Any, key: str) -> float:
+    number = as_float(value)
+    if "dollars" in key:
+        return number
+    if number >= 100:
+        return number / 100.0
+    return number
+
+
+def kalshi_balance_amounts() -> tuple[float, float | None]:
     data = http_json("GET", btc.BASE_URL, "/portfolio/balance", auth=True)
     balance = data.get("balance") if isinstance(data, dict) else None
     if isinstance(balance, dict):
+        cash_key = next(
+            (
+                key
+                for key in (
+                    "cash_balance_dollars",
+                    "cash_balance",
+                    "balance_dollars",
+                    "balance",
+                )
+                if balance.get(key) not in (None, "")
+            ),
+            "balance",
+        )
         cash = (
             balance.get("cash_balance_dollars")
             or balance.get("cash_balance")
             or balance.get("balance_dollars")
             or balance.get("balance")
+        )
+        available_key = next(
+            (
+                key
+                for key in (
+                    "available_balance_dollars",
+                    "available_balance",
+                    "cash_available_dollars",
+                    "cash_available",
+                )
+                if balance.get(key) not in (None, "")
+            ),
+            "",
         )
         available = (
             balance.get("available_balance_dollars")
@@ -104,14 +141,27 @@ def kalshi_balance_summary() -> str:
             or balance.get("cash_available")
         )
     else:
+        cash_key = "balance"
         cash = data.get("balance") if isinstance(data, dict) else None
+        available_key = "available_balance"
         available = data.get("available_balance") if isinstance(data, dict) else None
+    cash_dollars = kalshi_balance_dollars(cash, cash_key)
+    available_dollars = (
+        kalshi_balance_dollars(available, available_key)
+        if available not in (None, "")
+        else None
+    )
+    return cash_dollars, available_dollars
+
+
+def kalshi_balance_summary() -> str:
+    cash, available = kalshi_balance_amounts()
     if available not in (None, ""):
-        return f"Kalshi balance {format_balance_value(cash)} available {format_balance_value(available)}"
-    return f"Kalshi balance {format_balance_value(cash)}"
+        return f"Kalshi balance {cli.fmt_money(cash)} available {cli.fmt_money(available)}"
+    return f"Kalshi balance {cli.fmt_money(cash)}"
 
 
-def polymarket_balance_summary() -> str:
+def polymarket_balance_amounts() -> tuple[float, float]:
     from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
 
     client = polymarket_client_v2()
@@ -119,17 +169,45 @@ def polymarket_balance_summary() -> str:
         BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
     )
     if not isinstance(data, dict):
-        return f"Polymarket balance response {data}"
+        raise RuntimeError(f"Polymarket balance response {data}")
     balance = data.get("balance") or data.get("usdc_balance") or data.get("collateral")
     allowances = data.get("allowances")
     if isinstance(allowances, dict) and allowances:
         allowance = max(as_float(value) for value in allowances.values())
     else:
         allowance = data.get("allowance") or data.get("usdc_allowance")
+    return as_float(balance) / 1_000_000.0, as_float(allowance) / 1_000_000.0
+
+
+def polymarket_balance_summary() -> str:
+    balance, allowance = polymarket_balance_amounts()
     return (
-        f"Polymarket USDC balance {format_usdc_base_units(balance)} "
-        f"allowance {format_usdc_base_units(allowance)}"
+        f"Polymarket USDC balance {cli.fmt_money(balance)} "
+        f"allowance {cli.fmt_money(allowance)}"
     )
+
+
+def combined_balance_line() -> str:
+    parts = []
+    total = 0.0
+    try:
+        kalshi_cash, kalshi_available = kalshi_balance_amounts()
+        total += kalshi_cash
+        available_text = (
+            f" available {cli.fmt_money(kalshi_available)}"
+            if kalshi_available is not None
+            else ""
+        )
+        parts.append(f"Kalshi {cli.fmt_money(kalshi_cash)}{available_text}")
+    except Exception as exc:
+        parts.append(f"Kalshi ERROR {type(exc).__name__}: {exc}")
+    try:
+        polymarket_cash, _polymarket_allowance = polymarket_balance_amounts()
+        total += polymarket_cash
+        parts.append(f"Polymarket {cli.fmt_money(polymarket_cash)}")
+    except Exception as exc:
+        parts.append(f"Polymarket ERROR {type(exc).__name__}: {exc}")
+    return f"BALANCE {' | '.join(parts)} | total {cli.fmt_money(total)}"
 
 
 def print_startup_balances() -> None:
@@ -580,6 +658,23 @@ def seconds_to_expiry(kalshi_snapshot: dict[str, Any]) -> float | None:
     return max(0.0, close_ts - time.time())
 
 
+def no_trade_boundary_reason(kalshi_snapshot: dict[str, Any]) -> str | None:
+    remaining = seconds_to_expiry(kalshi_snapshot)
+    if remaining is None:
+        return None
+    if remaining <= CONTRACT_BOUNDARY_NO_TRADE_SECONDS:
+        return f"last {CONTRACT_BOUNDARY_NO_TRADE_SECONDS:.0f}s before expiry ({remaining:.1f}s left)"
+    if remaining >= CONTRACT_WINDOW_SECONDS - CONTRACT_BOUNDARY_NO_TRADE_SECONDS:
+        elapsed = max(0.0, CONTRACT_WINDOW_SECONDS - remaining)
+        return f"first {CONTRACT_BOUNDARY_NO_TRADE_SECONDS:.0f}s of contract ({elapsed:.1f}s elapsed)"
+    return None
+
+
+def position_expired(position: dict[str, Any]) -> bool:
+    close_ts = btc.parse_ts(position.get("close_time"))
+    return close_ts is not None and time.time() >= close_ts
+
+
 def source_filter_metrics(
     kalshi_snapshot: dict[str, Any],
     polymarket_snapshot: dict[str, Any],
@@ -918,6 +1013,38 @@ def format_contract_start(
         f"K target {fmt_optional(finite_float(source_snapshot.get('kalshi_target')), 2)} | "
         f"P target {fmt_optional(finite_float(source_snapshot.get('polymarket_target')), 2)} | "
         f"P market {polymarket_snapshot.get('ticker') or '--'}"
+    )
+
+
+def format_position_review(
+    position: dict[str, Any],
+    reason: str,
+    liquidation: float | None = None,
+) -> str:
+    text = (
+        f"POSITION REVIEW {position.get('ticker') or '--'} | {reason} | "
+        f"K {str(position.get('kalshi_side') or '--').upper()} + "
+        f"P {position.get('polymarket_contract') or '--'} | "
+        f"size {position.get('contracts') or '--'} | "
+        f"entry {cli.fmt_display_cents(position.get('entry_cost'))}c | "
+        f"expiry {position.get('close_time') or '--'}"
+    )
+    if liquidation is not None:
+        text += (
+            f" | liquidation {cli.fmt_display_cents(liquidation)}c "
+            f"({cli.fmt_money(liquidation - as_float(position.get('entry_cost')))} before exit fees)"
+        )
+    return text
+
+
+def format_position_clear(position: dict[str, Any], reason: str) -> str:
+    return (
+        f"POSITION CLEAR {position.get('ticker') or '--'} | {reason} | "
+        f"K {str(position.get('kalshi_side') or '--').upper()} + "
+        f"P {position.get('polymarket_contract') or '--'} | "
+        f"size {position.get('contracts') or '--'} | "
+        f"entry {cli.fmt_display_cents(position.get('entry_cost'))}c | "
+        f"expiry {position.get('close_time') or '--'} | internal tracking cleared"
     )
 
 
@@ -1406,56 +1533,87 @@ def main() -> None:
                 kalshi_brtis,
                 sma_window_size,
             )
+            if open_position is not None:
+                position_ticker = str(open_position.get("ticker") or "")
+                if contract_key and position_ticker and contract_key != position_ticker:
+                    cli.print_line(
+                        f"{display_time:<10} | "
+                        f"{format_position_clear(open_position, f'current contract is {contract_key}')}"
+                    )
+                    open_position = None
+                elif position_expired(open_position):
+                    cli.print_line(
+                        f"{display_time:<10} | "
+                        f"{format_position_clear(open_position, 'position contract reached expiry')}"
+                    )
+                    open_position = None
+            boundary_reason = no_trade_boundary_reason(kalshi_snapshot)
             if new_contract:
                 last_contract_key = contract_key
-                cli.trim_log_file(cli.TRADER_LOG_PATH, cli.TRADER_LOG_MAX_LINES - 1)
+                cli.trim_log_file(cli.TRADER_LOG_PATH, cli.TRADER_LOG_MAX_LINES - 2)
+                cli.print_line(f"{display_time:<10} | {combined_balance_line()}")
                 cli.print_line(f"{display_time:<10} | {format_contract_start(kalshi_snapshot, polymarket_snapshot, source_snapshot)}")
 
             if arbitrage:
                 cli.print_snapshot(kalshi_snapshot, polymarket_snapshot, arbitrage, ref_suffix)
 
             if open_position is not None:
-                hold_metrics = source_filter_metrics(
-                    kalshi_snapshot,
-                    polymarket_snapshot,
-                    source_snapshot,
-                    open_position["entry_cost"],
-                    kalshi_direction_price,
-                )
-                hold_decision = evaluate_hold_filter(
-                    hold_metrics,
-                    source_gap_threshold,
-                    target_divergence_threshold,
-                    hold_distance_multiplier,
-                )
-                if arbitrage or not hold_decision["passed"]:
-                    cli.print_line(f"{display_time:<10} | {format_hold_decision(hold_decision)}")
-                if not hold_decision["passed"]:
-                    liquidation = liquidation_bid_value(
+                if boundary_reason is not None:
+                    if not open_position.get("boundary_review_logged"):
+                        liquidation = liquidation_bid_value(
+                            kalshi_snapshot,
+                            polymarket_snapshot,
+                            open_position["kalshi_side"],
+                            open_position["polymarket_contract"],
+                        )
+                        cli.print_line(
+                            f"{display_time:<10} | "
+                            f"{format_position_review(open_position, boundary_reason, liquidation)}"
+                        )
+                        open_position["boundary_review_logged"] = True
+                else:
+                    hold_metrics = source_filter_metrics(
                         kalshi_snapshot,
                         polymarket_snapshot,
-                        open_position["kalshi_side"],
-                        open_position["polymarket_contract"],
+                        source_snapshot,
+                        open_position["entry_cost"],
+                        kalshi_direction_price,
                     )
-                    if liquidation is None:
-                        exit_text = "EXIT_REVIEW liquidation bid value unavailable"
-                    else:
-                        exit_pnl = liquidation - open_position["entry_cost"]
-                        exit_text = (
-                            "EXIT_REVIEW "
-                            f"liquidation {cli.fmt_display_cents(liquidation)}c - "
-                            f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
-                            f"{cli.fmt_money(exit_pnl)} before exit fees"
+                    hold_decision = evaluate_hold_filter(
+                        hold_metrics,
+                        source_gap_threshold,
+                        target_divergence_threshold,
+                        hold_distance_multiplier,
+                    )
+                    if arbitrage or not hold_decision["passed"]:
+                        cli.print_line(f"{display_time:<10} | {format_hold_decision(hold_decision)}")
+                    if not hold_decision["passed"]:
+                        liquidation = liquidation_bid_value(
+                            kalshi_snapshot,
+                            polymarket_snapshot,
+                            open_position["kalshi_side"],
+                            open_position["polymarket_contract"],
                         )
-                    if args.live:
-                        exit_text += "; LIVE two-leg exit is not automated"
-                    else:
-                        exit_text += "; DRY RUN closing simulated position"
-                        open_position = None
-                    cli.print_line(f"{display_time:<10} | {exit_text}")
+                        if liquidation is None:
+                            exit_text = "EXIT_REVIEW liquidation bid value unavailable"
+                        else:
+                            exit_pnl = liquidation - open_position["entry_cost"]
+                            exit_text = (
+                                "EXIT_REVIEW "
+                                f"liquidation {cli.fmt_display_cents(liquidation)}c - "
+                                f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
+                                f"{cli.fmt_money(exit_pnl)} before exit fees"
+                            )
+                        if args.live:
+                            exit_text += "; LIVE two-leg exit is not automated"
+                        else:
+                            exit_text += "; DRY RUN closing simulated position"
+                            open_position = None
+                        cli.print_line(f"{display_time:<10} | {exit_text}")
 
             if (
                 open_position is None
+                and boundary_reason is None
                 and arbitrage
                 and arbitrage["expected_profit"] > args.min_profit
                 and trades_done < max_trades
@@ -1545,11 +1703,14 @@ def main() -> None:
                     )
                     if not result.startswith("SKIP ") and not result.startswith("DRY RUN would skip"):
                         open_position = {
+                            "ticker": kalshi_snapshot.get("ticker"),
+                            "close_time": kalshi_snapshot.get("close_time"),
                             "kalshi_side": preflight["kalshi_side"],
                             "polymarket_contract": preflight["polymarket_contract"],
                             "entry_cost": preflight["kalshi_price"] + preflight["polymarket_price"],
                             "entry_time": kalshi_snapshot.get("timestamp_utc"),
                             "contracts": int(preflight["contracts"]),
+                            "boundary_review_logged": False,
                         }
                         trades_done += 1
                 if result is not None:

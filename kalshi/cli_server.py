@@ -50,7 +50,10 @@ def trim_log_file(path: Path, max_lines: int = TRADER_LOG_MAX_LINES) -> None:
 
 def is_concise_log_line(line: str) -> bool:
     return (
-        "CONTRACT " in line
+        "BALANCE " in line
+        or "CONTRACT " in line
+        or "POSITION REVIEW" in line
+        or "POSITION CLEAR" in line
         or "TRADED " in line
         or "DRY RUN would place" in line
         or "EXIT_REVIEW" in line
