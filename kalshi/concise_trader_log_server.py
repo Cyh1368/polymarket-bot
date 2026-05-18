@@ -12,8 +12,6 @@ from urllib.parse import urlparse
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_LOG_PATH = APP_DIR / "concise_trader_log.txt"
-MAX_BYTES = 250_000
-MAX_LINES = 300
 
 log_path = DEFAULT_LOG_PATH
 
@@ -172,17 +170,10 @@ PAGE = """<!doctype html>
 """
 
 
-def read_log_tail() -> str:
+def read_log() -> str:
     if not log_path.exists():
         return ""
-    size = log_path.stat().st_size
-    with log_path.open("rb") as file_obj:
-        if size > MAX_BYTES:
-            file_obj.seek(size - MAX_BYTES)
-            file_obj.readline()
-        data = file_obj.read()
-    lines = data.decode("utf-8", errors="replace").splitlines()
-    return "\n".join(lines[-MAX_LINES:])
+    return log_path.read_text(encoding="utf-8", errors="replace").rstrip("\n")
 
 
 class ConciseLogHandler(BaseHTTPRequestHandler):
@@ -198,7 +189,7 @@ class ConciseLogHandler(BaseHTTPRequestHandler):
             self.send_text(PAGE, "text/html; charset=utf-8", send_body=send_body)
             return
         if path == "/log":
-            text = read_log_tail()
+            text = read_log()
             payload = {
                 "path": str(log_path),
                 "lines": 0 if not text else text.count("\n") + (0 if text.endswith("\n") else 1),

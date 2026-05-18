@@ -37,6 +37,8 @@ TRADER_LOG_MAX_LINES = 200
 
 
 def trim_log_file(path: Path, max_lines: int = TRADER_LOG_MAX_LINES) -> None:
+    if path.resolve() == CONCISE_TRADER_LOG_PATH.resolve():
+        return
     if max_lines < 1 or not path.exists():
         return
     try:
