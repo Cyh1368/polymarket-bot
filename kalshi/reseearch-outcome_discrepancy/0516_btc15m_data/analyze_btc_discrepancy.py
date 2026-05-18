@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(DATA_DIR, "analysis_outputs")
+SOURCE_GAP_THRESHOLD = 100.0
 
 
 def parse_dt(value):
@@ -449,17 +450,17 @@ def main():
         ("baseline_first_arb_no_filter", lambda r: True),
         ("gap<=3 and min_distance>=10 and seconds_to_expiry>=120", lambda r: r["source_price_gap"] <= 3 and r["min_distance_from_target"] >= 10 and r["seconds_to_expiry"] >= 120),
         ("gap_ratio<=1 and min_distance>=5 and seconds_to_expiry>=60", lambda r: r["source_price_gap_relative_to_target_distance"] <= 1 and r["min_distance_from_target"] >= 5 and r["seconds_to_expiry"] >= 60),
-        ("direction_agree and gap<=5 and min_distance>=10", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 5 and r["min_distance_from_target"] >= 10),
+        ("direction_agree and gap<=100 and min_distance>=10", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= SOURCE_GAP_THRESHOLD and r["min_distance_from_target"] >= 10),
         ("direction_agree and gap_ratio<=1 and seconds_to_expiry>=30", lambda r: r["price_direction_agreement"] and r["source_price_gap_relative_to_target_distance"] <= 1 and r["seconds_to_expiry"] >= 30),
-        ("direction_agree and gap<=5 and min_distance>=10 and abs_target_divergence<=15", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 5 and r["min_distance_from_target"] >= 10 and r["abs_target_divergence"] <= 15),
-        ("time_scaled_distance and gap<=5 and target_divergence<=15", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 5 and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 15),
-        ("time_scaled_distance and gap<=5 no_target_cap", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 5 and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05)),
-        ("time_scaled_distance and gap<=5 target_divergence<=30", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 5 and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 30),
-        ("time_scaled_distance and gap<=5 target_divergence<=35", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 5 and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 35),
-        ("canonical + arb_cost<=0.98", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 5 and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 35 and r["arb_cost"] <= 0.98),
-        ("canonical + arb_cost<=0.96", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 5 and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 35 and r["arb_cost"] <= 0.96),
-        ("canonical + arb_cost<=0.95", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 5 and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 35 and r["arb_cost"] <= 0.95),
-        ("time_scaled + target<=15 + not drifting_to_wire", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 5 and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 15 and not r["kalshi_current_closer_than_60sma"]),
+        ("direction_agree and gap<=100 and min_distance>=10 and abs_target_divergence<=15", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= SOURCE_GAP_THRESHOLD and r["min_distance_from_target"] >= 10 and r["abs_target_divergence"] <= 15),
+        ("time_scaled_distance and gap<=100 and target_divergence<=15", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= SOURCE_GAP_THRESHOLD and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 15),
+        ("time_scaled_distance and gap<=100 no_target_cap", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= SOURCE_GAP_THRESHOLD and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05)),
+        ("time_scaled_distance and gap<=100 target_divergence<=30", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= SOURCE_GAP_THRESHOLD and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 30),
+        ("time_scaled_distance and gap<=100 target_divergence<=35", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= SOURCE_GAP_THRESHOLD and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 35),
+        ("canonical_gap100 + arb_cost<=0.98", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= SOURCE_GAP_THRESHOLD and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 35 and r["arb_cost"] <= 0.98),
+        ("canonical_gap100 + arb_cost<=0.96", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= SOURCE_GAP_THRESHOLD and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 35 and r["arb_cost"] <= 0.96),
+        ("canonical_gap100 + arb_cost<=0.95", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= SOURCE_GAP_THRESHOLD and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 35 and r["arb_cost"] <= 0.95),
+        ("time_scaled + target<=15 + not drifting_to_wire", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= SOURCE_GAP_THRESHOLD and r["min_distance_from_target"] >= max(10.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 15 and not r["kalshi_current_closer_than_60sma"]),
         ("very_conservative: gap<=3 distance>=max(25,t*0.05) target<=10 not drifting", lambda r: r["price_direction_agreement"] and r["source_price_gap"] <= 3 and r["min_distance_from_target"] >= max(25.0, r["seconds_to_expiry"] * 0.05) and r["abs_target_divergence"] <= 10 and not r["kalshi_current_closer_than_60sma"]),
     ]
     contract_filter_results = []

@@ -5,3 +5,29 @@ what you save in the csv remains the same, for the display instead of that I wan
 
 14:18:23.7 | K + NP = 22 + 78 = 100 | NK + P = 79 + 51 = 130 | NO ARB
 14.18.25.6 | K + NP = 22 + 77 = 99  | NK + P = 79 + 51 = 130 | ARB K = $0.2222, NP = $0.7778, +$0.0101
+
+
+Instead of 
+01:18:03.7 | K + NP = 31.0 + 67.0 = 98.0      | NK + P = 71.0 + 34.0 = 105.0     | ARB K = $0.3163, NP = $0.6837, +$0.0204
+01:18:03.7 | REF_DELTA K60SMA-target -136.97 (30/30) | P-target -64.90
+I want, in the same line
+01:18:03.7 | K + NP = 31.0 + 67.0 = 98.0      | NK + P = 71.0 + 34.0 = 105.0     | ARB K = $0.3163, NP = $0.6837, +$0.0204 | ΔK -136.97 (30/30) | ΔP -64.90
+
+
+Instead of
+01:24:31.9 | K + NP = 9.9 + 86.0 = 95.9       | NK + P = 91.2 + 15.0 = 106.2     | ARB K = $0.1032, NP = $0.8968, +$0.0428 | ΔK -146.82 (4/30) | ΔP --
+01:24:31.9 | ENTRY_FILTER SKIP
+01:24:31.9 | ENTRY_FILTER polymarket_data PASS error empty
+01:24:31.9 | ENTRY_FILTER kalshi_status PASS status=active
+01:24:31.9 | ENTRY_FILTER kalshi_target PASS value=77097.37
+01:24:31.9 | ENTRY_FILTER polymarket_target FAIL value=--
+01:24:31.9 | ENTRY_FILTER direction_agreement FAIL value=None
+01:24:31.9 | ENTRY_FILTER source_gap PASS 31.589 <= 100.000
+01:24:31.9 | ENTRY_FILTER entry_distance FAIL -- >= 16.254
+01:24:31.9 | ENTRY_FILTER target_divergence FAIL -- <= 35.000
+01:24:31.9 | ENTRY_FILTER profit_after_fees FAIL 0.0110 >= 0.0500
+01:24:31.9 | ENTRY_FILTER reasons: polymarket_target: value=--; direction_agreement: value=None; entry_distance: -- >= 16.254; target_divergence: -- <= 35.000; profit_after_fees: 0.0110 >= 0.0500
+
+I want
+01:24:31.9 | K + NP = 9.9 + 86.0 = 95.9       | NK + P = 91.2 + 15.0 = 106.2     | ARB K = $0.1032, NP = $0.8968, +$0.0428 | ΔK -146.82 (4/30) | ΔP --
+01:24:31.9 | ENTRY SKIP polymarket_target: --; direction: None; entry_dist: -- >= 16.254; target_div: -- <= 35.000; profit_after_fees: 0.0110 >= 0.0500

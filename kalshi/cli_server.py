@@ -31,6 +31,17 @@ CSV_FIELDS = [
     "expected_profit",
     "guaranteed_payout",
 ]
+TRADER_LOG_PATH = Path(__file__).resolve().parent / "trader_log.txt"
+
+
+def append_terminal_log(line: str) -> None:
+    with TRADER_LOG_PATH.open("a", encoding="utf-8") as file_obj:
+        file_obj.write(f"{btc.iso_utc()[:10]} {line}\n")
+
+
+def print_line(line: str) -> None:
+    print(line, flush=True)
+    append_terminal_log(line)
 
 
 def fmt_price(value: Any) -> str:
@@ -187,11 +198,12 @@ def csv_row(
     return row
 
 
-def print_snapshot(
+def format_snapshot_line(
     kalshi_snapshot: dict[str, Any],
     polymarket_snapshot: dict[str, Any],
     arbitrage: dict[str, Any] | None,
-) -> None:
+    suffix: str = "",
+) -> str:
     kalshi_yes_ask = market_price(kalshi_snapshot, "ask", "yes")
     kalshi_no_ask = market_price(kalshi_snapshot, "ask", "no")
     polymarket_yes_ask = market_price(polymarket_snapshot, "ask", "yes")
@@ -222,7 +234,18 @@ def print_snapshot(
         f" | {no_yes_column:<32}"
         f" | {status}"
     )
-    print(line, flush=True)
+    if suffix:
+        line += f" | {suffix}"
+    return line
+
+
+def print_snapshot(
+    kalshi_snapshot: dict[str, Any],
+    polymarket_snapshot: dict[str, Any],
+    arbitrage: dict[str, Any] | None,
+    suffix: str = "",
+) -> None:
+    print_line(format_snapshot_line(kalshi_snapshot, polymarket_snapshot, arbitrage, suffix))
 
 
 def safe_filename(value: Any) -> str:
@@ -282,9 +305,8 @@ def main() -> None:
     flush_every = max(1, args.flush_every)
     pending_rows: dict[Path, list[dict[str, Any]]] = {}
 
-    print(
+    print_line(
         f"Polling every {interval:g}s; writing one CSV per contract in {args.csv_dir}",
-        flush=True,
     )
     while True:
         started = time.monotonic()
@@ -303,7 +325,7 @@ def main() -> None:
                 flush_pending(pending_rows)
             raise
         except Exception as exc:
-            print(f"{btc.iso_utc()} | ERROR {type(exc).__name__}: {exc}", flush=True)
+            print_line(f"{btc.iso_utc()} | ERROR {type(exc).__name__}: {exc}")
             traceback.print_exc(limit=2)
 
         elapsed = time.monotonic() - started

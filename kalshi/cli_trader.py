@@ -5,6 +5,7 @@ import os
 import time
 import traceback
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -20,6 +21,7 @@ class FatalTradeError(RuntimeError):
 
 POLYMARKET_MARKET_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 KALSHI_MARKET_CACHE: dict[str, dict[str, Any]] = {}
+SETTLEMENT_PAYOUT_AFTER_FEES = 0.98
 
 
 def http_json(
@@ -60,6 +62,18 @@ def cents(value: float) -> int:
 
 def dollars(value: float) -> str:
     return f"{value:.4f}"
+
+
+def finite_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
 
 
 def format_balance_value(value: Any) -> str:
@@ -120,13 +134,13 @@ def polymarket_balance_summary() -> str:
 
 def print_startup_balances() -> None:
     try:
-        print(kalshi_balance_summary(), flush=True)
+        cli.print_line(kalshi_balance_summary())
     except Exception as exc:
-        print(f"Kalshi balance ERROR {type(exc).__name__}: {exc}", flush=True)
+        cli.print_line(f"Kalshi balance ERROR {type(exc).__name__}: {exc}")
     try:
-        print(polymarket_balance_summary(), flush=True)
+        cli.print_line(polymarket_balance_summary())
     except Exception as exc:
-        print(f"Polymarket balance ERROR {type(exc).__name__}: {exc}", flush=True)
+        cli.print_line(f"Polymarket balance ERROR {type(exc).__name__}: {exc}")
 
 
 def fill_count(order: dict[str, Any]) -> float:
@@ -520,7 +534,7 @@ def cached_active_kalshi_market() -> dict[str, Any] | None:
     return market
 
 
-def fetch_market_state() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+def fetch_market_state() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     kalshi_market = cached_active_kalshi_market()
     if not kalshi_market:
         raise RuntimeError(f"No open market found for {btc.SERIES_TICKER}")
@@ -542,7 +556,8 @@ def fetch_market_state() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]
         raise RuntimeError("No matching open Polymarket market found")
     polymarket_orderbook = btc.polymarket_clob_orderbooks(polymarket_market)
     polymarket_snapshot = btc.make_polymarket_snapshot(polymarket_market, polymarket_orderbook)
-    return kalshi_market, kalshi_snapshot, polymarket_market, polymarket_snapshot
+    source_snapshot = btc.source_price_snapshot(kalshi_market, polymarket_market)
+    return kalshi_market, kalshi_snapshot, polymarket_market, polymarket_snapshot, source_snapshot
 
 
 def polymarket_execution_price(price: float) -> float:
@@ -556,6 +571,367 @@ def execution_expected_profit(arbitrage: dict[str, Any]) -> float:
     if total_cost <= 0 or total_cost >= 1:
         return 0.0
     return (1.0 / total_cost) - 1.0
+
+
+def seconds_to_expiry(kalshi_snapshot: dict[str, Any]) -> float | None:
+    close_ts = btc.parse_ts(kalshi_snapshot.get("close_time"))
+    if close_ts is None:
+        return None
+    return max(0.0, close_ts - time.time())
+
+
+def source_filter_metrics(
+    kalshi_snapshot: dict[str, Any],
+    polymarket_snapshot: dict[str, Any],
+    source_snapshot: dict[str, Any],
+    arb_cost: float | None,
+    kalshi_direction_price: float | None = None,
+) -> dict[str, Any]:
+    kalshi_price = finite_float(source_snapshot.get("kalshi_price"))
+    poly_price = finite_float(source_snapshot.get("polymarket_price"))
+    kalshi_target = finite_float(source_snapshot.get("kalshi_target"))
+    poly_target = finite_float(source_snapshot.get("polymarket_target"))
+    remaining = seconds_to_expiry(kalshi_snapshot)
+
+    source_gap = (
+        abs(kalshi_price - poly_price)
+        if kalshi_price is not None and poly_price is not None
+        else None
+    )
+    target_divergence = (
+        abs(kalshi_target - poly_target)
+        if kalshi_target is not None and poly_target is not None
+        else None
+    )
+    kalshi_distance = (
+        abs(kalshi_price - kalshi_target)
+        if kalshi_price is not None and kalshi_target is not None
+        else None
+    )
+    poly_distance = (
+        abs(poly_price - poly_target)
+        if poly_price is not None and poly_target is not None
+        else None
+    )
+    min_distance = (
+        min(kalshi_distance, poly_distance)
+        if kalshi_distance is not None and poly_distance is not None
+        else None
+    )
+    direction_agreement = (
+        (kalshi_direction_price > kalshi_target) == (poly_price > poly_target)
+        if (
+            kalshi_direction_price is not None
+            and poly_price is not None
+            and kalshi_target is not None
+            and poly_target is not None
+        )
+        else None
+    )
+    entry_required_distance = (
+        max(10.0, remaining * 0.05) if remaining is not None else None
+    )
+    profit_after_fees = (
+        SETTLEMENT_PAYOUT_AFTER_FEES - arb_cost
+        if arb_cost is not None
+        else None
+    )
+    return {
+        "kalshi_price": kalshi_price,
+        "polymarket_price": poly_price,
+        "kalshi_target": kalshi_target,
+        "polymarket_target": poly_target,
+        "seconds_to_expiry": remaining,
+        "source_gap": source_gap,
+        "target_divergence": target_divergence,
+        "kalshi_distance": kalshi_distance,
+        "polymarket_distance": poly_distance,
+        "min_distance": min_distance,
+        "direction_agreement": direction_agreement,
+        "kalshi_direction_price": kalshi_direction_price,
+        "entry_required_distance": entry_required_distance,
+        "arb_cost": arb_cost,
+        "profit_after_fees": profit_after_fees,
+        "kalshi_status": kalshi_snapshot.get("status"),
+        "polymarket_error": polymarket_snapshot.get("error") or source_snapshot.get("error"),
+    }
+
+
+def fmt_optional(value: Any, places: int = 3) -> str:
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, float)):
+        return f"{value:.{places}f}"
+    return "--"
+
+
+def fmt_signed(value: Any, places: int = 2) -> str:
+    if isinstance(value, (int, float)):
+        return f"{value:+.{places}f}"
+    return "--"
+
+
+def kalshi_sma_window_size(interval: float) -> int:
+    return max(1, int(round(60.0 / max(interval, 0.1))))
+
+
+def reference_delta_suffix(
+    source_snapshot: dict[str, Any],
+    kalshi_brtis: deque[float],
+    sma_window_size: int,
+) -> tuple[str, float | None]:
+    kalshi_price = finite_float(source_snapshot.get("kalshi_price"))
+    if kalshi_price is not None:
+        kalshi_brtis.append(kalshi_price)
+
+    kalshi_target = finite_float(source_snapshot.get("kalshi_target"))
+    poly_price = finite_float(source_snapshot.get("polymarket_price"))
+    poly_target = finite_float(source_snapshot.get("polymarket_target"))
+
+    kalshi_delta = None
+    if kalshi_brtis and kalshi_target is not None:
+        kalshi_delta = (sum(kalshi_brtis) / len(kalshi_brtis)) - kalshi_target
+    poly_delta = (
+        poly_price - poly_target
+        if poly_price is not None and poly_target is not None
+        else None
+    )
+    return (
+        (
+            f"ΔK {fmt_signed(kalshi_delta)} "
+            f"({len(kalshi_brtis)}/{sma_window_size}) | "
+            f"ΔP {fmt_signed(poly_delta)}"
+        ),
+        (kalshi_delta + kalshi_target if kalshi_delta is not None and kalshi_target is not None else None),
+    )
+
+
+def decision_line(label: str, passed: bool, detail: str) -> str:
+    return f"{label} {'PASS' if passed else 'FAIL'} {detail}"
+
+
+def evaluate_entry_filter(
+    metrics: dict[str, Any],
+    source_gap_threshold: float,
+    target_divergence_threshold: float,
+    min_profit_after_fees: float,
+) -> dict[str, Any]:
+    checks: list[tuple[str, bool, str]] = []
+
+    poly_ok = not metrics.get("polymarket_error")
+    checks.append(("polymarket_data", poly_ok, "error empty" if poly_ok else str(metrics.get("polymarket_error"))))
+
+    status = str(metrics.get("kalshi_status") or "").lower()
+    kalshi_active = status == "active"
+    checks.append(("kalshi_status", kalshi_active, f"status={status or '--'}"))
+
+    kalshi_target_ok = metrics.get("kalshi_target") is not None
+    checks.append(("kalshi_target", kalshi_target_ok, f"value={fmt_optional(metrics.get('kalshi_target'), 2)}"))
+
+    poly_target_ok = metrics.get("polymarket_target") is not None
+    checks.append(("polymarket_target", poly_target_ok, f"value={fmt_optional(metrics.get('polymarket_target'), 2)}"))
+
+    direction = metrics.get("direction_agreement")
+    checks.append(("direction_agreement", direction is True, f"value={direction}"))
+
+    source_gap = metrics.get("source_gap")
+    source_gap_ok = source_gap is not None and source_gap <= source_gap_threshold
+    checks.append((
+        "source_gap",
+        source_gap_ok,
+        f"{fmt_optional(source_gap)} <= {source_gap_threshold:.3f}",
+    ))
+
+    min_distance = metrics.get("min_distance")
+    required_distance = metrics.get("entry_required_distance")
+    distance_ok = (
+        min_distance is not None
+        and required_distance is not None
+        and min_distance >= required_distance
+    )
+    checks.append((
+        "entry_distance",
+        distance_ok,
+        f"{fmt_optional(min_distance)} >= {fmt_optional(required_distance)}",
+    ))
+
+    target_divergence = metrics.get("target_divergence")
+    target_ok = target_divergence is not None and target_divergence <= target_divergence_threshold
+    checks.append((
+        "target_divergence",
+        target_ok,
+        f"{fmt_optional(target_divergence)} <= {target_divergence_threshold:.3f}",
+    ))
+
+    profit_after_fees = metrics.get("profit_after_fees")
+    profit_ok = profit_after_fees is not None and profit_after_fees >= min_profit_after_fees
+    checks.append((
+        "profit_after_fees",
+        profit_ok,
+        f"{fmt_optional(profit_after_fees, 4)} >= {min_profit_after_fees:.4f}",
+    ))
+
+    passed = all(item[1] for item in checks)
+    return {
+        "decision": "ENTER" if passed else "SKIP",
+        "passed": passed,
+        "checks": checks,
+        "reasons": [f"{name}: {detail}" for name, ok, detail in checks if not ok],
+    }
+
+
+def evaluate_hold_filter(
+    metrics: dict[str, Any],
+    source_gap_threshold: float,
+    target_divergence_threshold: float,
+    distance_multiplier: float,
+) -> dict[str, Any]:
+    checks: list[tuple[str, bool, str]] = []
+
+    poly_ok = not metrics.get("polymarket_error")
+    checks.append(("polymarket_data", poly_ok, "error empty" if poly_ok else str(metrics.get("polymarket_error"))))
+
+    kalshi_target_ok = metrics.get("kalshi_target") is not None
+    checks.append(("kalshi_target", kalshi_target_ok, f"value={fmt_optional(metrics.get('kalshi_target'), 2)}"))
+
+    poly_target_ok = metrics.get("polymarket_target") is not None
+    checks.append(("polymarket_target", poly_target_ok, f"value={fmt_optional(metrics.get('polymarket_target'), 2)}"))
+
+    direction = metrics.get("direction_agreement")
+    checks.append(("direction_agreement", direction is True, f"value={direction}"))
+
+    source_gap = metrics.get("source_gap")
+    source_gap_ok = source_gap is not None and source_gap <= source_gap_threshold
+    checks.append((
+        "source_gap",
+        source_gap_ok,
+        f"{fmt_optional(source_gap)} <= {source_gap_threshold:.3f}",
+    ))
+
+    min_distance = metrics.get("min_distance")
+    entry_required_distance = metrics.get("entry_required_distance")
+    hold_required_distance = (
+        distance_multiplier * entry_required_distance
+        if entry_required_distance is not None
+        else None
+    )
+    distance_ok = (
+        min_distance is not None
+        and hold_required_distance is not None
+        and min_distance >= hold_required_distance
+    )
+    checks.append((
+        "hold_distance",
+        distance_ok,
+        f"{fmt_optional(min_distance)} >= {fmt_optional(hold_required_distance)} "
+        f"({distance_multiplier:.2f}x entry distance)",
+    ))
+
+    target_divergence = metrics.get("target_divergence")
+    target_ok = target_divergence is not None and target_divergence <= target_divergence_threshold
+    checks.append((
+        "target_divergence",
+        target_ok,
+        f"{fmt_optional(target_divergence)} <= {target_divergence_threshold:.3f}",
+    ))
+
+    passed = all(item[1] for item in checks)
+    return {
+        "decision": "HOLD" if passed else "EXIT_REVIEW",
+        "passed": passed,
+        "checks": checks,
+        "reasons": [f"{name}: {detail}" for name, ok, detail in checks if not ok],
+    }
+
+
+def format_filter_decision(prefix: str, decision: dict[str, Any]) -> list[str]:
+    lines = [f"{prefix} {decision['decision']}"]
+    for name, passed, detail in decision["checks"]:
+        lines.append(f"{prefix} {decision_line(name, passed, detail)}")
+    if decision["reasons"]:
+        lines.append(f"{prefix} reasons: " + "; ".join(decision["reasons"]))
+    return lines
+
+
+def format_entry_skip(decision: dict[str, Any]) -> str:
+    labels = {
+        "polymarket_data": "polymarket_data",
+        "kalshi_status": "kalshi_status",
+        "kalshi_target": "kalshi_target",
+        "polymarket_target": "polymarket_target",
+        "direction_agreement": "direction",
+        "source_gap": "source_gap",
+        "entry_distance": "entry_dist",
+        "target_divergence": "target_div",
+        "profit_after_fees": "profit_after_fees",
+    }
+    parts = []
+    for name, passed, detail in decision["checks"]:
+        if passed:
+            continue
+        if detail.startswith("value="):
+            detail = detail.removeprefix("value=")
+        parts.append(f"{labels.get(name, name)}: {detail}")
+    return "ENTRY SKIP " + "; ".join(parts)
+
+
+def format_hold_decision(decision: dict[str, Any]) -> str:
+    labels = {
+        "polymarket_data": "polymarket_data",
+        "kalshi_target": "kalshi_target",
+        "polymarket_target": "polymarket_target",
+        "direction_agreement": "direction",
+        "source_gap": "source_gap",
+        "hold_distance": "hold_dist",
+        "target_divergence": "target_div",
+    }
+    if decision["passed"]:
+        return "HOLD continue"
+    parts = []
+    for name, passed, detail in decision["checks"]:
+        if passed:
+            continue
+        if detail.startswith("value="):
+            detail = detail.removeprefix("value=")
+        parts.append(f"{labels.get(name, name)}: {detail}")
+    return "HOLD EXIT_REVIEW " + "; ".join(parts)
+
+
+def filter_check_passed(decision: dict[str, Any], check_name: str) -> bool:
+    for name, passed, _detail in decision["checks"]:
+        if name == check_name:
+            return passed
+    return False
+
+
+def format_contract_start(
+    kalshi_snapshot: dict[str, Any],
+    polymarket_snapshot: dict[str, Any],
+    source_snapshot: dict[str, Any],
+) -> str:
+    close_time = kalshi_snapshot.get("close_time") or "--"
+    title = kalshi_snapshot.get("title") or "BTC 15m"
+    return (
+        "CONTRACT "
+        f"{kalshi_snapshot.get('ticker') or '--'} | {title} | "
+        f"expires {close_time} | "
+        f"K target {fmt_optional(finite_float(source_snapshot.get('kalshi_target')), 2)} | "
+        f"P target {fmt_optional(finite_float(source_snapshot.get('polymarket_target')), 2)} | "
+        f"P market {polymarket_snapshot.get('ticker') or '--'}"
+    )
+
+
+def liquidation_bid_value(
+    kalshi_snapshot: dict[str, Any],
+    polymarket_snapshot: dict[str, Any],
+    kalshi_side: str,
+    polymarket_contract: str,
+) -> float | None:
+    kalshi_bid = finite_float(kalshi_snapshot.get(f"{kalshi_side.lower()}_bid"))
+    poly_bid = finite_float(polymarket_snapshot.get(f"{polymarket_contract.lower()}_bid"))
+    if kalshi_bid is None or poly_bid is None:
+        return None
+    return kalshi_bid + poly_bid
 
 
 def trade_preflight(
@@ -926,14 +1302,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-profit",
         type=float,
-        default=0.10,
+        default=0.0,
         help="Minimum raw displayed profit that triggers a preflight check.",
     )
     parser.add_argument(
         "--min-adjusted-profit",
         type=float,
-        default=0.10,
+        default=0.0,
         help="Minimum executable adjusted profit required before live or dry-run trade placement.",
+    )
+    parser.add_argument(
+        "--min-profit-after-fees",
+        type=float,
+        default=0.05,
+        help="Minimum per-contract profit after 2%% winner-payout fee. Default: 0.05.",
+    )
+    parser.add_argument(
+        "--source-gap-threshold",
+        type=float,
+        default=100.0,
+        help="Maximum absolute BTC source gap allowed for entry/hold. Default: 100.",
+    )
+    parser.add_argument(
+        "--target-divergence-threshold",
+        type=float,
+        default=35.0,
+        help="Maximum absolute Kalshi/Polymarket BTC target divergence. Default: 35.",
+    )
+    parser.add_argument(
+        "--hold-distance-multiplier",
+        type=float,
+        default=1.25,
+        help="Hold distance multiplier applied to max(10, seconds_to_expiry * 0.05). Default: 1.25.",
     )
     parser.add_argument("--contracts", type=int, default=1, help="Maximum matched contracts/shares per leg.")
     parser.add_argument("--max-trades", type=int, default=1, help="Maximum live arbitrage executions.")
@@ -956,32 +1356,137 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     interval = max(0.1, args.interval)
+    sma_window_size = kalshi_sma_window_size(interval)
+    kalshi_brtis: deque[float] = deque(maxlen=sma_window_size)
     flush_every = max(1, args.flush_every)
     contracts = max(1, args.contracts)
     max_trades = max(0, args.max_trades)
     min_adjusted_profit = max(0.0, args.min_adjusted_profit)
+    min_profit_after_fees = max(0.0, args.min_profit_after_fees)
+    source_gap_threshold = max(0.0, args.source_gap_threshold)
+    target_divergence_threshold = max(0.0, args.target_divergence_threshold)
+    hold_distance_multiplier = max(1.0, args.hold_distance_multiplier)
     pending_rows: dict[Path, list[dict[str, Any]]] = {}
     trades_done = 0
+    open_position: dict[str, Any] | None = None
+    last_contract_key: str | None = None
 
     mode = "LIVE TRADING" if args.live else "DRY RUN"
-    print(
+    cli.print_line(
         f"{mode}; raw threshold > {cli.fmt_money(args.min_profit)}; "
         f"adjusted threshold > {cli.fmt_money(min_adjusted_profit)}; contracts={contracts}; "
+        f"min profit after fees >= {cli.fmt_money(min_profit_after_fees)}; "
+        f"source gap <= {source_gap_threshold:g}; target divergence <= {target_divergence_threshold:g}; "
+        f"hold distance {hold_distance_multiplier:g}x; "
         f"max_trades={max_trades}; polling every {interval:g}s",
-        flush=True,
     )
     print_startup_balances()
     while True:
         started = time.monotonic()
         try:
-            _kalshi_market, kalshi_snapshot, polymarket_market, polymarket_snapshot = fetch_market_state()
+            (
+                _kalshi_market,
+                kalshi_snapshot,
+                polymarket_market,
+                polymarket_snapshot,
+                source_snapshot,
+            ) = fetch_market_state()
             arbitrage = cli.best_arbitrage(kalshi_snapshot, polymarket_snapshot)
             csv_path = cli.csv_path_for_contract(args.csv_dir, kalshi_snapshot)
             rows = pending_rows.setdefault(csv_path, [])
             rows.append(cli.csv_row(kalshi_snapshot, polymarket_snapshot, arbitrage))
-            cli.print_snapshot(kalshi_snapshot, polymarket_snapshot, arbitrage)
 
-            if arbitrage and arbitrage["expected_profit"] > args.min_profit and trades_done < max_trades:
+            display_time = cli.fmt_display_time(kalshi_snapshot.get("timestamp_utc"))
+            contract_key = str(kalshi_snapshot.get("ticker") or "")
+            new_contract = bool(contract_key and contract_key != last_contract_key)
+            if new_contract:
+                kalshi_brtis.clear()
+            ref_suffix, kalshi_direction_price = reference_delta_suffix(
+                source_snapshot,
+                kalshi_brtis,
+                sma_window_size,
+            )
+            if new_contract:
+                last_contract_key = contract_key
+                cli.print_line(f"{display_time:<10} | {format_contract_start(kalshi_snapshot, polymarket_snapshot, source_snapshot)}")
+
+            if arbitrage:
+                cli.print_snapshot(kalshi_snapshot, polymarket_snapshot, arbitrage, ref_suffix)
+
+            if open_position is not None:
+                hold_metrics = source_filter_metrics(
+                    kalshi_snapshot,
+                    polymarket_snapshot,
+                    source_snapshot,
+                    open_position["entry_cost"],
+                    kalshi_direction_price,
+                )
+                hold_decision = evaluate_hold_filter(
+                    hold_metrics,
+                    source_gap_threshold,
+                    target_divergence_threshold,
+                    hold_distance_multiplier,
+                )
+                if arbitrage or not hold_decision["passed"]:
+                    cli.print_line(f"{display_time:<10} | {format_hold_decision(hold_decision)}")
+                if not hold_decision["passed"]:
+                    liquidation = liquidation_bid_value(
+                        kalshi_snapshot,
+                        polymarket_snapshot,
+                        open_position["kalshi_side"],
+                        open_position["polymarket_contract"],
+                    )
+                    if liquidation is None:
+                        exit_text = "EXIT_REVIEW liquidation bid value unavailable"
+                    else:
+                        exit_pnl = liquidation - open_position["entry_cost"]
+                        exit_text = (
+                            "EXIT_REVIEW "
+                            f"liquidation {cli.fmt_display_cents(liquidation)}c - "
+                            f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
+                            f"{cli.fmt_money(exit_pnl)} before exit fees"
+                        )
+                    if args.live:
+                        exit_text += "; LIVE two-leg exit is not automated"
+                    else:
+                        exit_text += "; DRY RUN closing simulated position"
+                        open_position = None
+                    cli.print_line(f"{display_time:<10} | {exit_text}")
+
+            if (
+                open_position is None
+                and arbitrage
+                and arbitrage["expected_profit"] > args.min_profit
+                and trades_done < max_trades
+            ):
+                fallback_cost = arbitrage["kalshi_price"] + polymarket_execution_price(
+                    arbitrage["polymarket_price"]
+                )
+                preliminary_metrics = source_filter_metrics(
+                    kalshi_snapshot,
+                    polymarket_snapshot,
+                    source_snapshot,
+                    fallback_cost,
+                    kalshi_direction_price,
+                )
+                preliminary_decision = evaluate_entry_filter(
+                    preliminary_metrics,
+                    source_gap_threshold,
+                    target_divergence_threshold,
+                    min_profit_after_fees,
+                )
+                if not preliminary_decision["passed"]:
+                    if filter_check_passed(preliminary_decision, "profit_after_fees"):
+                        cli.print_line(f"{display_time:<10} | {format_entry_skip(preliminary_decision)}")
+                    if len(rows) >= flush_every:
+                        cli.append_rows(csv_path, rows)
+                        rows.clear()
+                    if args.once:
+                        break
+                    elapsed = time.monotonic() - started
+                    time.sleep(max(0.0, interval - elapsed))
+                    continue
+
                 preflight = trade_preflight(
                     kalshi_snapshot,
                     polymarket_market,
@@ -989,10 +1494,27 @@ def main() -> None:
                     contracts,
                     min_adjusted_profit,
                 )
-                print(
+                cli.print_line(
                     f"{cli.fmt_display_time(kalshi_snapshot.get('timestamp_utc')):<10} | "
-                    f"{format_preflight(preflight)}",
-                    flush=True,
+                    f"{format_preflight(preflight)}"
+                )
+                executable_cost = (
+                    preflight["kalshi_price"] + preflight["polymarket_price"]
+                    if preflight.get("contracts", 0) > 0
+                    else None
+                )
+                entry_metrics = source_filter_metrics(
+                    kalshi_snapshot,
+                    polymarket_snapshot,
+                    source_snapshot,
+                    executable_cost,
+                    kalshi_direction_price,
+                )
+                entry_decision = evaluate_entry_filter(
+                    entry_metrics,
+                    source_gap_threshold,
+                    target_divergence_threshold,
+                    min_profit_after_fees,
                 )
                 if args.print_arb_orderbook:
                     for line in format_orderbook_debug(
@@ -1000,23 +1522,37 @@ def main() -> None:
                         contracts,
                         args.book_depth_levels,
                     ):
-                        print(
+                        cli.print_line(
                             f"{cli.fmt_display_time(kalshi_snapshot.get('timestamp_utc')):<10} | "
-                            f"{line}",
-                            flush=True,
+                            f"{line}"
                         )
-                result = execute_arbitrage(
-                    kalshi_snapshot,
-                    polymarket_market,
-                    arbitrage,
-                    contracts,
-                    min_adjusted_profit,
-                    args.live,
-                    preflight,
-                )
-                if args.live and not result.startswith("SKIP "):
-                    trades_done += 1
-                print(f"{cli.fmt_display_time(kalshi_snapshot.get('timestamp_utc')):<10} | {result}", flush=True)
+                result = None
+                if not entry_decision["passed"]:
+                    if filter_check_passed(entry_decision, "profit_after_fees"):
+                        result = format_entry_skip(entry_decision)
+                elif preflight["decision"] != "PLACE":
+                    result = f"ENTRY SKIP preflight: {preflight['reason']}"
+                else:
+                    result = execute_arbitrage(
+                        kalshi_snapshot,
+                        polymarket_market,
+                        arbitrage,
+                        contracts,
+                        min_adjusted_profit,
+                        args.live,
+                        preflight,
+                    )
+                    if not result.startswith("SKIP ") and not result.startswith("DRY RUN would skip"):
+                        open_position = {
+                            "kalshi_side": preflight["kalshi_side"],
+                            "polymarket_contract": preflight["polymarket_contract"],
+                            "entry_cost": preflight["kalshi_price"] + preflight["polymarket_price"],
+                            "entry_time": kalshi_snapshot.get("timestamp_utc"),
+                            "contracts": int(preflight["contracts"]),
+                        }
+                        trades_done += 1
+                if result is not None:
+                    cli.print_line(f"{cli.fmt_display_time(kalshi_snapshot.get('timestamp_utc')):<10} | {result}")
 
             if len(rows) >= flush_every:
                 cli.append_rows(csv_path, rows)
@@ -1026,12 +1562,12 @@ def main() -> None:
                 cli.flush_pending(pending_rows)
             raise
         except FatalTradeError as exc:
-            print(f"{btc.iso_utc()} | FATAL {exc}", flush=True)
+            cli.print_line(f"{btc.iso_utc()} | FATAL {exc}")
             if pending_rows:
                 cli.flush_pending(pending_rows)
             break
         except Exception as exc:
-            print(f"{btc.iso_utc()} | ERROR {type(exc).__name__}: {exc}", flush=True)
+            cli.print_line(f"{btc.iso_utc()} | ERROR {type(exc).__name__}: {exc}")
             traceback.print_exc(limit=2)
 
         if args.once:
