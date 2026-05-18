@@ -71,6 +71,9 @@ PAGE = """<!doctype html>
     .entry-skip {
       color: #8b949e;
     }
+    .contract-start {
+      font-weight: 700;
+    }
     .trade-executed {
       color: #4ade80;
     }
@@ -93,7 +96,10 @@ PAGE = """<!doctype html>
     let firstLoad = true;
 
     function classifyLine(line) {
-      if (line.includes("ENTRY SKIP") || line.includes("HOLD continue")) {
+      if (line.includes("CONTRACT ")) {
+        return "contract-start";
+      }
+      if (line.includes("ENTRY SKIP") || line.includes("CHECK SKIP") || line.includes("HOLD continue")) {
         return "entry-skip";
       }
       if (line.includes("TRADED ") || line.includes("DRY RUN would place")) {
