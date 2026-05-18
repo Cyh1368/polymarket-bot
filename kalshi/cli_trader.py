@@ -26,6 +26,23 @@ class PartialEntryError(RuntimeError):
         self.position = position
 
 
+class TradeResult(str):
+    def __new__(
+        cls,
+        text: str,
+        entry_cost: float | None = None,
+        kalshi_fill_price: float | None = None,
+        polymarket_fill_price: float | None = None,
+        contracts: int | None = None,
+    ) -> "TradeResult":
+        obj = str.__new__(cls, text)
+        obj.entry_cost = entry_cost
+        obj.kalshi_fill_price = kalshi_fill_price
+        obj.polymarket_fill_price = polymarket_fill_price
+        obj.contracts = contracts
+        return obj
+
+
 POLYMARKET_MARKET_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 KALSHI_MARKET_CACHE: dict[str, dict[str, Any]] = {}
 SETTLEMENT_PAYOUT_AFTER_FEES = 0.98
@@ -1812,11 +1829,17 @@ def execute_arbitrage(
         )
 
     kalshi_fill_price = filled_price(kalshi_order, kalshi_side)
-    return (
-        "TRADED "
-        f"Polymarket {polymarket_contract} filled @ {cli.fmt_display_cents(poly_fill_price)}c "
-        f"(limit {cli.fmt_display_cents(poly_order_price)}c); "
-        f"Kalshi {kalshi_side.upper()} filled {kalshi_filled:g} @ {cli.fmt_display_cents(kalshi_fill_price)}c"
+    return TradeResult(
+        (
+            "TRADED "
+            f"Polymarket {polymarket_contract} filled @ {cli.fmt_display_cents(poly_fill_price)}c "
+            f"(limit {cli.fmt_display_cents(poly_order_price)}c); "
+            f"Kalshi {kalshi_side.upper()} filled {kalshi_filled:g} @ {cli.fmt_display_cents(kalshi_fill_price)}c"
+        ),
+        entry_cost=poly_fill_price + kalshi_fill_price,
+        kalshi_fill_price=kalshi_fill_price,
+        polymarket_fill_price=poly_fill_price,
+        contracts=int(kalshi_filled),
     )
 
 
@@ -2132,16 +2155,26 @@ def main() -> None:
                         open_position = partial_position
                         trades_done += 1
                     elif not result.startswith("SKIP ") and not result.startswith("DRY RUN would skip"):
+                        actual_entry_cost = (
+                            result.entry_cost
+                            if isinstance(result, TradeResult) and result.entry_cost is not None
+                            else preflight["kalshi_price"] + preflight["polymarket_price"]
+                        )
+                        actual_contracts = (
+                            result.contracts
+                            if isinstance(result, TradeResult) and result.contracts is not None
+                            else int(preflight["contracts"])
+                        )
                         open_position = {
                             "ticker": kalshi_snapshot.get("ticker"),
                             "close_time": kalshi_snapshot.get("close_time"),
                             "kalshi_side": preflight["kalshi_side"],
                             "polymarket_contract": preflight["polymarket_contract"],
-                            "entry_cost": preflight["kalshi_price"] + preflight["polymarket_price"],
+                            "entry_cost": actual_entry_cost,
                             "entry_time": kalshi_snapshot.get("timestamp_utc"),
-                            "contracts": int(preflight["contracts"]),
-                            "kalshi_contracts": int(preflight["contracts"]),
-                            "polymarket_contracts": int(preflight["contracts"]),
+                            "contracts": actual_contracts,
+                            "kalshi_contracts": actual_contracts,
+                            "polymarket_contracts": actual_contracts,
                             "kalshi_absent": False,
                             "polymarket_absent": False,
                             "boundary_review_logged": False,
