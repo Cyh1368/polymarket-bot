@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
-import argparse
-import json
-import socket
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+
+from flask import Flask, Response, jsonify, render_template_string
 
 
 APP_DIR = Path(__file__).resolve().parent
-DEFAULT_LOG_PATH = APP_DIR / "concise_trader_log.txt"
+LOG_PATH = APP_DIR / "concise_trader_log.txt"
+MAX_BYTES = 250_000
+MAX_LINES = 200
 
-log_path = DEFAULT_LOG_PATH
-
-
-class ReusableThreadingHTTPServer(ThreadingHTTPServer):
-    allow_reuse_address = True
+app = Flask(__name__)
 
 
 PAGE = """<!doctype html>
@@ -25,7 +17,7 @@ PAGE = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Concise Trader Log</title>
+  <title>Trader Log</title>
   <style>
     :root {
       color-scheme: dark;
@@ -76,28 +68,23 @@ PAGE = """<!doctype html>
       display: block;
       min-height: 1.45em;
     }
-    .balance {
-      color: #93c5fd;
+    .entry-skip {
+      color: #8b949e;
     }
     .contract-start {
       font-weight: 700;
     }
     .trade-executed {
       color: #4ade80;
-      font-weight: 700;
-    }
-    .position {
-      color: #facc15;
     }
     .position-exited {
       color: #f87171;
-      font-weight: 700;
     }
   </style>
 </head>
 <body>
   <header>
-    <h1>concise_trader_log.txt</h1>
+    <h1>trader_log.txt</h1>
     <div id="status">loading</div>
   </header>
   <pre id="log"></pre>
@@ -105,22 +92,20 @@ PAGE = """<!doctype html>
     const logEl = document.getElementById("log");
     const statusEl = document.getElementById("status");
     let lastText = "";
+
     let firstLoad = true;
 
     function classifyLine(line) {
-      if (line.includes("BALANCE ")) {
-        return "balance";
-      }
       if (line.includes("CONTRACT ")) {
         return "contract-start";
+      }
+      if (line.includes("ENTRY SKIP") || line.includes("CHECK SKIP") || line.includes("HOLD continue")) {
+        return "entry-skip";
       }
       if (line.includes("TRADED ") || line.includes("DRY RUN would place")) {
         return "trade-executed";
       }
-      if (line.includes("POSITION REVIEW") || line.includes("POSITION CLEAR")) {
-        return "position";
-      }
-      if (line.includes("EXITED ") || line.includes("EXIT FAILED") || line.includes("EXIT_REVIEW") || line.includes("FATAL ")) {
+      if (line.includes("EXIT_REVIEW") || line.includes("FATAL ")) {
         return "position-exited";
       }
       return "";
@@ -170,72 +155,35 @@ PAGE = """<!doctype html>
 """
 
 
-def read_log() -> str:
-    if not log_path.exists():
+def read_log_tail() -> str:
+    if not LOG_PATH.exists():
         return ""
-    return log_path.read_text(encoding="utf-8", errors="replace").rstrip("\n")
+    size = LOG_PATH.stat().st_size
+    with LOG_PATH.open("rb") as file_obj:
+        if size > MAX_BYTES:
+            file_obj.seek(size - MAX_BYTES)
+            file_obj.readline()
+        data = file_obj.read()
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    return "\n".join(lines[-MAX_LINES:])
 
 
-class ConciseLogHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        self.handle_request(send_body=True)
-
-    def do_HEAD(self) -> None:
-        self.handle_request(send_body=False)
-
-    def handle_request(self, send_body: bool) -> None:
-        path = urlparse(self.path).path
-        if path == "/":
-            self.send_text(PAGE, "text/html; charset=utf-8", send_body=send_body)
-            return
-        if path == "/log":
-            text = read_log()
-            payload = {
-                "path": str(log_path),
-                "lines": 0 if not text else text.count("\n") + (0 if text.endswith("\n") else 1),
-                "text": text,
-            }
-            self.send_json(payload, send_body=send_body)
-            return
-        self.send_error(HTTPStatus.NOT_FOUND, "Not found")
-
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
-    def send_text(self, text: str, content_type: str, send_body: bool = True) -> None:
-        data = text.encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        if send_body:
-            self.wfile.write(data)
-
-    def send_json(self, payload: dict[str, object], send_body: bool = True) -> None:
-        data = json.dumps(payload).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        if send_body:
-            self.wfile.write(data)
+@app.get("/")
+def index() -> str:
+    return render_template_string(PAGE)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Serve concise_trader_log.txt as a live web log.")
-    parser.add_argument("--host", default="0.0.0.0", help="Host interface to bind.")
-    parser.add_argument("--port", type=int, default=8096, help="Port to listen on.")
-    parser.add_argument("--log-path", type=Path, default=DEFAULT_LOG_PATH, help="Log file to display.")
-    return parser.parse_args()
+@app.get("/log")
+def log() -> Response:
+    text = read_log_tail()
+    return jsonify(
+        {
+            "path": str(LOG_PATH),
+            "lines": 0 if not text else text.count("\n") + (0 if text.endswith("\n") else 1),
+            "text": text,
+        }
+    )
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    log_path = args.log_path.expanduser().resolve()
-    server = ReusableThreadingHTTPServer((args.host, args.port), ConciseLogHandler)
-    host_display = socket.gethostname() if args.host == "0.0.0.0" else args.host
-    print(f"Serving {log_path}", flush=True)
-    print(f"Listening on {args.host}:{args.port} (try http://{host_display}:{args.port}/)", flush=True)
-    server.serve_forever()
+    app.run(host="0.0.0.0", port=8087, debug=False, threaded=True)

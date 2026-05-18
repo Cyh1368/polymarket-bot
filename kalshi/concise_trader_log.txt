@@ -1,0 +1,7 @@
+2026-05-18 02:58:49.9 | CONTRACT KXBTC15M-26MAY172300-00 | BTC price up in next 15 mins? | expires 2026-05-18T03:00:00Z | K target 76835.01 | P target -- | P market btc-updown-15m-1779072300
+2026-05-18 02:59:15.1 | CONTRACT KXBTC15M-26MAY172300-00 | BTC price up in next 15 mins? | expires 2026-05-18T03:00:00Z | K target 76835.01 | P target -- | P market btc-updown-15m-1779072300
+2026-05-18 03:22:33.6 | CONTRACT KXBTC15M-26MAY172330-30 | BTC price up in next 15 mins? | expires 2026-05-18T03:30:00Z | K target 76845.34 | P target -- | P market btc-updown-15m-1779074100
+2026-05-18 03:29:17.2 | BALANCE Kalshi $10.8000 | Polymarket $8.3281 | total $19.1281
+2026-05-18 03:29:17.2 | CONTRACT KXBTC15M-26MAY172330-30 | BTC price up in next 15 mins? | expires 2026-05-18T03:30:00Z | K target 76845.34 | P target -- | P market btc-updown-15m-1779074100
+2026-05-18 03:36:16.5 | BALANCE Kalshi $13.8000 | Polymarket $8.3281 | total $22.1281
+2026-05-18 03:36:16.5 | CONTRACT KXBTC15M-26MAY172345-45 | BTC price up in next 15 mins? | expires 2026-05-18T03:45:00Z | K target 76930.05 | P target -- | P market btc-updown-15m-1779075000
