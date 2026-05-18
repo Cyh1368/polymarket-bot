@@ -25,6 +25,7 @@ SETTLEMENT_PAYOUT_AFTER_FEES = 0.98
 CONTRACT_WINDOW_SECONDS = 15 * 60
 CONTRACT_BOUNDARY_NO_TRADE_SECONDS = 30.0
 EXIT_LIMIT_DEVIATION = 0.01
+POLYMARKET_MIN_ORDER_NOTIONAL = 1.0
 
 
 def http_json(
@@ -1230,6 +1231,7 @@ def trade_preflight(
             executable_contracts,
         )
     poly_order_price = poly_price or fallback_poly_price
+    polymarket_notional = poly_order_price * executable_contracts
     total_cost = kalshi_price + poly_order_price
     adjusted_profit = (1.0 / total_cost) - 1.0 if 0 < total_cost < 1 else 0.0
     vwap_price = poly_plan.get("vwap_price")
@@ -1251,6 +1253,12 @@ def trade_preflight(
     elif poly_price is None:
         decision = "SKIP"
         reason = f"Polymarket liquidity {poly_liquidity:g} < {executable_contracts}"
+    elif polymarket_notional < POLYMARKET_MIN_ORDER_NOTIONAL:
+        decision = "SKIP"
+        reason = (
+            f"Polymarket notional {cli.fmt_money(polymarket_notional)} "
+            f"< {cli.fmt_money(POLYMARKET_MIN_ORDER_NOTIONAL)} minimum"
+        )
     elif adjusted_profit <= min_adjusted_profit:
         decision = "SKIP"
         reason = (
@@ -1268,6 +1276,7 @@ def trade_preflight(
         "kalshi_liquidity": kalshi_liquidity,
         "polymarket_contract": polymarket_contract,
         "polymarket_price": poly_order_price,
+        "polymarket_notional": polymarket_notional,
         "polymarket_liquidity": poly_liquidity,
         "polymarket_vwap_price": vwap_price,
         "polymarket_vwap_profit": vwap_profit,
@@ -1473,6 +1482,29 @@ def execute_arbitrage(
             f"Polymarket liquidity {post_kalshi_poly_liquidity:g} < {int(kalshi_filled)}; "
             f"Kalshi fill {kalshi_filled:g} @ {cli.fmt_display_cents(kalshi_fill_price)}c; "
             f"{exit_text}"
+        )
+    post_kalshi_poly_notional = post_kalshi_poly_price * int(kalshi_filled)
+    if post_kalshi_poly_notional < POLYMARKET_MIN_ORDER_NOTIONAL:
+        try:
+            exit_order = kalshi_exit_position(
+                str(kalshi_snapshot["ticker"]),
+                kalshi_side,
+                int(kalshi_filled),
+            )
+            exit_filled = fill_count(exit_order)
+            exit_price = filled_price(exit_order, kalshi_side)
+            exit_text = (
+                f"EXITED Kalshi {kalshi_side.upper()} {exit_filled:g} @ "
+                f"{cli.fmt_display_cents(exit_price)}c"
+            )
+        except Exception as exit_exc:
+            exit_text = f"KALSHI EXIT FAILED: {type(exit_exc).__name__}: {exit_exc}"
+        raise FatalTradeError(
+            "Polymarket hedge below minimum order notional after Kalshi fill; "
+            f"Kalshi fill {kalshi_filled:g} @ {cli.fmt_display_cents(kalshi_fill_price)}c; "
+            f"Polymarket {polymarket_contract} now @ {cli.fmt_display_cents(post_kalshi_poly_price)}c "
+            f"x {int(kalshi_filled)} = {cli.fmt_money(post_kalshi_poly_notional)} "
+            f"< {cli.fmt_money(POLYMARKET_MIN_ORDER_NOTIONAL)} minimum; {exit_text}"
         )
     post_kalshi_cost = kalshi_fill_price + post_kalshi_poly_price
     post_kalshi_profit = (
