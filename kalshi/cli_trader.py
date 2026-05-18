@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import concurrent.futures
 import json
 import os
 import time
@@ -1114,6 +1115,34 @@ def liquidation_bid_value(
     return kalshi_bid + poly_bid
 
 
+def position_has_pending_exit(position: dict[str, Any]) -> bool:
+    return bool(
+        position.get("exit_started")
+        or position.get("kalshi_exited")
+        or position.get("polymarket_exited")
+    )
+
+
+def kalshi_exit_summary(
+    order: dict[str, Any],
+    side: str,
+) -> tuple[float, float, float | None, float | None, str]:
+    filled = fill_count(order)
+    fill_price = filled_price(order, side)
+    reference = finite_float(
+        order.get("best_bid")
+        if order.get("exit_method") == "sell"
+        else order.get("best_ask")
+    )
+    limit = finite_float(order.get("limit_price"))
+    limit_text = (
+        f"bid {cli.fmt_display_cents(reference)}c, limit {cli.fmt_display_cents(limit)}c"
+        if order.get("exit_method") == "sell"
+        else f"ask {cli.fmt_display_cents(reference)}c, limit {cli.fmt_display_cents(limit)}c"
+    )
+    return filled, fill_price, reference, limit, limit_text
+
+
 def execute_position_exit(
     position: dict[str, Any],
     kalshi_snapshot: dict[str, Any],
@@ -1131,6 +1160,7 @@ def execute_position_exit(
     if not ticker or kalshi_side not in ("yes", "no") or not polymarket_contract:
         return f"EXIT FAILED incomplete position {position}", False
 
+    exit_polymarket_market = position.setdefault("polymarket_market", polymarket_market)
     if not live:
         liquidation = liquidation_bid_value(
             kalshi_snapshot,
@@ -1150,45 +1180,105 @@ def execute_position_exit(
             "closing simulated position"
         ), True
 
-    try:
-        poly_response, poly_fill_price = polymarket_exit_position(
-            polymarket_market,
-            polymarket_contract,
-            contracts,
-        )
-    except Exception as exc:
-        return (
-            f"EXIT FAILED Polymarket {polymarket_contract} sell failed before Kalshi exit: "
-            f"{type(exc).__name__}: {exc}"
-        ), False
-    poly_best_bid = finite_float(poly_response.get("best_bid"))
-    poly_limit = finite_float(poly_response.get("limit_price"))
+    position["exit_started"] = True
+    poly_response = position.get("polymarket_exit_response")
+    poly_fill_price = finite_float(position.get("polymarket_exit_price"))
+    kalshi_order = position.get("kalshi_exit_order")
+    kalshi_fill_price = finite_float(position.get("kalshi_exit_price"))
 
-    try:
-        kalshi_order = kalshi_exit_position(ticker, kalshi_side, contracts)
-    except Exception as exc:
+    errors: list[str] = []
+    attempted: list[str] = []
+    need_poly = not position.get("polymarket_exited")
+    need_kalshi = not position.get("kalshi_exited")
+
+    if need_poly and need_kalshi:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {
+                executor.submit(
+                    polymarket_exit_position,
+                    exit_polymarket_market,
+                    polymarket_contract,
+                    contracts,
+                ): "polymarket",
+                executor.submit(kalshi_exit_position, ticker, kalshi_side, contracts): "kalshi",
+            }
+            for future in concurrent.futures.as_completed(futures):
+                venue = futures[future]
+                attempted.append(venue)
+                try:
+                    if venue == "polymarket":
+                        poly_response, poly_fill_price = future.result()
+                        position["polymarket_exited"] = True
+                        position["polymarket_exit_response"] = poly_response
+                        position["polymarket_exit_price"] = poly_fill_price
+                    else:
+                        kalshi_order = future.result()
+                        _filled, kalshi_fill_price, _reference, _limit, _limit_text = kalshi_exit_summary(
+                            kalshi_order,
+                            kalshi_side,
+                        )
+                        position["kalshi_exited"] = True
+                        position["kalshi_exit_order"] = kalshi_order
+                        position["kalshi_exit_price"] = kalshi_fill_price
+                except Exception as exc:
+                    errors.append(f"{venue} failed: {type(exc).__name__}: {exc}")
+    elif need_poly:
+        attempted.append("polymarket")
+        try:
+            poly_response, poly_fill_price = polymarket_exit_position(
+                exit_polymarket_market,
+                polymarket_contract,
+                contracts,
+            )
+            position["polymarket_exited"] = True
+            position["polymarket_exit_response"] = poly_response
+            position["polymarket_exit_price"] = poly_fill_price
+        except Exception as exc:
+            errors.append(f"polymarket failed: {type(exc).__name__}: {exc}")
+    elif need_kalshi:
+        attempted.append("kalshi")
+        try:
+            kalshi_order = kalshi_exit_position(ticker, kalshi_side, contracts)
+            _filled, kalshi_fill_price, _reference, _limit, _limit_text = kalshi_exit_summary(
+                kalshi_order,
+                kalshi_side,
+            )
+            position["kalshi_exited"] = True
+            position["kalshi_exit_order"] = kalshi_order
+            position["kalshi_exit_price"] = kalshi_fill_price
+        except Exception as exc:
+            errors.append(f"kalshi failed: {type(exc).__name__}: {exc}")
+
+    if not position.get("kalshi_exited") or not position.get("polymarket_exited"):
+        remaining = []
+        if not position.get("kalshi_exited"):
+            remaining.append(f"Kalshi {kalshi_side.upper()}")
+        if not position.get("polymarket_exited"):
+            remaining.append(f"Polymarket {polymarket_contract}")
+        done = []
+        if position.get("kalshi_exited"):
+            done.append(f"Kalshi {kalshi_side.upper()}")
+        if position.get("polymarket_exited"):
+            done.append(f"Polymarket {polymarket_contract}")
+        done_text = f"; exited {' and '.join(done)}" if done else ""
+        attempted_text = f"attempted {', '.join(attempted) or 'none'}"
+        error_text = "; ".join(errors) if errors else "no fill"
         return (
-            "EXIT FAILED after Polymarket sell filled; "
-            f"Polymarket {polymarket_contract} sold {contracts} @ {cli.fmt_display_cents(poly_fill_price)}c "
-            f"(bid {cli.fmt_display_cents(poly_best_bid)}c, limit {cli.fmt_display_cents(poly_limit)}c); "
-            f"Kalshi {kalshi_side.upper()} exit failed: {type(exc).__name__}: {exc}"
+            f"EXIT PARTIAL {attempted_text}{done_text}; "
+            f"remaining {' and '.join(remaining)}; will retry next tick; {error_text}"
         ), False
 
-    kalshi_filled = fill_count(kalshi_order)
-    kalshi_fill_price = filled_price(kalshi_order, kalshi_side)
-    kalshi_reference = finite_float(
-        kalshi_order.get("best_bid")
-        if kalshi_order.get("exit_method") == "sell"
-        else kalshi_order.get("best_ask")
+    if not isinstance(kalshi_order, dict) or poly_response is None:
+        return "EXIT FAILED missing recorded exit order details after both legs exited", False
+
+    kalshi_filled, kalshi_fill_price, _kalshi_reference, _kalshi_limit, kalshi_limit_text = kalshi_exit_summary(
+        kalshi_order,
+        kalshi_side,
     )
-    kalshi_limit = finite_float(kalshi_order.get("limit_price"))
-    kalshi_limit_text = (
-        f"bid {cli.fmt_display_cents(kalshi_reference)}c, limit {cli.fmt_display_cents(kalshi_limit)}c"
-        if kalshi_order.get("exit_method") == "sell"
-        else f"ask {cli.fmt_display_cents(kalshi_reference)}c, limit {cli.fmt_display_cents(kalshi_limit)}c"
-    )
+    poly_best_bid = finite_float(poly_response.get("best_bid")) if isinstance(poly_response, dict) else None
+    poly_limit = finite_float(poly_response.get("limit_price")) if isinstance(poly_response, dict) else None
     exit_cost = as_float(position.get("entry_cost"))
-    exit_value = kalshi_fill_price + poly_fill_price
+    exit_value = as_float(kalshi_fill_price) + as_float(poly_fill_price)
     return (
         "EXITED "
         f"Kalshi {kalshi_side.upper()} {kalshi_filled:g} @ {cli.fmt_display_cents(kalshi_fill_price)}c "
@@ -1595,8 +1685,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hold-distance-multiplier",
         type=float,
-        default=1.25,
-        help="Hold distance multiplier applied to max(10, seconds_to_expiry * 0.05). Default: 1.25.",
+        default=0.50,
+        help="Hold distance multiplier applied to max(10, seconds_to_expiry * 0.05). Default: 0.50.",
     )
     parser.add_argument("--contracts", type=int, default=1, help="Maximum matched contracts/shares per leg.")
     parser.add_argument("--max-trades", type=int, default=1, help="Maximum live arbitrage executions.")
@@ -1628,7 +1718,7 @@ def main() -> None:
     min_profit_after_fees = max(0.0, args.min_profit_after_fees)
     source_gap_threshold = max(0.0, args.source_gap_threshold)
     target_divergence_threshold = max(0.0, args.target_divergence_threshold)
-    hold_distance_multiplier = max(1.0, args.hold_distance_multiplier)
+    hold_distance_multiplier = min(1.0, args.hold_distance_multiplier)
     pending_rows: dict[Path, list[dict[str, Any]]] = {}
     trades_done = 0
     open_position: dict[str, Any] | None = None
@@ -1671,13 +1761,18 @@ def main() -> None:
             )
             if open_position is not None:
                 position_ticker = str(open_position.get("ticker") or "")
-                if contract_key and position_ticker and contract_key != position_ticker:
+                if (
+                    contract_key
+                    and position_ticker
+                    and contract_key != position_ticker
+                    and not position_has_pending_exit(open_position)
+                ):
                     cli.print_line(
                         f"{display_time:<10} | "
                         f"{format_position_clear(open_position, f'current contract is {contract_key}')}"
                     )
                     open_position = None
-                elif position_expired(open_position):
+                elif position_expired(open_position) and not position_has_pending_exit(open_position):
                     cli.print_line(
                         f"{display_time:<10} | "
                         f"{format_position_clear(open_position, 'position contract reached expiry')}"
@@ -1694,7 +1789,18 @@ def main() -> None:
                 cli.print_snapshot(kalshi_snapshot, polymarket_snapshot, arbitrage, ref_suffix)
 
             if open_position is not None:
-                if boundary_reason is not None:
+                if position_has_pending_exit(open_position):
+                    exit_result, exit_complete = execute_position_exit(
+                        open_position,
+                        kalshi_snapshot,
+                        polymarket_snapshot,
+                        polymarket_market,
+                        args.live,
+                    )
+                    cli.print_line(f"{display_time:<10} | {exit_result}")
+                    if exit_complete:
+                        open_position = None
+                elif boundary_reason is not None:
                     if not open_position.get("boundary_review_logged"):
                         liquidation = liquidation_bid_value(
                             kalshi_snapshot,
