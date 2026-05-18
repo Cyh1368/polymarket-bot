@@ -1408,6 +1408,7 @@ def main() -> None:
             )
             if new_contract:
                 last_contract_key = contract_key
+                cli.trim_log_file(cli.TRADER_LOG_PATH, cli.TRADER_LOG_MAX_LINES - 1)
                 cli.print_line(f"{display_time:<10} | {format_contract_start(kalshi_snapshot, polymarket_snapshot, source_snapshot)}")
 
             if arbitrage:

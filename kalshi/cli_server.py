@@ -32,11 +32,39 @@ CSV_FIELDS = [
     "guaranteed_payout",
 ]
 TRADER_LOG_PATH = Path(__file__).resolve().parent / "trader_log.txt"
+CONCISE_TRADER_LOG_PATH = Path(__file__).resolve().parent / "concise_trader_log.txt"
+TRADER_LOG_MAX_LINES = 200
+
+
+def trim_log_file(path: Path, max_lines: int = TRADER_LOG_MAX_LINES) -> None:
+    if max_lines < 1 or not path.exists():
+        return
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
+    if len(lines) <= max_lines:
+        return
+    path.write_text("\n".join(lines[-max_lines:]) + "\n", encoding="utf-8")
+
+
+def is_concise_log_line(line: str) -> bool:
+    return (
+        "CONTRACT " in line
+        or "TRADED " in line
+        or "DRY RUN would place" in line
+        or "EXIT_REVIEW" in line
+        or "FATAL " in line
+    )
 
 
 def append_terminal_log(line: str) -> None:
+    dated_line = f"{btc.iso_utc()[:10]} {line}\n"
     with TRADER_LOG_PATH.open("a", encoding="utf-8") as file_obj:
-        file_obj.write(f"{btc.iso_utc()[:10]} {line}\n")
+        file_obj.write(dated_line)
+    if is_concise_log_line(line):
+        with CONCISE_TRADER_LOG_PATH.open("a", encoding="utf-8") as file_obj:
+            file_obj.write(dated_line)
 
 
 def print_line(line: str) -> None:

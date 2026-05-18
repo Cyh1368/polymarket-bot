@@ -93,7 +93,7 @@ PAGE = """<!doctype html>
     let firstLoad = true;
 
     function classifyLine(line) {
-      if (line.includes("ENTRY SKIP")) {
+      if (line.includes("ENTRY SKIP") || line.includes("HOLD continue")) {
         return "entry-skip";
       }
       if (line.includes("TRADED ") || line.includes("DRY RUN would place")) {
