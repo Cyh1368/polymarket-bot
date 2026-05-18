@@ -604,8 +604,8 @@ def source_filter_metrics(
         else None
     )
     kalshi_distance = (
-        abs(kalshi_price - kalshi_target)
-        if kalshi_price is not None and kalshi_target is not None
+        abs(kalshi_direction_price - kalshi_target)
+        if kalshi_direction_price is not None and kalshi_target is not None
         else None
     )
     poly_distance = (
