@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
 import json
+import socket
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,6 +16,10 @@ MAX_BYTES = 250_000
 MAX_LINES = 300
 
 log_path = DEFAULT_LOG_PATH
+
+
+class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
 
 
 PAGE = """<!doctype html>
@@ -236,6 +243,8 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
     log_path = args.log_path.expanduser().resolve()
-    server = ThreadingHTTPServer((args.host, args.port), ConciseLogHandler)
-    print(f"Serving {log_path} at http://{args.host}:{args.port}", flush=True)
+    server = ReusableThreadingHTTPServer((args.host, args.port), ConciseLogHandler)
+    host_display = socket.gethostname() if args.host == "0.0.0.0" else args.host
+    print(f"Serving {log_path}", flush=True)
+    print(f"Listening on {args.host}:{args.port} (try http://{host_display}:{args.port}/)", flush=True)
     server.serve_forever()
