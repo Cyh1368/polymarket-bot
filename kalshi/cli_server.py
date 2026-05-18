@@ -56,6 +56,8 @@ def is_concise_log_line(line: str) -> bool:
         or "POSITION CLEAR" in line
         or "TRADED " in line
         or "DRY RUN would place" in line
+        or "EXITED " in line
+        or "EXIT FAILED" in line
         or "EXIT_REVIEW" in line
         or "FATAL " in line
     )
