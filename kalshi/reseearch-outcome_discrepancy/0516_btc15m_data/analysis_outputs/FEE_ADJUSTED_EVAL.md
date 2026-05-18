@@ -16,7 +16,7 @@ Canonical entry rule:
 
 ```text
 price_direction_agreement
-AND source_price_gap <= 5
+AND source_price_gap <= 100
 AND min_distance_from_target >= max(10, seconds_to_expiry * 0.05)
 AND abs_target_divergence <= 35
 ```
@@ -72,7 +72,7 @@ The entry filter now needs two layers:
 ```text
 1. risk screen:
    direction_agreement
-   AND source_gap <= 5
+   AND source_gap <= 100
    AND min_distance >= max(10, seconds_to_expiry * 0.05)
    AND abs_target_divergence <= 35
 

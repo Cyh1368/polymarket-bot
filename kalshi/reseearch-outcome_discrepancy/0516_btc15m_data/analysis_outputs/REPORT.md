@@ -38,7 +38,7 @@ Danger was not purely an expiry-only problem. Danger rate was 16.9% in the last 
 
 The first-pass filter is necessary but not sufficient because it is only a snapshot entry check. More importantly, the tick-level PnL aggregate is not a strategy PnL. A bot enters once per contract and holds to expiry, so the correct evaluation unit is the first allowed entry per contract.
 
-The rule `direction_agreement and source_gap <= $5 and min_distance >= max($10, 0.05 * seconds_to_expiry) and abs_target_divergence <= $15` allowed 1,568 ticks, but only 36 contract entries. On the correct contract-level accounting it produced:
+The rule `direction_agreement and source_gap <= $100 and min_distance >= max($10, 0.05 * seconds_to_expiry) and abs_target_divergence <= $15` allowed 1,568 ticks, but only 36 contract entries. On the correct contract-level accounting it produced:
 
 | metric | value |
 |---|---:|
@@ -59,10 +59,10 @@ Target divergence should not be used as a hard `$15` cutoff. It blocks safe high
 
 | filter | entries | dangerous | total PnL | avg PnL |
 |---|---:|---:|---:|---:|
-| time-scaled + gap <= $5 + target <= $15 | 36 | 2 | -0.771 | -0.021 |
-| time-scaled + gap <= $5 + no target cap | 45 | 4 | -2.011 | -0.045 |
-| time-scaled + gap <= $5 + target <= $30 | 43 | 4 | -2.271 | -0.053 |
-| time-scaled + gap <= $5 + target <= $35 | 44 | 4 | -2.141 | -0.049 |
+| time-scaled + gap <= $100 + target <= $15 | 36 | 2 | -0.771 | -0.021 |
+| time-scaled + gap <= $100 + no target cap | 45 | 4 | -2.011 | -0.045 |
+| time-scaled + gap <= $100 + target <= $30 | 43 | 4 | -2.271 | -0.053 |
+| time-scaled + gap <= $100 + target <= $35 | 44 | 4 | -2.141 | -0.049 |
 
 Raising or dropping the target cap recovers several safe opportunities, but it also admits additional dangerous contracts in this sample. That means target divergence is not a reliable standalone predictor; at best it is a weak risk input that needs to be weighed against spread size and the other live features.
 
@@ -102,7 +102,7 @@ def should_place_arb(row) -> bool:
         return False
     if min_distance < required_distance:
         return False
-    if source_gap > 5.0:
+    if source_gap > 100.0:
         return False
 
     # Target divergence is a weak risk signal in this sample. Do not use a tight
@@ -136,7 +136,7 @@ def should_hold_arb(row) -> bool:
         return False
     if min_distance < 25.0:
         return False
-    if source_gap > 5.0:
+    if source_gap > 100.0:
         return False
     if target_divergence > 35.0:
         return False

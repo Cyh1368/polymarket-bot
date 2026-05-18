@@ -4,7 +4,7 @@ Canonical entry rule used here:
 
 ```text
 price_direction_agreement
-AND source_price_gap <= 5
+AND source_price_gap <= 100
 AND min_distance_from_target >= max(10, seconds_to_expiry * 0.05)
 AND abs_target_divergence <= 35
 ```
@@ -35,7 +35,7 @@ Distance-only hold exits, assuming exited positions are flattened for zero settl
 | `max(20, seconds_to_expiry * 0.07)` | 25 | 41 | 3 | 0 | +0.063 |
 | `max(25, seconds_to_expiry * 0.075)` | 26 | 41 | 3 | 0 | +0.063 |
 
-Full hold criteria using distance plus `source_gap <= 5`, direction agreement, and `abs_target_divergence <= 35` caused every canonical entry to exit before expiry for every tested distance variant. That is probably too reactive unless the bot has a real unwind model and can exit cheaply.
+Full hold criteria using distance plus `source_gap <= 100`, direction agreement, and `abs_target_divergence <= 35` caused every canonical entry to exit before expiry for every tested distance variant. That is probably too reactive unless the bot has a real unwind model and can exit cheaply.
 
 ## 170815 Trace
 
@@ -107,7 +107,7 @@ def should_hold_arb(row, distance_multiplier=1.25) -> bool:
         return False
     if min_distance < hold_required_distance:
         return False
-    if source_gap > 5.0:
+    if source_gap > 100.0:
         return False
     if target_divergence > 35.0:
         return False

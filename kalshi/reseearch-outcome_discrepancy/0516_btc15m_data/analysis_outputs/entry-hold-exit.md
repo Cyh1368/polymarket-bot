@@ -2,6 +2,14 @@
 
 This document describes the current arb filter stack for BTC 15-minute Kalshi/Polymarket markets after incorporating outcome-discrepancy risk, hold-filter coherence, and 2% winner-payout fees.
 
+Current source-gap configuration:
+
+```text
+source_gap_threshold = 100.0
+```
+
+This replaces the earlier `$5` source-gap threshold. Historical analysis tables in older reports may still reflect results computed under `$5` unless explicitly rerun.
+
 ## Core Accounting
 
 The bot should evaluate strategy PnL at the contract level, not the tick level.
@@ -103,7 +111,7 @@ source_gap = abs(kalshi_btc_price - polymarket_btc_price)
 Require:
 
 ```python
-source_gap <= 5.0
+source_gap <= 100.0
 ```
 
 This is a discrepancy-risk screen. Large feed gaps can make the two venues settle differently.
@@ -200,7 +208,7 @@ def should_enter_arb(row, max_arb_cost=0.96) -> bool:
 
     return (
         direction_agreement
-        and source_gap <= 5.0
+        and source_gap <= 100.0
         and min_distance >= entry_required_distance
         and target_divergence <= 35.0
         and arb_cost <= max_arb_cost
@@ -263,7 +271,7 @@ def should_hold_arb(row, distance_multiplier=1.25) -> bool:
 
     return (
         direction_agreement
-        and source_gap <= 5.0
+        and source_gap <= 100.0
         and min_distance >= hold_required_distance
         and target_divergence <= 35.0
     )
@@ -304,9 +312,9 @@ keep holding because unwind cost is worse than expected settlement risk
 
 ## Deployment Caveats
 
-1. **Full hold logic exits very often**
+1. **Full hold logic should be re-tested after threshold changes**
 
-In the sample, enforcing the full hold logic every tick caused every canonical entry to exit before expiry. The main driver was `source_gap <= 5`, which can oscillate.
+Earlier runs with the old `$5` source-gap threshold caused nearly every canonical entry to exit before expiry. The current `$100` threshold is much looser, so any hold-exit frequency claims should be rerun under this configuration before live deployment.
 
 2. **Immediate churn is possible**
 
@@ -347,7 +355,7 @@ Production entry:
 polymarket_error empty
 kalshi_status == active
 direction_agreement == True
-source_gap <= 5
+source_gap <= 100
 min_distance >= max(10, seconds_to_expiry * 0.05)
 abs_target_divergence <= 35
 arb_cost <= 0.96
@@ -364,7 +372,7 @@ Hold monitor:
 ```text
 polymarket_error empty
 direction_agreement == True
-source_gap <= 5
+source_gap <= 100
 min_distance >= 1.25 * max(10, seconds_to_expiry * 0.05)
 abs_target_divergence <= 35
 ```
