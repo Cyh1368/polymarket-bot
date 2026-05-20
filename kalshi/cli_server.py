@@ -60,9 +60,14 @@ def is_concise_log_line(line: str) -> bool:
         or "POSITION REVIEW" in line
         or "POSITION CLEAR" in line
         or "TRADED " in line
+        or "PARTIAL ENTRY" in line
+        or "SKIP Kalshi hedge" in line
+        or "SKIP Polymarket" in line
         or "DRY RUN would place" in line
         or "SETTLED " in line
         or "EXITED " in line
+        or "EXIT PARTIAL" in line
+        or "EXIT WAIT" in line
         or "EXIT FAILED" in line
         or "EXIT_REVIEW" in line
         or "FATAL " in line
