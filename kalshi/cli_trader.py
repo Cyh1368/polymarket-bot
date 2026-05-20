@@ -53,7 +53,7 @@ POLYMARKET_MARKET_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 KALSHI_MARKET_CACHE: dict[str, dict[str, Any]] = {}
 SETTLEMENT_PAYOUT_AFTER_FEES = 0.98
 CONTRACT_WINDOW_SECONDS = 15 * 60
-CONTRACT_BOUNDARY_NO_TRADE_SECONDS = 30.0
+CONTRACT_BOUNDARY_NO_TRADE_SECONDS = 60.0
 EXIT_LIMIT_DEVIATION = 0.01
 POLYMARKET_MIN_ORDER_NOTIONAL = 1.0
 KALSHI_ORDER_VERIFY_ATTEMPTS = 5
@@ -61,6 +61,11 @@ KALSHI_ORDER_VERIFY_DELAY_SECONDS = 0.25
 POLYMARKET_SELL_BALANCE_ATTEMPTS = 8
 POLYMARKET_SELL_BALANCE_DELAY_SECONDS = 0.75
 CONTRACT_FAILURE_COOLDOWN_SECONDS = 60.0
+PROFIT_CAPTURE_MIN_EDGE = 0.04
+ONE_WINNER_NEGATIVE_EXIT_DISTANCE = 3.0
+ONE_WINNER_NEGATIVE_EXIT_SECONDS = 45.0
+TWO_WINNER_PROFIT_EXIT_SECONDS = 90.0
+TWO_WINNER_PROFIT_EXIT_DISTANCE = 20.0
 
 
 def http_json(
@@ -271,7 +276,19 @@ def combined_balance_line() -> str:
         parts.append(f"Polymarket {cli.fmt_money(polymarket_cash)}")
     except Exception as exc:
         parts.append(f"Polymarket ERROR {type(exc).__name__}: {exc}")
-    return f"BALANCE {' | '.join(parts)} | total {cli.fmt_money(total)}"
+    return f"BALANCE {' | '.join(parts)} | {cli.yellow_text(f'total {cli.fmt_money(total)}')}"
+
+
+def print_startup_banner() -> None:
+    timestamp = btc.iso_utc().replace("T", " ")[:19]
+    for line in (
+        "",
+        "==============================================================",
+        f"========== CLI TRADER INITIATED {timestamp} ==========",
+        "==============================================================",
+        "",
+    ):
+        cli.print_line(line, force_concise=True)
 
 
 def print_startup_balances() -> None:
@@ -1240,6 +1257,47 @@ def format_position_clear(position: dict[str, Any], reason: str) -> str:
     )
 
 
+def record_position_state(
+    position: dict[str, Any],
+    kalshi_snapshot: dict[str, Any],
+    polymarket_snapshot: dict[str, Any],
+    source_snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    if str(position.get("ticker") or "") != str(kalshi_snapshot.get("ticker") or ""):
+        return None
+    state = position_state_metrics(position, kalshi_snapshot, polymarket_snapshot, source_snapshot)
+    position["last_state_metrics"] = state
+    position["last_state_time"] = kalshi_snapshot.get("timestamp_utc") or source_snapshot.get("timestamp_utc")
+    return state
+
+
+def format_dry_settlement(position: dict[str, Any], reason: str) -> str:
+    state = position.get("last_state_metrics") or {}
+    observed_at = position.get("last_state_time") or "--"
+    held_winners = state.get("held_winners")
+    base = (
+        f"SETTLED DRY RUN {position.get('ticker') or '--'} | {reason} | "
+        f"observed {observed_at} | "
+        f"K {str(position.get('kalshi_side') or '--').upper()} final {state.get('kalshi_outcome') or '--'} + "
+        f"P {position.get('polymarket_contract') or '--'} final {state.get('polymarket_outcome') or '--'} | "
+        f"size {position.get('contracts') or '--'} | "
+        f"entry {cli.fmt_display_cents(position.get('entry_cost'))}c"
+    )
+    if held_winners is None:
+        return f"{base} | actual PnL unavailable; final outcome was not observed"
+    entry_cost = as_float(position.get("entry_cost"))
+    contracts = int(position.get("contracts") or 1)
+    settlement_value = SETTLEMENT_PAYOUT_AFTER_FEES * int(held_winners)
+    pnl_per_pair = settlement_value - entry_cost
+    total_pnl = pnl_per_pair * contracts
+    return (
+        f"{base} | winners {held_winners}/2 | "
+        f"settlement {cli.fmt_display_cents(settlement_value)}c - "
+        f"entry {cli.fmt_display_cents(entry_cost)}c = "
+        f"{cli.fmt_money(pnl_per_pair)} per pair | total {cli.fmt_money(total_pnl)}"
+    )
+
+
 def liquidation_bid_value(
     kalshi_snapshot: dict[str, Any],
     polymarket_snapshot: dict[str, Any],
@@ -1251,6 +1309,175 @@ def liquidation_bid_value(
     if kalshi_bid is None or poly_bid is None:
         return None
     return kalshi_bid + poly_bid
+
+
+def source_outcome(price: float | None, target: float | None) -> str | None:
+    if price is None or target is None:
+        return None
+    return "YES" if price > target else "NO"
+
+
+def position_state_metrics(
+    position: dict[str, Any],
+    kalshi_snapshot: dict[str, Any],
+    polymarket_snapshot: dict[str, Any],
+    source_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    kalshi_side = str(position.get("kalshi_side") or "").upper()
+    polymarket_side = str(position.get("polymarket_contract") or "").upper()
+    kalshi_price = finite_float(source_snapshot.get("kalshi_price"))
+    polymarket_price = finite_float(source_snapshot.get("polymarket_price"))
+    kalshi_target = finite_float(source_snapshot.get("kalshi_target"))
+    polymarket_target = finite_float(source_snapshot.get("polymarket_target"))
+    kalshi_outcome = source_outcome(kalshi_price, kalshi_target)
+    polymarket_outcome = source_outcome(polymarket_price, polymarket_target)
+    kalshi_distance = (
+        abs(kalshi_price - kalshi_target)
+        if kalshi_price is not None and kalshi_target is not None
+        else None
+    )
+    polymarket_distance = (
+        abs(polymarket_price - polymarket_target)
+        if polymarket_price is not None and polymarket_target is not None
+        else None
+    )
+    min_distance = (
+        min(kalshi_distance, polymarket_distance)
+        if kalshi_distance is not None and polymarket_distance is not None
+        else None
+    )
+    source_gap = (
+        abs(kalshi_price - polymarket_price)
+        if kalshi_price is not None and polymarket_price is not None
+        else None
+    )
+    held_winners = None
+    if kalshi_outcome is not None and polymarket_outcome is not None:
+        held_winners = int(kalshi_outcome == kalshi_side) + int(polymarket_outcome == polymarket_side)
+    liquidation = liquidation_bid_value(
+        kalshi_snapshot,
+        polymarket_snapshot,
+        str(position.get("kalshi_side") or ""),
+        polymarket_side,
+    )
+    entry_cost = as_float(position.get("entry_cost"))
+    liquidation_pnl = liquidation - entry_cost if liquidation is not None else None
+    expected_settlement_pnl = (
+        SETTLEMENT_PAYOUT_AFTER_FEES * held_winners - entry_cost
+        if held_winners is not None
+        else None
+    )
+    return {
+        "kalshi_outcome": kalshi_outcome,
+        "polymarket_outcome": polymarket_outcome,
+        "held_winners": held_winners,
+        "kalshi_distance": kalshi_distance,
+        "polymarket_distance": polymarket_distance,
+        "min_distance": min_distance,
+        "source_gap": source_gap,
+        "seconds_to_expiry": seconds_to_expiry(kalshi_snapshot),
+        "liquidation": liquidation,
+        "liquidation_pnl": liquidation_pnl,
+        "expected_settlement_pnl": expected_settlement_pnl,
+    }
+
+
+def format_position_state(state: dict[str, Any]) -> str:
+    return (
+        f"state winners={fmt_optional(state.get('held_winners'), 0)} "
+        f"K->{state.get('kalshi_outcome') or '--'} "
+        f"P->{state.get('polymarket_outcome') or '--'} "
+        f"min_dist {fmt_optional(state.get('min_distance'), 2)} "
+        f"gap {fmt_optional(state.get('source_gap'), 2)} "
+        f"liq {cli.fmt_display_cents(state.get('liquidation'))}c "
+        f"liq_pnl {cli.fmt_money(state.get('liquidation_pnl'))}"
+    )
+
+
+def exit_strategy_decision(
+    position: dict[str, Any],
+    state: dict[str, Any],
+    hold_decision: dict[str, Any],
+    take_profit_exit_value: float,
+    profit_capture_min_edge: float,
+) -> dict[str, Any]:
+    held_winners = state.get("held_winners")
+    remaining = state.get("seconds_to_expiry")
+    min_distance = state.get("min_distance")
+    liquidation = state.get("liquidation")
+    liquidation_pnl = state.get("liquidation_pnl")
+    entry_cost = as_float(position.get("entry_cost"))
+
+    if held_winners is None:
+        if not hold_decision["passed"] and liquidation_pnl is not None and liquidation_pnl >= 0:
+            return {"action": "EXIT", "reason": "data incomplete and non-negative hold-review unwind available"}
+        return {"action": "HOLD", "reason": "data incomplete; no state-aware exit"}
+
+    if held_winners <= 0:
+        return {"action": "EXIT", "reason": "EMERGENCY held_winners=0; both held legs currently losing"}
+
+    if liquidation_pnl is not None and liquidation_pnl >= profit_capture_min_edge:
+        return {
+            "action": "EXIT",
+            "reason": (
+                f"TAKE_PROFIT liquidation edge {cli.fmt_money(liquidation_pnl)} "
+                f">= {cli.fmt_money(profit_capture_min_edge)}"
+            ),
+        }
+
+    if liquidation is not None and liquidation >= take_profit_exit_value:
+        return {
+            "action": "EXIT",
+            "reason": (
+                f"TAKE_PROFIT liquidation {cli.fmt_display_cents(liquidation)}c "
+                f">= {cli.fmt_display_cents(take_profit_exit_value)}c"
+            ),
+        }
+
+    if held_winners >= 2:
+        near_expiry = isinstance(remaining, (int, float)) and remaining <= TWO_WINNER_PROFIT_EXIT_SECONDS
+        near_target = isinstance(min_distance, (int, float)) and min_distance < TWO_WINNER_PROFIT_EXIT_DISTANCE
+        if near_expiry and near_target and liquidation_pnl is not None and liquidation_pnl >= 0:
+            return {
+                "action": "EXIT",
+                "reason": (
+                    "TAKE_PROFIT favorable discrepancy near expiry/target; "
+                    f"{fmt_optional(remaining, 1)}s left, min_dist {fmt_optional(min_distance, 2)}"
+                ),
+            }
+        return {"action": "HOLD", "reason": "held_winners=2 but no acceptable profit capture"}
+
+    if not hold_decision["passed"]:
+        negative_unwind = liquidation_pnl is not None and liquidation_pnl < 0
+        if negative_unwind:
+            urgent_time = isinstance(remaining, (int, float)) and remaining <= ONE_WINNER_NEGATIVE_EXIT_SECONDS
+            urgent_distance = (
+                isinstance(min_distance, (int, float))
+                and min_distance <= ONE_WINNER_NEGATIVE_EXIT_DISTANCE
+            )
+            if urgent_time and urgent_distance:
+                return {
+                    "action": "EXIT",
+                    "reason": (
+                        "ONE_WINNER emergency negative unwind accepted; "
+                        f"{fmt_optional(remaining, 1)}s left, min_dist {fmt_optional(min_distance, 2)}"
+                    ),
+                }
+            return {
+                "action": "HOLD",
+                "reason": (
+                    "BLOCK_NEGATIVE_EXIT held_winners=1; "
+                    f"liquidation PnL {cli.fmt_money(liquidation_pnl)}"
+                ),
+            }
+        if liquidation_pnl is not None:
+            return {
+                "action": "EXIT",
+                "reason": f"HOLD_FAIL non-negative unwind {cli.fmt_money(liquidation_pnl)}",
+            }
+        return {"action": "HOLD", "reason": "hold failed but liquidation unavailable"}
+
+    return {"action": "HOLD", "reason": "state-aware hold"}
 
 
 def position_has_pending_exit(position: dict[str, Any]) -> bool:
@@ -2047,8 +2274,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--source-gap-threshold",
         type=float,
-        default=200.0,
-        help="Maximum absolute BTC source gap allowed for entry/hold. Default: 200.",
+        default=100.0,
+        help="Maximum absolute BTC source gap allowed for entry/hold. Default: 100.",
     )
     parser.add_argument(
         "--target-divergence-threshold",
@@ -2059,14 +2286,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hold-distance-multiplier",
         type=float,
-        default=0.50,
-        help="Hold distance multiplier applied to max(10, seconds_to_expiry * 0.05). Default: 0.50.",
+        default=1.00,
+        help="Hold distance multiplier applied to max(10, seconds_to_expiry * 0.05). Default: 1.00.",
     )
     parser.add_argument(
         "--take-profit-exit-value",
         type=float,
         default=1.02,
         help="Exit an open matched position when liquidation bid value is at least this total. Default: 1.02.",
+    )
+    parser.add_argument(
+        "--profit-capture-min-edge",
+        type=float,
+        default=PROFIT_CAPTURE_MIN_EDGE,
+        help="Exit an open position when liquidation value exceeds entry by this amount. Default: 0.04.",
     )
     parser.add_argument("--contracts", type=int, default=1, help="Maximum matched contracts/shares per leg.")
     parser.add_argument("--max-trades", type=int, default=1, help="Maximum live arbitrage executions.")
@@ -2098,8 +2331,9 @@ def main() -> None:
     min_profit_after_fees = max(0.0, args.min_profit_after_fees)
     source_gap_threshold = max(0.0, args.source_gap_threshold)
     target_divergence_threshold = max(0.0, args.target_divergence_threshold)
-    hold_distance_multiplier = min(1.0, args.hold_distance_multiplier)
+    hold_distance_multiplier = max(0.0, args.hold_distance_multiplier)
     take_profit_exit_value = max(0.0, args.take_profit_exit_value)
+    profit_capture_min_edge = max(0.0, args.profit_capture_min_edge)
     pending_rows: dict[Path, list[dict[str, Any]]] = {}
     trades_done = 0
     open_position: dict[str, Any] | None = None
@@ -2107,6 +2341,7 @@ def main() -> None:
     contract_cooldowns: dict[str, tuple[float, str]] = {}
 
     mode = "LIVE TRADING" if args.live else "DRY RUN"
+    print_startup_banner()
     cli.print_line(
         f"{mode}; raw threshold > {cli.fmt_money(args.min_profit)}; "
         f"adjusted threshold > {cli.fmt_money(min_adjusted_profit)}; contracts={contracts}; "
@@ -2114,6 +2349,7 @@ def main() -> None:
         f"source gap <= {source_gap_threshold:g}; target divergence <= {target_divergence_threshold:g}; "
         f"hold distance {hold_distance_multiplier:g}x; "
         f"take-profit exit >= {cli.fmt_display_cents(take_profit_exit_value)}c; "
+        f"profit capture edge >= {cli.fmt_money(profit_capture_min_edge)}; "
         f"max_trades={max_trades}; polling every {interval:g}s",
     )
     print_startup_balances()
@@ -2144,18 +2380,35 @@ def main() -> None:
             )
             if open_position is not None:
                 position_ticker = str(open_position.get("ticker") or "")
+                if contract_key == position_ticker:
+                    record_position_state(
+                        open_position,
+                        kalshi_snapshot,
+                        polymarket_snapshot,
+                        source_snapshot,
+                    )
                 if (
                     contract_key
                     and position_ticker
                     and contract_key != position_ticker
                     and not position_has_pending_exit(open_position)
                 ):
+                    if not args.live:
+                        cli.print_line(
+                            f"{display_time:<10} | "
+                            f"{format_dry_settlement(open_position, f'current contract is {contract_key}')}"
+                        )
                     cli.print_line(
                         f"{display_time:<10} | "
                         f"{format_position_clear(open_position, f'current contract is {contract_key}')}"
                     )
                     open_position = None
                 elif position_expired(open_position) and not position_has_pending_exit(open_position):
+                    if not args.live:
+                        cli.print_line(
+                            f"{display_time:<10} | "
+                            f"{format_dry_settlement(open_position, 'position contract reached expiry')}"
+                        )
                     cli.print_line(
                         f"{display_time:<10} | "
                         f"{format_position_clear(open_position, 'position contract reached expiry')}"
@@ -2201,49 +2454,6 @@ def main() -> None:
                             f"{format_position_review(open_position, boundary_reason, liquidation)}"
                         )
                         open_position["boundary_review_logged"] = True
-                else:
-                    take_profit_liquidation = liquidation_bid_value(
-                        kalshi_snapshot,
-                        polymarket_snapshot,
-                        open_position["kalshi_side"],
-                        open_position["polymarket_contract"],
-                    )
-                    if (
-                        take_profit_liquidation is not None
-                        and take_profit_liquidation >= take_profit_exit_value
-                    ):
-                        exit_pnl = take_profit_liquidation - open_position["entry_cost"]
-                        cli.print_line(
-                            f"{display_time:<10} | "
-                            f"TAKE_PROFIT liquidation {cli.fmt_display_cents(take_profit_liquidation)}c >= "
-                            f"{cli.fmt_display_cents(take_profit_exit_value)}c; "
-                            f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
-                            f"{cli.fmt_money(exit_pnl)} before exit fees"
-                        )
-                        exit_result, exit_complete = execute_position_exit(
-                            open_position,
-                            kalshi_snapshot,
-                            polymarket_snapshot,
-                            polymarket_market,
-                            args.live,
-                        )
-                        cli.print_line(f"{display_time:<10} | {exit_result}")
-                        if exit_complete:
-                            mark_contract_cooldown(
-                                contract_cooldowns,
-                                contract_key,
-                                "post-take-profit safety pause",
-                            )
-                            open_position = None
-                        if len(rows) >= flush_every:
-                            cli.append_rows(csv_path, rows)
-                            rows.clear()
-                        if args.once:
-                            break
-                        elapsed = time.monotonic() - started
-                        time.sleep(max(0.0, interval - elapsed))
-                        continue
-
                     hold_metrics = source_filter_metrics(
                         kalshi_snapshot,
                         polymarket_snapshot,
@@ -2257,21 +2467,118 @@ def main() -> None:
                         target_divergence_threshold,
                         hold_distance_multiplier,
                     )
-                    if arbitrage or not hold_decision["passed"]:
+                    state_metrics = position_state_metrics(
+                        open_position,
+                        kalshi_snapshot,
+                        polymarket_snapshot,
+                        source_snapshot,
+                    )
+                    open_position["last_state_metrics"] = state_metrics
+                    open_position["last_state_time"] = (
+                        kalshi_snapshot.get("timestamp_utc") or source_snapshot.get("timestamp_utc")
+                    )
+                    strategy_decision = exit_strategy_decision(
+                        open_position,
+                        state_metrics,
+                        hold_decision,
+                        take_profit_exit_value,
+                        profit_capture_min_edge,
+                    )
+                    should_log_hold = (
+                        arbitrage
+                        or not hold_decision["passed"]
+                        or strategy_decision["action"] != "HOLD"
+                        or state_metrics.get("held_winners") != 1
+                    )
+                    if should_log_hold:
                         cli.print_line(f"{display_time:<10} | {format_hold_decision(hold_decision)}")
-                    if not hold_decision["passed"]:
-                        liquidation = liquidation_bid_value(
-                            kalshi_snapshot,
-                            polymarket_snapshot,
-                            open_position["kalshi_side"],
-                            open_position["polymarket_contract"],
+                        cli.print_line(
+                            f"{display_time:<10} | "
+                            f"POSITION STATE {format_position_state(state_metrics)} | "
+                            f"{strategy_decision['action']} {strategy_decision['reason']}"
                         )
+                    if strategy_decision["action"] == "EXIT":
+                        liquidation = state_metrics.get("liquidation")
                         if liquidation is None:
                             exit_text = "EXIT_REVIEW liquidation bid value unavailable"
                         else:
                             exit_pnl = liquidation - open_position["entry_cost"]
                             exit_text = (
                                 "EXIT_REVIEW "
+                                f"{strategy_decision['reason']}; "
+                                f"liquidation {cli.fmt_display_cents(liquidation)}c - "
+                                f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
+                                f"{cli.fmt_money(exit_pnl)} before exit fees"
+                            )
+                        cli.print_line(f"{display_time:<10} | {exit_text}")
+                        exit_result, exit_complete = execute_position_exit(
+                            open_position,
+                            kalshi_snapshot,
+                            polymarket_snapshot,
+                            polymarket_market,
+                            args.live,
+                        )
+                        cli.print_line(f"{display_time:<10} | {exit_result}")
+                        if exit_complete:
+                            mark_contract_cooldown(
+                                contract_cooldowns,
+                                contract_key,
+                                "post-exit safety pause",
+                            )
+                            open_position = None
+                else:
+                    hold_metrics = source_filter_metrics(
+                        kalshi_snapshot,
+                        polymarket_snapshot,
+                        source_snapshot,
+                        open_position["entry_cost"],
+                        kalshi_direction_price,
+                    )
+                    hold_decision = evaluate_hold_filter(
+                        hold_metrics,
+                        source_gap_threshold,
+                        target_divergence_threshold,
+                        hold_distance_multiplier,
+                    )
+                    state_metrics = position_state_metrics(
+                        open_position,
+                        kalshi_snapshot,
+                        polymarket_snapshot,
+                        source_snapshot,
+                    )
+                    open_position["last_state_metrics"] = state_metrics
+                    open_position["last_state_time"] = (
+                        kalshi_snapshot.get("timestamp_utc") or source_snapshot.get("timestamp_utc")
+                    )
+                    strategy_decision = exit_strategy_decision(
+                        open_position,
+                        state_metrics,
+                        hold_decision,
+                        take_profit_exit_value,
+                        profit_capture_min_edge,
+                    )
+                    should_log_hold = (
+                        arbitrage
+                        or not hold_decision["passed"]
+                        or strategy_decision["action"] != "HOLD"
+                        or state_metrics.get("held_winners") != 1
+                    )
+                    if should_log_hold:
+                        cli.print_line(f"{display_time:<10} | {format_hold_decision(hold_decision)}")
+                        cli.print_line(
+                            f"{display_time:<10} | "
+                            f"POSITION STATE {format_position_state(state_metrics)} | "
+                            f"{strategy_decision['action']} {strategy_decision['reason']}"
+                        )
+                    if strategy_decision["action"] == "EXIT":
+                        liquidation = state_metrics.get("liquidation")
+                        if liquidation is None:
+                            exit_text = "EXIT_REVIEW liquidation bid value unavailable"
+                        else:
+                            exit_pnl = liquidation - open_position["entry_cost"]
+                            exit_text = (
+                                "EXIT_REVIEW "
+                                f"{strategy_decision['reason']}; "
                                 f"liquidation {cli.fmt_display_cents(liquidation)}c - "
                                 f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
                                 f"{cli.fmt_money(exit_pnl)} before exit fees"

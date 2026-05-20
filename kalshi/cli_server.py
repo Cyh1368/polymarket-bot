@@ -34,6 +34,8 @@ CSV_FIELDS = [
 TRADER_LOG_PATH = Path(__file__).resolve().parent / "trader_log.txt"
 CONCISE_TRADER_LOG_PATH = Path(__file__).resolve().parent / "concise_trader_log.txt"
 TRADER_LOG_MAX_LINES = 200
+ANSI_YELLOW = "\033[33m"
+ANSI_RESET = "\033[0m"
 
 
 def trim_log_file(path: Path, max_lines: int = TRADER_LOG_MAX_LINES) -> None:
@@ -53,11 +55,13 @@ def trim_log_file(path: Path, max_lines: int = TRADER_LOG_MAX_LINES) -> None:
 def is_concise_log_line(line: str) -> bool:
     return (
         "BALANCE " in line
+        or "CLI TRADER INITIATED" in line
         or "CONTRACT " in line
         or "POSITION REVIEW" in line
         or "POSITION CLEAR" in line
         or "TRADED " in line
         or "DRY RUN would place" in line
+        or "SETTLED " in line
         or "EXITED " in line
         or "EXIT FAILED" in line
         or "EXIT_REVIEW" in line
@@ -65,18 +69,22 @@ def is_concise_log_line(line: str) -> bool:
     )
 
 
-def append_terminal_log(line: str) -> None:
-    dated_line = f"{btc.iso_utc()[:10]} {line}\n"
+def yellow_text(text: str) -> str:
+    return f"{ANSI_YELLOW}{text}{ANSI_RESET}"
+
+
+def append_terminal_log(line: str, force_concise: bool = False) -> None:
+    dated_line = "\n" if line == "" else f"{btc.iso_utc()[:10]} {line}\n"
     with TRADER_LOG_PATH.open("a", encoding="utf-8") as file_obj:
         file_obj.write(dated_line)
-    if is_concise_log_line(line):
+    if force_concise or is_concise_log_line(line):
         with CONCISE_TRADER_LOG_PATH.open("a", encoding="utf-8") as file_obj:
             file_obj.write(dated_line)
 
 
-def print_line(line: str) -> None:
+def print_line(line: str, force_concise: bool = False) -> None:
     print(line, flush=True)
-    append_terminal_log(line)
+    append_terminal_log(line, force_concise=force_concise)
 
 
 def fmt_price(value: Any) -> str:
