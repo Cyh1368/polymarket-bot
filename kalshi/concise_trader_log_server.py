@@ -80,6 +80,9 @@ PAGE = """<!doctype html>
     .position-exited {
       color: #f87171;
     }
+    .position-closed {
+      color: #facc15;
+    }
     .budget-total {
       color: #facc15;
       font-weight: 700;
@@ -108,6 +111,9 @@ PAGE = """<!doctype html>
       }
       if (line.includes("TRADED ") || line.includes("DRY RUN would place")) {
         return "trade-executed";
+      }
+      if (line.includes("EXITED")) {
+        return "position-closed";
       }
       if (line.includes("EXIT_REVIEW") || line.includes("FATAL ")) {
         return "position-exited";

@@ -80,6 +80,8 @@ def append_terminal_log(line: str, force_concise: bool = False) -> None:
     dated_line = "\n" if line == "" else f"{btc.iso_utc()[:10]} {line}\n"
     with TRADER_LOG_PATH.open("a", encoding="utf-8") as file_obj:
         file_obj.write(dated_line)
+    if "CHECK SKIP" in line:
+        return
     if force_concise or is_concise_log_line(line):
         with CONCISE_TRADER_LOG_PATH.open("a", encoding="utf-8") as file_obj:
             file_obj.write(dated_line)
