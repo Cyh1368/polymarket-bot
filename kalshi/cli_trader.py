@@ -61,6 +61,8 @@ KALSHI_ORDER_VERIFY_DELAY_SECONDS = 0.25
 POLYMARKET_SELL_BALANCE_ATTEMPTS = 8
 POLYMARKET_SELL_BALANCE_DELAY_SECONDS = 0.75
 CONTRACT_FAILURE_COOLDOWN_SECONDS = 60.0
+EDGE_RECHECK_COOLDOWN_SECONDS = 30.0
+EXECUTION_FAILURE_COOLDOWN_SECONDS = 5 * 60.0
 PROFIT_CAPTURE_MIN_EDGE = 0.04
 ONE_WINNER_NEGATIVE_EXIT_DISTANCE = 3.0
 ONE_WINNER_NEGATIVE_EXIT_SECONDS = 45.0
@@ -869,21 +871,40 @@ def fetch_market_state() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]
         str(kalshi_market.get("ticker") or ""),
         str(kalshi_market.get("close_time") or kalshi_market.get("close_ts") or ""),
     )
-    kalshi_orderbook = btc.kalshi_get(
-        f"/markets/{kalshi_market['ticker']}/orderbook", {"depth": btc.ORDERBOOK_DEPTH}
-    )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        kalshi_orderbook_future = executor.submit(
+            btc.kalshi_get,
+            f"/markets/{kalshi_market['ticker']}/orderbook",
+            {"depth": btc.ORDERBOOK_DEPTH},
+        )
+        polymarket_market = POLYMARKET_MARKET_CACHE.get(cache_key)
+        polymarket_market_future = (
+            None
+            if polymarket_market is not None
+            else executor.submit(btc.discover_polymarket_market, kalshi_market)
+        )
+        kalshi_orderbook = kalshi_orderbook_future.result()
+        if polymarket_market_future is not None:
+            polymarket_market = polymarket_market_future.result()
+            if polymarket_market is not None:
+                POLYMARKET_MARKET_CACHE[cache_key] = polymarket_market
     kalshi_snapshot = btc.make_snapshot(kalshi_market, kalshi_orderbook)
 
-    polymarket_market = POLYMARKET_MARKET_CACHE.get(cache_key)
-    if polymarket_market is None:
-        polymarket_market = btc.discover_polymarket_market(kalshi_market)
-        if polymarket_market is not None:
-            POLYMARKET_MARKET_CACHE[cache_key] = polymarket_market
     if not polymarket_market:
         raise RuntimeError("No matching open Polymarket market found")
-    polymarket_orderbook = btc.polymarket_clob_orderbooks(polymarket_market)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        polymarket_orderbook_future = executor.submit(
+            btc.polymarket_clob_orderbooks,
+            polymarket_market,
+        )
+        source_snapshot_future = executor.submit(
+            btc.source_price_snapshot,
+            kalshi_market,
+            polymarket_market,
+        )
+        polymarket_orderbook = polymarket_orderbook_future.result()
+        source_snapshot = source_snapshot_future.result()
     polymarket_snapshot = btc.make_polymarket_snapshot(polymarket_market, polymarket_orderbook)
-    source_snapshot = btc.source_price_snapshot(kalshi_market, polymarket_market)
     return kalshi_market, kalshi_snapshot, polymarket_market, polymarket_snapshot, source_snapshot
 
 
@@ -924,6 +945,17 @@ def position_expired(position: dict[str, Any]) -> bool:
     return close_ts is not None and time.time() >= close_ts
 
 
+def pending_exit_clear_reason(position: dict[str, Any], current_contract_key: str | None) -> str | None:
+    if not position_has_pending_exit(position):
+        return None
+    if position_expired(position):
+        return "pending exit contract reached expiry"
+    position_ticker = str(position.get("ticker") or "")
+    if current_contract_key and position_ticker and current_contract_key != position_ticker:
+        return f"current contract is {current_contract_key}"
+    return None
+
+
 def mark_contract_cooldown(
     cooldowns: dict[str, tuple[float, str]],
     ticker: str | None,
@@ -946,6 +978,37 @@ def contract_cooldown_reason(cooldowns: dict[str, tuple[float, str]], ticker: st
         cooldowns.pop(ticker, None)
         return None
     return f"{reason}; cooldown {remaining:.1f}s left"
+
+
+def entry_prefilter_reason(
+    open_position: dict[str, Any] | None,
+    boundary_reason: str | None,
+    arbitrage: dict[str, Any] | None,
+    min_profit: float,
+    trades_done: int,
+    max_trades: int,
+    cooldown_reason: str | None,
+) -> str | None:
+    checks = (
+        ("open_position", open_position is None, "position already open"),
+        ("boundary", boundary_reason is None, boundary_reason or "outside no-trade boundary"),
+        ("arbitrage", arbitrage is not None, "no arbitrage candidate"),
+        (
+            "expected_profit",
+            bool(arbitrage and arbitrage["expected_profit"] > min_profit),
+            (
+                f"{cli.fmt_money(arbitrage['expected_profit'])} <= {cli.fmt_money(min_profit)}"
+                if arbitrage
+                else "no arbitrage candidate"
+            ),
+        ),
+        ("trade_limit", trades_done < max_trades, f"{trades_done:g}/{max_trades:g} trades used"),
+        ("cooldown", cooldown_reason is None, cooldown_reason or "no cooldown"),
+    )
+    for _name, passed, reason in checks:
+        if not passed:
+            return reason
+    return None
 
 
 def source_filter_metrics(
@@ -1316,6 +1379,28 @@ def format_position_clear(position: dict[str, Any], reason: str) -> str:
         f"K {str(position.get('kalshi_side') or '--').upper()} + "
         f"P {position.get('polymarket_contract') or '--'} | "
         f"size {position.get('contracts') or '--'} | "
+        f"entry {cli.fmt_display_cents(position.get('entry_cost'))}c | "
+        f"expiry {position.get('close_time') or '--'} | internal tracking cleared"
+    )
+
+
+def format_pending_exit_clear(position: dict[str, Any], reason: str) -> str:
+    contracts = int(position.get("contracts") or 0)
+    kalshi_side = str(position.get("kalshi_side") or "--").upper()
+    polymarket_contract = str(position.get("polymarket_contract") or "--")
+    remaining = []
+    if not position.get("kalshi_absent") and not position.get("kalshi_exited"):
+        kalshi_contracts = position_leg_contracts(position, "kalshi", contracts)
+        remaining.append(f"Kalshi {kalshi_side} size {kalshi_contracts:g}")
+    if not position.get("polymarket_absent") and not position.get("polymarket_exited"):
+        poly_contracts = position_leg_contracts(position, "polymarket", contracts)
+        remaining.append(f"Polymarket {polymarket_contract} size {poly_contracts:g}")
+    remaining_text = ", ".join(remaining) if remaining else "none"
+    return (
+        f"POSITION CLEAR {position.get('ticker') or '--'} | {reason} | "
+        f"pending exit no longer actionable | remaining {remaining_text} left to settlement | "
+        f"K {kalshi_side} + P {polymarket_contract} | "
+        f"size {contracts or '--'} | "
         f"entry {cli.fmt_display_cents(position.get('entry_cost'))}c | "
         f"expiry {position.get('close_time') or '--'} | internal tracking cleared"
     )
@@ -1816,17 +1901,22 @@ def trade_preflight(
     polymarket_contract = arbitrage["polymarket_contract"]
     kalshi_price = arbitrage["kalshi_price"]
     fallback_poly_price = polymarket_execution_price(arbitrage["polymarket_price"])
-    kalshi_plan = kalshi_liquidity_plan_for_buy(
-        str(kalshi_snapshot["ticker"]),
-        kalshi_side,
-        kalshi_price,
-    )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        kalshi_plan_future = executor.submit(
+            kalshi_liquidity_plan_for_buy,
+            str(kalshi_snapshot["ticker"]),
+            kalshi_side,
+            kalshi_price,
+        )
+        poly_plan_future = executor.submit(
+            polymarket_execution_plan,
+            polymarket_market,
+            polymarket_contract,
+            max_contracts,
+        )
+        kalshi_plan = kalshi_plan_future.result()
+        poly_price, poly_liquidity, poly_plan = poly_plan_future.result()
     kalshi_liquidity = as_float(kalshi_plan.get("liquidity"))
-    poly_price, poly_liquidity, poly_plan = polymarket_execution_plan(
-        polymarket_market,
-        polymarket_contract,
-        max_contracts,
-    )
     executable_contracts = min(max_contracts, int(kalshi_liquidity), int(poly_liquidity))
     if executable_contracts > 0 and executable_contracts < max_contracts:
         poly_price, poly_liquidity, poly_plan = polymarket_execution_plan(
@@ -2070,6 +2160,32 @@ def cleanup_partial_entry(
     return f"{message}; {exit_result}"
 
 
+def cleanup_kalshi_first_partial_entry(
+    message: str,
+    kalshi_snapshot: dict[str, Any],
+    polymarket_market: dict[str, Any],
+    kalshi_side: str,
+    polymarket_contract: str,
+    kalshi_fill_price: float | None,
+    kalshi_contracts: int,
+    kalshi_order: dict[str, Any],
+) -> str:
+    position = partial_entry_position(
+        kalshi_snapshot,
+        polymarket_market,
+        kalshi_side,
+        polymarket_contract,
+        None,
+        kalshi_fill_price,
+        kalshi_contracts,
+        kalshi_contracts,
+        0,
+        False,
+        kalshi_order,
+    )
+    return cleanup_partial_entry(message, position, kalshi_snapshot, polymarket_market)
+
+
 def execute_arbitrage(
     kalshi_snapshot: dict[str, Any],
     polymarket_market: dict[str, Any],
@@ -2173,6 +2289,22 @@ def execute_arbitrage(
             "SKIP Kalshi-first entry had no fill before Polymarket placement; "
             f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} {kalshi_ref}"
         )
+    if kalshi_filled != trade_contracts:
+        message = (
+            "SKIP Kalshi-first partial fill before Polymarket placement; "
+            f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} {kalshi_ref}; "
+            "cleaning up instead of hedging mismatched size"
+        )
+        return cleanup_kalshi_first_partial_entry(
+            message,
+            kalshi_snapshot,
+            polymarket_market,
+            kalshi_side,
+            polymarket_contract,
+            kalshi_fill_price,
+            kalshi_filled,
+            kalshi_order,
+        )
 
     poly_order_price, poly_liquidity, _poly_plan = polymarket_execution_plan(
         polymarket_market,
@@ -2200,24 +2332,20 @@ def execute_arbitrage(
                 f"rechecked adjusted profit {cli.fmt_money(adjusted_profit)} "
                 f"<= {cli.fmt_money(min_adjusted_profit)}"
             )
-        position = partial_entry_position(
-            kalshi_snapshot,
-            polymarket_market,
-            kalshi_side,
-            polymarket_contract,
-            None,
-            kalshi_fill_price,
-            kalshi_filled,
-            kalshi_filled,
-            0,
-            False,
-            kalshi_order,
-        )
         message = (
             "SKIP Kalshi-first entry aborted before Polymarket placement; "
             f"{reason}; Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} {kalshi_ref}"
         )
-        return cleanup_partial_entry(message, position, kalshi_snapshot, polymarket_market)
+        return cleanup_kalshi_first_partial_entry(
+            message,
+            kalshi_snapshot,
+            polymarket_market,
+            kalshi_side,
+            polymarket_contract,
+            kalshi_fill_price,
+            kalshi_filled,
+            kalshi_order,
+        )
 
     poly_response = None
     poly_exception = None
@@ -2264,26 +2392,22 @@ def execute_arbitrage(
             contracts=int(kalshi_filled),
         )
 
-    position = partial_entry_position(
-        kalshi_snapshot,
-        polymarket_market,
-        kalshi_side,
-        polymarket_contract,
-        None,
-        kalshi_fill_price,
-        kalshi_filled,
-        kalshi_filled,
-        0,
-        False,
-        kalshi_order,
-    )
     message = (
         "SKIP Kalshi-first entry incomplete; "
         f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} {kalshi_ref}; "
         f"Polymarket BUY {polymarket_contract} "
         f"{polymarket_token_ref(polymarket_market, polymarket_contract)} {poly_ref}"
     )
-    return cleanup_partial_entry(message, position, kalshi_snapshot, polymarket_market)
+    return cleanup_kalshi_first_partial_entry(
+        message,
+        kalshi_snapshot,
+        polymarket_market,
+        kalshi_side,
+        polymarket_contract,
+        kalshi_fill_price,
+        kalshi_filled,
+        kalshi_order,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -2427,7 +2551,19 @@ def main() -> None:
                         polymarket_snapshot,
                         source_snapshot,
                     )
-                if (
+                pending_clear_reason = pending_exit_clear_reason(open_position, contract_key)
+                if pending_clear_reason is not None:
+                    cli.print_line(
+                        f"{display_time:<10} | "
+                        f"{format_pending_exit_clear(open_position, pending_clear_reason)}"
+                    )
+                    mark_contract_cooldown(
+                        contract_cooldowns,
+                        position_ticker or contract_key,
+                        "pending exit cleared after expiry",
+                    )
+                    open_position = None
+                elif (
                     contract_key
                     and position_ticker
                     and contract_key != position_ticker
@@ -2640,24 +2776,20 @@ def main() -> None:
                             )
                             open_position = None
 
-            if (
-                open_position is None
-                and boundary_reason is None
-                and arbitrage
-                and arbitrage["expected_profit"] > args.min_profit
-                and trades_done < max_trades
-            ):
-                cooldown_reason = contract_cooldown_reason(contract_cooldowns, contract_key)
-                if cooldown_reason is not None:
+            cooldown_reason = contract_cooldown_reason(contract_cooldowns, contract_key)
+            entry_gate_reason = entry_prefilter_reason(
+                open_position,
+                boundary_reason,
+                arbitrage,
+                args.min_profit,
+                trades_done,
+                max_trades,
+                cooldown_reason,
+            )
+            if entry_gate_reason is not None:
+                if cooldown_reason is not None and entry_gate_reason == cooldown_reason:
                     cli.print_line(f"{display_time:<10} | ENTRY SKIP {cooldown_reason}")
-                    if len(rows) >= flush_every:
-                        cli.append_rows(csv_path, rows)
-                        rows.clear()
-                    if args.once:
-                        break
-                    elapsed = time.monotonic() - started
-                    time.sleep(max(0.0, interval - elapsed))
-                    continue
+            else:
                 fallback_cost = arbitrage["kalshi_price"] + polymarket_execution_price(
                     arbitrage["polymarket_price"]
                 )
@@ -2752,6 +2884,7 @@ def main() -> None:
                             contract_cooldowns,
                             contract_key,
                             "hedge failure cleanup pending",
+                            EXECUTION_FAILURE_COOLDOWN_SECONDS,
                         )
                         trades_done += 1
                     elif result.startswith("SKIP Kalshi hedge failed after Polymarket fill"):
@@ -2759,15 +2892,42 @@ def main() -> None:
                             contract_cooldowns,
                             contract_key,
                             "hedge failure cleanup completed",
+                            EXECUTION_FAILURE_COOLDOWN_SECONDS,
                         )
-                    elif (
-                        result.startswith("SKIP Kalshi-first entry aborted")
-                        or result.startswith("SKIP Kalshi-first entry incomplete")
-                    ):
+                    elif result.startswith("SKIP live recheck:"):
                         mark_contract_cooldown(
                             contract_cooldowns,
                             contract_key,
-                            "Kalshi-first partial entry cleanup completed",
+                            "edge recheck failed",
+                            EDGE_RECHECK_COOLDOWN_SECONDS,
+                        )
+                    elif result.startswith("SKIP Kalshi-first entry failed before Polymarket placement"):
+                        mark_contract_cooldown(
+                            contract_cooldowns,
+                            contract_key,
+                            "Kalshi-first execution failed before Polymarket",
+                            EXECUTION_FAILURE_COOLDOWN_SECONDS,
+                        )
+                    elif result.startswith("SKIP Kalshi-first partial fill"):
+                        mark_contract_cooldown(
+                            contract_cooldowns,
+                            contract_key,
+                            "Kalshi-first partial fill cleanup completed",
+                            EXECUTION_FAILURE_COOLDOWN_SECONDS,
+                        )
+                    elif result.startswith("SKIP Kalshi-first entry aborted"):
+                        mark_contract_cooldown(
+                            contract_cooldowns,
+                            contract_key,
+                            "Kalshi-first edge recheck cleanup completed",
+                            EDGE_RECHECK_COOLDOWN_SECONDS,
+                        )
+                    elif result.startswith("SKIP Kalshi-first entry incomplete"):
+                        mark_contract_cooldown(
+                            contract_cooldowns,
+                            contract_key,
+                            "Kalshi-first execution failure cleanup completed",
+                            EXECUTION_FAILURE_COOLDOWN_SECONDS,
                         )
                     elif not result.startswith("SKIP ") and not result.startswith("DRY RUN would skip"):
                         actual_entry_cost = (
