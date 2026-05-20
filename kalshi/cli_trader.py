@@ -2097,12 +2097,12 @@ def execute_arbitrage(
         if preflight["decision"] != "PLACE":
             return f"DRY RUN would skip: {preflight['reason']}"
         return (
-            "DRY RUN would place "
+            "DRY RUN would place Kalshi first, then Polymarket after fill verification: "
+            f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} size {trade_contracts} "
+            f"limit {cli.fmt_display_cents(kalshi_price)}c; then "
             f"Polymarket BUY {polymarket_contract} size {trade_contracts} "
             f"{polymarket_token_ref(polymarket_market, polymarket_contract)} "
-            f"limit {cli.fmt_display_cents(poly_order_price)}c and simultaneously "
-            f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} size {trade_contracts} "
-            f"limit {cli.fmt_display_cents(kalshi_price)}c "
+            f"limit {cli.fmt_display_cents(poly_order_price)}c "
             f"({preflight['reason']})"
         )
 
@@ -2120,52 +2120,121 @@ def execute_arbitrage(
     )
     if live_preflight["decision"] != "PLACE":
         return f"SKIP live recheck: {live_preflight['reason']}"
-    poly_order_price = live_preflight["polymarket_price"]
     trade_contracts = int(live_preflight["contracts"])
 
     client_order_id = f"btc15-arb-{uuid.uuid4().hex[:20]}"
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        poly_future = executor.submit(
-            polymarket_post_order,
-            polymarket_market,
-            polymarket_contract,
-            poly_order_price,
-            trade_contracts,
-        )
-        kalshi_future = executor.submit(
-            kalshi_post_order,
+    try:
+        kalshi_order = kalshi_post_order(
             str(kalshi_snapshot["ticker"]),
             kalshi_side,
             kalshi_price,
             trade_contracts,
             client_order_id,
         )
+    except KalshiOrderStateUnknown as exc:
+        position = partial_entry_position(
+            kalshi_snapshot,
+            polymarket_market,
+            kalshi_side,
+            polymarket_contract,
+            None,
+            None,
+            trade_contracts,
+            0,
+            0,
+            True,
+            exc.order,
+        )
+        raise PartialEntryError(
+            "PARTIAL ENTRY Kalshi-first order state unknown before Polymarket; "
+            f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} "
+            f"client {client_order_id} @ {cli.fmt_display_cents(kalshi_price)}c failed verification: {exc}; "
+            "will reconcile before cleanup",
+            position,
+        ) from exc
+    except Exception as exc:
+        return (
+            "SKIP Kalshi-first entry failed before Polymarket placement; "
+            f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} "
+            f"client {client_order_id} @ {cli.fmt_display_cents(kalshi_price)}c failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
+    kalshi_filled = int(fill_count(kalshi_order))
+    kalshi_fill_price = filled_price(kalshi_order, kalshi_side) if kalshi_filled > 0 else None
+    kalshi_ref = (
+        f"filled {kalshi_filled:g}/{trade_contracts:g} @ {cli.fmt_display_cents(kalshi_fill_price)}c "
+        f"{kalshi_order_ref(kalshi_order)}"
+        if kalshi_filled > 0
+        else f"{kalshi_order_ref(kalshi_order)}"
+    )
+    if kalshi_filled <= 0:
+        return (
+            "SKIP Kalshi-first entry had no fill before Polymarket placement; "
+            f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} {kalshi_ref}"
+        )
+
+    poly_order_price, poly_liquidity, _poly_plan = polymarket_execution_plan(
+        polymarket_market,
+        polymarket_contract,
+        kalshi_filled,
+    )
+    poly_notional = as_float(poly_order_price) * kalshi_filled if poly_order_price is not None else 0.0
+    total_cost = as_float(kalshi_fill_price) + as_float(poly_order_price)
+    adjusted_profit = (1.0 / total_cost) - 1.0 if 0 < total_cost < 1 else 0.0
+    if (
+        poly_order_price is None
+        or poly_liquidity < kalshi_filled
+        or poly_notional < POLYMARKET_MIN_ORDER_NOTIONAL
+        or adjusted_profit <= min_adjusted_profit
+    ):
+        if poly_order_price is None or poly_liquidity < kalshi_filled:
+            reason = f"Polymarket liquidity {poly_liquidity:g} < {kalshi_filled:g}"
+        elif poly_notional < POLYMARKET_MIN_ORDER_NOTIONAL:
+            reason = (
+                f"Polymarket notional {cli.fmt_money(poly_notional)} "
+                f"< {cli.fmt_money(POLYMARKET_MIN_ORDER_NOTIONAL)} minimum"
+            )
+        else:
+            reason = (
+                f"rechecked adjusted profit {cli.fmt_money(adjusted_profit)} "
+                f"<= {cli.fmt_money(min_adjusted_profit)}"
+            )
+        position = partial_entry_position(
+            kalshi_snapshot,
+            polymarket_market,
+            kalshi_side,
+            polymarket_contract,
+            None,
+            kalshi_fill_price,
+            kalshi_filled,
+            kalshi_filled,
+            0,
+            False,
+            kalshi_order,
+        )
+        message = (
+            "SKIP Kalshi-first entry aborted before Polymarket placement; "
+            f"{reason}; Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} {kalshi_ref}"
+        )
+        return cleanup_partial_entry(message, position, kalshi_snapshot, polymarket_market)
 
     poly_response = None
     poly_exception = None
     try:
-        poly_response = poly_future.result()
+        poly_response = polymarket_post_order(
+            polymarket_market,
+            polymarket_contract,
+            poly_order_price,
+            kalshi_filled,
+        )
     except Exception as exc:
         poly_exception = exc
-
-    kalshi_order = None
-    kalshi_exception = None
-    try:
-        kalshi_order = kalshi_future.result()
-    except Exception as exc:
-        kalshi_exception = exc
 
     poly_filled = False
     poly_fill_price = None
     if poly_response is not None:
         poly_filled, poly_fill_price = polymarket_fill_summary(poly_response, poly_order_price)
-
-    kalshi_filled = 0
-    kalshi_fill_price = None
-    if kalshi_order is not None:
-        kalshi_filled = int(fill_count(kalshi_order))
-        if kalshi_filled > 0:
-            kalshi_fill_price = filled_price(kalshi_order, kalshi_side)
 
     poly_ref = (
         f"fill @ {cli.fmt_display_cents(poly_fill_price)}c {polymarket_order_ref(poly_response)}"
@@ -2176,57 +2245,17 @@ def execute_arbitrage(
             else f"not verified filled; {polymarket_order_ref(poly_response)}; response={poly_response}"
         )
     )
-    kalshi_ref = (
-        f"filled {kalshi_filled:g}/{trade_contracts:g} @ {cli.fmt_display_cents(kalshi_fill_price)}c "
-        f"{kalshi_order_ref(kalshi_order)}"
-        if kalshi_filled > 0
-        else (
-            f"client {client_order_id} @ {cli.fmt_display_cents(kalshi_price)}c failed: "
-            f"{type(kalshi_exception).__name__}: {kalshi_exception}"
-            if kalshi_exception is not None
-            else f"{kalshi_order_ref(kalshi_order)}"
-        )
-    )
 
-    if not poly_filled and kalshi_filled <= 0:
-        if isinstance(kalshi_exception, KalshiOrderStateUnknown):
-            position = partial_entry_position(
-                kalshi_snapshot,
-                polymarket_market,
-                kalshi_side,
-                polymarket_contract,
-                None,
-                None,
-                trade_contracts,
-                0,
-                0,
-                True,
-                kalshi_exception.order,
-            )
-            raise PartialEntryError(
-                "PARTIAL ENTRY simultaneous orders left Kalshi state unknown; "
-                f"Polymarket BUY {polymarket_contract} {polymarket_token_ref(polymarket_market, polymarket_contract)} "
-                f"{poly_ref}; Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} {kalshi_ref}; "
-                "will reconcile before cleanup",
-                position,
-            ) from kalshi_exception
-        return (
-            "SKIP simultaneous entry both legs failed or unfilled; "
-            f"Polymarket BUY {polymarket_contract} "
-            f"{polymarket_token_ref(polymarket_market, polymarket_contract)} {poly_ref}; "
-            f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} {kalshi_ref}"
-        )
-
-    if poly_filled and kalshi_filled == trade_contracts:
+    if poly_filled:
         return TradeResult(
             (
-                "TRADED simultaneous "
-                f"Polymarket BUY {polymarket_contract} size {trade_contracts:g} "
-                f"{polymarket_token_ref(polymarket_market, polymarket_contract)} "
-                f"{poly_ref} (limit {cli.fmt_display_cents(poly_order_price)}c); "
+                "TRADED Kalshi-first "
                 f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} "
                 f"size {kalshi_filled:g} {kalshi_ref} "
                 f"(limit {cli.fmt_display_cents(kalshi_price)}c); "
+                f"Polymarket BUY {polymarket_contract} size {kalshi_filled:g} "
+                f"{polymarket_token_ref(polymarket_market, polymarket_contract)} "
+                f"{poly_ref} (limit {cli.fmt_display_cents(poly_order_price)}c); "
                 f"entry {cli.fmt_display_cents(as_float(poly_fill_price) + as_float(kalshi_fill_price))}c"
             ),
             entry_cost=as_float(poly_fill_price) + as_float(kalshi_fill_price),
@@ -2240,19 +2269,19 @@ def execute_arbitrage(
         polymarket_market,
         kalshi_side,
         polymarket_contract,
-        poly_fill_price,
+        None,
         kalshi_fill_price,
-        trade_contracts,
         kalshi_filled,
-        trade_contracts if poly_filled else 0,
-        isinstance(kalshi_exception, KalshiOrderStateUnknown),
-        kalshi_exception.order if isinstance(kalshi_exception, KalshiOrderStateUnknown) else kalshi_order,
+        kalshi_filled,
+        0,
+        False,
+        kalshi_order,
     )
     message = (
-        "SKIP simultaneous entry incomplete; "
+        "SKIP Kalshi-first entry incomplete; "
+        f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} {kalshi_ref}; "
         f"Polymarket BUY {polymarket_contract} "
-        f"{polymarket_token_ref(polymarket_market, polymarket_contract)} {poly_ref}; "
-        f"Kalshi BUY {kalshi_snapshot.get('ticker')} {kalshi_side.upper()} {kalshi_ref}"
+        f"{polymarket_token_ref(polymarket_market, polymarket_contract)} {poly_ref}"
     )
     return cleanup_partial_entry(message, position, kalshi_snapshot, polymarket_market)
 
@@ -2730,6 +2759,15 @@ def main() -> None:
                             contract_cooldowns,
                             contract_key,
                             "hedge failure cleanup completed",
+                        )
+                    elif (
+                        result.startswith("SKIP Kalshi-first entry aborted")
+                        or result.startswith("SKIP Kalshi-first entry incomplete")
+                    ):
+                        mark_contract_cooldown(
+                            contract_cooldowns,
+                            contract_key,
+                            "Kalshi-first partial entry cleanup completed",
                         )
                     elif not result.startswith("SKIP ") and not result.startswith("DRY RUN would skip"):
                         actual_entry_cost = (
