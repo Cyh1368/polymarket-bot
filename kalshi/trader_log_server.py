@@ -80,6 +80,10 @@ PAGE = """<!doctype html>
     .position-exited {
       color: #f87171;
     }
+    .budget-total {
+      color: #facc15;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>
@@ -111,6 +115,24 @@ PAGE = """<!doctype html>
       return "";
     }
 
+    function cleanAnsi(line) {
+      return line.replace(/\\x1b\\[[0-9;]*m/g, "").replace(/\\[33m/g, "").replace(/\\[0m/g, "");
+    }
+
+    function appendHighlightedLine(span, line) {
+      const match = line.match(/total \\$[-0-9.,]+/);
+      if (!match) {
+        span.textContent = line;
+        return;
+      }
+      span.append(document.createTextNode(line.slice(0, match.index)));
+      const budget = document.createElement("span");
+      budget.className = "budget-total";
+      budget.textContent = match[0];
+      span.append(budget);
+      span.append(document.createTextNode(line.slice(match.index + match[0].length)));
+    }
+
     function renderLog(text) {
       logEl.replaceChildren();
       if (!text) {
@@ -118,10 +140,11 @@ PAGE = """<!doctype html>
         return;
       }
       const fragment = document.createDocumentFragment();
-      for (const line of text.split("\\n")) {
+      for (const rawLine of text.split("\\n")) {
+        const line = cleanAnsi(rawLine);
         const span = document.createElement("span");
         span.className = `line ${classifyLine(line)}`.trim();
-        span.textContent = line;
+        appendHighlightedLine(span, line);
         fragment.appendChild(span);
       }
       logEl.appendChild(fragment);

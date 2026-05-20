@@ -34,8 +34,6 @@ CSV_FIELDS = [
 TRADER_LOG_PATH = Path(__file__).resolve().parent / "trader_log.txt"
 CONCISE_TRADER_LOG_PATH = Path(__file__).resolve().parent / "concise_trader_log.txt"
 TRADER_LOG_MAX_LINES = 200
-ANSI_YELLOW = "\033[33m"
-ANSI_RESET = "\033[0m"
 
 
 def trim_log_file(path: Path, max_lines: int = TRADER_LOG_MAX_LINES) -> None:
@@ -75,7 +73,7 @@ def is_concise_log_line(line: str) -> bool:
 
 
 def yellow_text(text: str) -> str:
-    return f"{ANSI_YELLOW}{text}{ANSI_RESET}"
+    return text
 
 
 def append_terminal_log(line: str, force_concise: bool = False) -> None:
