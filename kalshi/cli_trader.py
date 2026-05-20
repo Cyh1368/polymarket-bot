@@ -26,6 +26,12 @@ class PartialEntryError(RuntimeError):
         self.position = position
 
 
+class KalshiOrderStateUnknown(RuntimeError):
+    def __init__(self, message: str, order: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.order = order
+
+
 class TradeResult(str):
     def __new__(
         cls,
@@ -50,6 +56,11 @@ CONTRACT_WINDOW_SECONDS = 15 * 60
 CONTRACT_BOUNDARY_NO_TRADE_SECONDS = 30.0
 EXIT_LIMIT_DEVIATION = 0.01
 POLYMARKET_MIN_ORDER_NOTIONAL = 1.0
+KALSHI_ORDER_VERIFY_ATTEMPTS = 5
+KALSHI_ORDER_VERIFY_DELAY_SECONDS = 0.25
+POLYMARKET_SELL_BALANCE_ATTEMPTS = 8
+POLYMARKET_SELL_BALANCE_DELAY_SECONDS = 0.75
+CONTRACT_FAILURE_COOLDOWN_SECONDS = 60.0
 
 
 def http_json(
@@ -205,6 +216,33 @@ def polymarket_balance_amounts() -> tuple[float, float]:
     return as_float(balance) / 1_000_000.0, as_float(allowance) / 1_000_000.0
 
 
+def polymarket_conditional_balance_amounts(token_id: str) -> tuple[float, float]:
+    from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+
+    client = polymarket_client_v2()
+    params_kwargs = {"asset_type": AssetType.CONDITIONAL, "token_id": token_id}
+    try:
+        params = BalanceAllowanceParams(**params_kwargs)
+    except TypeError:
+        params = BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, asset_id=token_id)
+    data = client.get_balance_allowance(params)
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Polymarket conditional balance response {data}")
+    balance = (
+        data.get("balance")
+        or data.get("conditional_balance")
+        or data.get("token_balance")
+        or data.get("asset_balance")
+    )
+    allowances = data.get("allowances")
+    if isinstance(allowances, dict) and allowances:
+        allowance = max(as_float(value) for value in allowances.values())
+    else:
+        allowance = data.get("allowance") or data.get("conditional_allowance") or data.get("token_allowance")
+    allowance_amount = float("inf") if allowance in (None, "") else as_float(allowance) / 1_000_000.0
+    return as_float(balance) / 1_000_000.0, allowance_amount
+
+
 def polymarket_balance_summary() -> str:
     balance, allowance = polymarket_balance_amounts()
     return (
@@ -344,8 +382,27 @@ def kalshi_post_order(
     order = response.get("order") or response
     order_id = order.get("order_id")
     if order_id:
-        verified = http_json("GET", btc.BASE_URL, f"/portfolio/orders/{order_id}", auth=True)
-        return verified.get("order") or verified
+        last_error: Exception | None = None
+        for attempt in range(KALSHI_ORDER_VERIFY_ATTEMPTS):
+            try:
+                verified = http_json("GET", btc.BASE_URL, f"/portfolio/orders/{order_id}", auth=True)
+                return verified.get("order") or verified
+            except Exception as exc:
+                last_error = exc
+                if "HTTP 404" not in str(exc) or attempt == KALSHI_ORDER_VERIFY_ATTEMPTS - 1:
+                    break
+                time.sleep(KALSHI_ORDER_VERIFY_DELAY_SECONDS * (attempt + 1))
+        order["verification_error"] = f"{type(last_error).__name__}: {last_error}"
+        if fill_count(order) > 0:
+            return order
+        if last_error and "HTTP 404" in str(last_error):
+            raise KalshiOrderStateUnknown(
+                f"Kalshi order state unknown after POST; order_id={order_id}; "
+                f"client_order_id={client_order_id}; verification failed: {last_error}",
+                order,
+            ) from last_error
+        if last_error:
+            raise last_error
     return order
 
 
@@ -636,6 +693,28 @@ def polymarket_exit_position(
 ) -> tuple[dict[str, Any], float]:
     from py_clob_client_v2 import Side
 
+    token_id = token_ids_by_contract(market)[contract]
+    last_balance_error: Exception | None = None
+    checked_balance = False
+    balance_ready = False
+    for attempt in range(POLYMARKET_SELL_BALANCE_ATTEMPTS):
+        try:
+            balance, allowance = polymarket_conditional_balance_amounts(token_id)
+            checked_balance = True
+            if balance >= contracts and allowance >= contracts:
+                balance_ready = True
+                break
+            last_balance_error = RuntimeError(
+                "Polymarket conditional balance/allowance below cleanup size: "
+                f"balance {balance:g}, allowance {allowance:g}, need {contracts:g}"
+            )
+        except Exception as exc:
+            last_balance_error = exc
+            break
+        time.sleep(POLYMARKET_SELL_BALANCE_DELAY_SECONDS)
+    if checked_balance and not balance_ready:
+        raise RuntimeError(str(last_balance_error))
+
     bid = polymarket_current_bid(market, contract)
     if bid is None:
         raise RuntimeError(f"No Polymarket {contract} bid available to exit")
@@ -643,7 +722,12 @@ def polymarket_exit_position(
     response = polymarket_post_order(market, contract, sell_limit, contracts, side=Side.SELL)
     filled, fill_price = polymarket_fill_summary(response, sell_limit)
     if not filled:
-        raise RuntimeError(f"Polymarket sell exit had no fill: {response}")
+        balance_text = (
+            f"; prior balance check: {type(last_balance_error).__name__}: {last_balance_error}"
+            if last_balance_error is not None
+            else ""
+        )
+        raise RuntimeError(f"Polymarket sell exit had no fill: {response}{balance_text}")
     response["exit_method"] = "sell"
     response["best_bid"] = bid
     response["limit_price"] = sell_limit
@@ -680,7 +764,7 @@ def polymarket_fill_summary(response: dict[str, Any], expected_price: float) -> 
             return True, total_cost / total_size
 
     status_text = " ".join(str(value).lower() for value in response.values())
-    filled = any(word in status_text for word in ("filled", "matched", "success"))
+    filled = any(word in status_text for word in ("filled", "matched"))
     return filled, expected_price
 
 
@@ -757,6 +841,30 @@ def no_trade_boundary_reason(kalshi_snapshot: dict[str, Any]) -> str | None:
 def position_expired(position: dict[str, Any]) -> bool:
     close_ts = btc.parse_ts(position.get("close_time"))
     return close_ts is not None and time.time() >= close_ts
+
+
+def mark_contract_cooldown(
+    cooldowns: dict[str, tuple[float, str]],
+    ticker: str | None,
+    reason: str,
+    seconds: float = CONTRACT_FAILURE_COOLDOWN_SECONDS,
+) -> None:
+    if ticker:
+        cooldowns[ticker] = (time.time() + seconds, reason)
+
+
+def contract_cooldown_reason(cooldowns: dict[str, tuple[float, str]], ticker: str | None) -> str | None:
+    if not ticker:
+        return None
+    item = cooldowns.get(ticker)
+    if not item:
+        return None
+    until, reason = item
+    remaining = until - time.time()
+    if remaining <= 0:
+        cooldowns.pop(ticker, None)
+        return None
+    return f"{reason}; cooldown {remaining:.1f}s left"
 
 
 def source_filter_metrics(
@@ -1159,6 +1267,37 @@ def position_leg_contracts(position: dict[str, Any], leg: str, default: int) -> 
     return int(position.get(f"{leg}_contracts") or position.get("contracts") or default)
 
 
+def reconcile_unknown_kalshi_order(position: dict[str, Any]) -> str | None:
+    order_id = position.get("kalshi_order_id")
+    if not order_id:
+        position["kalshi_order_unknown"] = False
+        return "Kalshi unknown order had no order id; treating Kalshi leg as absent"
+    try:
+        response = http_json("GET", btc.BASE_URL, f"/portfolio/orders/{order_id}", auth=True)
+    except Exception as exc:
+        if "HTTP 404" not in str(exc):
+            return f"Kalshi unknown order reconciliation failed: {type(exc).__name__}: {exc}"
+        unknown_since = finite_float(position.get("kalshi_unknown_since")) or time.time()
+        if time.time() - unknown_since < 5.0:
+            return f"Kalshi order {order_id} still not queryable; holding cleanup until state is known"
+        position["kalshi_order_unknown"] = False
+        return f"Kalshi order {order_id} still 404 after reconciliation window; treating Kalshi leg as absent"
+    order = response.get("order") or response
+    filled = int(fill_count(order))
+    if filled > 0:
+        kalshi_side = str(position.get("kalshi_side") or "").lower()
+        position["kalshi_order_unknown"] = False
+        position["kalshi_absent"] = False
+        position["kalshi_exited"] = False
+        position["kalshi_contracts"] = filled
+        position["kalshi_fill_price"] = filled_price(order, kalshi_side)
+        position["entry_cost"] = as_float(position.get("entry_cost")) + as_float(position["kalshi_fill_price"])
+        position["kalshi_order"] = order
+        return f"Kalshi order {order_id} reconciled filled {filled:g}; exiting both legs"
+    position["kalshi_order_unknown"] = False
+    return f"Kalshi order {order_id} reconciled with no fill; exiting Polymarket leg only"
+
+
 def kalshi_exit_summary(
     order: dict[str, Any],
     side: str,
@@ -1224,12 +1363,21 @@ def execute_position_exit(
         ), True
 
     position["exit_started"] = True
+    if position.get("kalshi_order_unknown"):
+        reconcile_text = reconcile_unknown_kalshi_order(position)
+        if position.get("kalshi_order_unknown"):
+            return f"EXIT WAIT {reconcile_text}", False
+        if reconcile_text:
+            errors = [reconcile_text]
+        else:
+            errors = []
+    else:
+        errors = []
     poly_response = position.get("polymarket_exit_response")
     poly_fill_price = finite_float(position.get("polymarket_exit_price"))
     kalshi_order = position.get("kalshi_exit_order")
     kalshi_fill_price = finite_float(position.get("kalshi_exit_price"))
 
-    errors: list[str] = []
     attempted: list[str] = []
     poly_contracts = position_leg_contracts(position, "polymarket", contracts)
     kalshi_contracts = position_leg_contracts(position, "kalshi", contracts)
@@ -1529,6 +1677,8 @@ def partial_entry_position(
     trade_contracts: int,
     kalshi_contracts: int = 0,
     polymarket_contracts: int | None = None,
+    kalshi_order_unknown: bool = False,
+    kalshi_order: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     poly_contracts = trade_contracts if polymarket_contracts is None else polymarket_contracts
     entry_cost = 0.0
@@ -1553,6 +1703,10 @@ def partial_entry_position(
         "polymarket_market": polymarket_market,
         "exit_started": True,
         "boundary_review_logged": False,
+        "kalshi_order_unknown": kalshi_order_unknown,
+        "kalshi_order_id": (kalshi_order or {}).get("order_id"),
+        "kalshi_client_order_id": (kalshi_order or {}).get("client_order_id"),
+        "kalshi_unknown_since": time.time() if kalshi_order_unknown else None,
     }
 
 
@@ -1567,6 +1721,8 @@ def partial_entry_error(
     trade_contracts: int,
     kalshi_contracts: int = 0,
     polymarket_contracts: int | None = None,
+    kalshi_order_unknown: bool = False,
+    kalshi_order: dict[str, Any] | None = None,
 ) -> PartialEntryError:
     return PartialEntryError(
         message,
@@ -1580,6 +1736,8 @@ def partial_entry_error(
             trade_contracts,
             kalshi_contracts,
             polymarket_contracts,
+            kalshi_order_unknown,
+            kalshi_order,
         ),
     )
 
@@ -1703,6 +1861,24 @@ def execute_arbitrage(
             trade_contracts,
             client_order_id,
         )
+    except KalshiOrderStateUnknown as exc:
+        raise partial_entry_error(
+            "PARTIAL ENTRY Kalshi hedge state unknown after Polymarket fill; "
+            f"Polymarket {polymarket_contract} fill @ {cli.fmt_display_cents(poly_fill_price)}c; "
+            f"Kalshi {kalshi_side.upper()} @ {cli.fmt_display_cents(kalshi_price)}c could not be verified: "
+            f"{type(exc).__name__}: {exc}; will reconcile before cleanup",
+            kalshi_snapshot,
+            polymarket_market,
+            kalshi_side,
+            polymarket_contract,
+            poly_fill_price,
+            None,
+            trade_contracts,
+            0,
+            trade_contracts,
+            True,
+            exc.order,
+        ) from exc
     except Exception as exc:
         try:
             _poly_exit_response, poly_exit_price = polymarket_exit_position(
@@ -1886,6 +2062,12 @@ def parse_args() -> argparse.Namespace:
         default=0.50,
         help="Hold distance multiplier applied to max(10, seconds_to_expiry * 0.05). Default: 0.50.",
     )
+    parser.add_argument(
+        "--take-profit-exit-value",
+        type=float,
+        default=1.02,
+        help="Exit an open matched position when liquidation bid value is at least this total. Default: 1.02.",
+    )
     parser.add_argument("--contracts", type=int, default=1, help="Maximum matched contracts/shares per leg.")
     parser.add_argument("--max-trades", type=int, default=1, help="Maximum live arbitrage executions.")
     parser.add_argument("--live", action="store_true", help="Actually submit orders. Omit for dry-run.")
@@ -1917,10 +2099,12 @@ def main() -> None:
     source_gap_threshold = max(0.0, args.source_gap_threshold)
     target_divergence_threshold = max(0.0, args.target_divergence_threshold)
     hold_distance_multiplier = min(1.0, args.hold_distance_multiplier)
+    take_profit_exit_value = max(0.0, args.take_profit_exit_value)
     pending_rows: dict[Path, list[dict[str, Any]]] = {}
     trades_done = 0
     open_position: dict[str, Any] | None = None
     last_contract_key: str | None = None
+    contract_cooldowns: dict[str, tuple[float, str]] = {}
 
     mode = "LIVE TRADING" if args.live else "DRY RUN"
     cli.print_line(
@@ -1929,6 +2113,7 @@ def main() -> None:
         f"min profit after fees >= {cli.fmt_money(min_profit_after_fees)}; "
         f"source gap <= {source_gap_threshold:g}; target divergence <= {target_divergence_threshold:g}; "
         f"hold distance {hold_distance_multiplier:g}x; "
+        f"take-profit exit >= {cli.fmt_display_cents(take_profit_exit_value)}c; "
         f"max_trades={max_trades}; polling every {interval:g}s",
     )
     print_startup_balances()
@@ -1997,6 +2182,11 @@ def main() -> None:
                     )
                     cli.print_line(f"{display_time:<10} | {exit_result}")
                     if exit_complete:
+                        mark_contract_cooldown(
+                            contract_cooldowns,
+                            position_ticker or contract_key,
+                            "post-cleanup safety pause",
+                        )
                         open_position = None
                 elif boundary_reason is not None:
                     if not open_position.get("boundary_review_logged"):
@@ -2012,6 +2202,48 @@ def main() -> None:
                         )
                         open_position["boundary_review_logged"] = True
                 else:
+                    take_profit_liquidation = liquidation_bid_value(
+                        kalshi_snapshot,
+                        polymarket_snapshot,
+                        open_position["kalshi_side"],
+                        open_position["polymarket_contract"],
+                    )
+                    if (
+                        take_profit_liquidation is not None
+                        and take_profit_liquidation >= take_profit_exit_value
+                    ):
+                        exit_pnl = take_profit_liquidation - open_position["entry_cost"]
+                        cli.print_line(
+                            f"{display_time:<10} | "
+                            f"TAKE_PROFIT liquidation {cli.fmt_display_cents(take_profit_liquidation)}c >= "
+                            f"{cli.fmt_display_cents(take_profit_exit_value)}c; "
+                            f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
+                            f"{cli.fmt_money(exit_pnl)} before exit fees"
+                        )
+                        exit_result, exit_complete = execute_position_exit(
+                            open_position,
+                            kalshi_snapshot,
+                            polymarket_snapshot,
+                            polymarket_market,
+                            args.live,
+                        )
+                        cli.print_line(f"{display_time:<10} | {exit_result}")
+                        if exit_complete:
+                            mark_contract_cooldown(
+                                contract_cooldowns,
+                                contract_key,
+                                "post-take-profit safety pause",
+                            )
+                            open_position = None
+                        if len(rows) >= flush_every:
+                            cli.append_rows(csv_path, rows)
+                            rows.clear()
+                        if args.once:
+                            break
+                        elapsed = time.monotonic() - started
+                        time.sleep(max(0.0, interval - elapsed))
+                        continue
+
                     hold_metrics = source_filter_metrics(
                         kalshi_snapshot,
                         polymarket_snapshot,
@@ -2054,6 +2286,11 @@ def main() -> None:
                         )
                         cli.print_line(f"{display_time:<10} | {exit_result}")
                         if exit_complete:
+                            mark_contract_cooldown(
+                                contract_cooldowns,
+                                contract_key,
+                                "post-exit safety pause",
+                            )
                             open_position = None
 
             if (
@@ -2063,6 +2300,17 @@ def main() -> None:
                 and arbitrage["expected_profit"] > args.min_profit
                 and trades_done < max_trades
             ):
+                cooldown_reason = contract_cooldown_reason(contract_cooldowns, contract_key)
+                if cooldown_reason is not None:
+                    cli.print_line(f"{display_time:<10} | ENTRY SKIP {cooldown_reason}")
+                    if len(rows) >= flush_every:
+                        cli.append_rows(csv_path, rows)
+                        rows.clear()
+                    if args.once:
+                        break
+                    elapsed = time.monotonic() - started
+                    time.sleep(max(0.0, interval - elapsed))
+                    continue
                 fallback_cost = arbitrage["kalshi_price"] + polymarket_execution_price(
                     arbitrage["polymarket_price"]
                 )
@@ -2153,7 +2401,18 @@ def main() -> None:
                         partial_position = exc.position
                     if partial_position is not None:
                         open_position = partial_position
+                        mark_contract_cooldown(
+                            contract_cooldowns,
+                            contract_key,
+                            "hedge failure cleanup pending",
+                        )
                         trades_done += 1
+                    elif result.startswith("SKIP Kalshi hedge failed after Polymarket fill"):
+                        mark_contract_cooldown(
+                            contract_cooldowns,
+                            contract_key,
+                            "hedge failure cleanup completed",
+                        )
                     elif not result.startswith("SKIP ") and not result.startswith("DRY RUN would skip"):
                         actual_entry_cost = (
                             result.entry_cost
