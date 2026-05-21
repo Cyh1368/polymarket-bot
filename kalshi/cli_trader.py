@@ -63,7 +63,8 @@ POLYMARKET_SELL_BALANCE_DELAY_SECONDS = 0.75
 CONTRACT_FAILURE_COOLDOWN_SECONDS = 60.0
 EDGE_RECHECK_COOLDOWN_SECONDS = 30.0
 EXECUTION_FAILURE_COOLDOWN_SECONDS = 5 * 60.0
-PROFIT_CAPTURE_MIN_EDGE = 0.04
+PROFIT_CAPTURE_MIN_EDGE = 0.06
+EXIT_CUSHION = 0.03
 ONE_WINNER_NEGATIVE_EXIT_DISTANCE = 3.0
 ONE_WINNER_NEGATIVE_EXIT_SECONDS = 45.0
 TWO_WINNER_PROFIT_EXIT_SECONDS = 90.0
@@ -441,6 +442,64 @@ def kalshi_current_bid(ticker: str, side: str) -> float | None:
     return best_yes_bid if side == "yes" else best_no_bid
 
 
+def kalshi_exit_plan(ticker: str, side: str, contracts: int) -> tuple[float | None, float, dict[str, Any]]:
+    orderbook = btc.kalshi_get(f"/markets/{ticker}/orderbook", {"depth": btc.ORDERBOOK_DEPTH})
+    yes_levels, no_levels = btc.orderbook_levels(orderbook)
+    bid_levels = yes_levels if side == "yes" else no_levels
+    priced_levels = [
+        (price, level_quantity(level))
+        for level in bid_levels
+        if (price := level_price(level)) is not None
+    ]
+    priced_levels.sort(key=lambda item: item[0], reverse=True)
+    cumulative = 0.0
+    cumulative_value = 0.0
+    levels = []
+    selected_price: float | None = None
+    for price, quantity in priced_levels:
+        remaining = max(0.0, contracts - cumulative)
+        used = min(quantity, remaining)
+        cumulative += quantity
+        cumulative_value += used * price
+        selected = selected_price is None and cumulative >= contracts
+        if selected:
+            selected_price = price
+        levels.append(
+            {
+                "price": price,
+                "quantity": quantity,
+                "used": used,
+                "cumulative": cumulative,
+                "selected": selected,
+            }
+        )
+        if selected:
+            break
+    vwap_price = cumulative_value / contracts if selected_price is not None and contracts else None
+    plan = {
+        "side": side,
+        "liquidity": cumulative,
+        "levels": levels,
+        "vwap_price": vwap_price,
+        "worst_executable_price": selected_price,
+    }
+    if selected_price is not None:
+        return selected_price, cumulative, plan
+    for price, quantity in priced_levels[len(levels):]:
+        cumulative += quantity
+        levels.append(
+            {
+                "price": price,
+                "quantity": quantity,
+                "used": 0.0,
+                "cumulative": cumulative,
+                "selected": False,
+            }
+        )
+    plan["liquidity"] = cumulative
+    return None, cumulative, plan
+
+
 def opposite_side(side: str) -> str:
     return "no" if side == "yes" else "yes"
 
@@ -466,9 +525,11 @@ def kalshi_exit_position(
     contracts: int,
     deviation: float = EXIT_LIMIT_DEVIATION,
 ) -> dict[str, Any]:
-    bid = kalshi_current_bid(ticker, side)
+    bid, liquidity, _plan = kalshi_exit_plan(ticker, side, contracts)
     if bid is None:
-        sell_error = RuntimeError(f"No Kalshi {side.upper()} bid available to exit {ticker}")
+        sell_error = RuntimeError(
+            f"Kalshi {side.upper()} exit liquidity {liquidity:g} < {contracts:g} for {ticker}"
+        )
     else:
         sell_limit = exit_sell_limit(bid, deviation)
         try:
@@ -672,6 +733,69 @@ def polymarket_execution_plan(
     return None, cumulative, plan
 
 
+def polymarket_exit_plan(
+    market: dict[str, Any],
+    contract: str,
+    contracts: int,
+) -> tuple[float | None, float, dict[str, Any]]:
+    token_id = token_ids_by_contract(market)[contract]
+    orderbook = btc.clob_get("/book", {"token_id": token_id})
+    bid_levels, _ask_levels = btc.polymarket_book_levels(orderbook)
+    priced_levels = [
+        (price, level_quantity(level))
+        for level in bid_levels
+        if (price := level_price(level)) is not None
+    ]
+    priced_levels.sort(key=lambda item: item[0], reverse=True)
+    cumulative = 0.0
+    cumulative_value = 0.0
+    levels = []
+    selected_price: float | None = None
+    for price, quantity in priced_levels:
+        remaining = max(0.0, contracts - cumulative)
+        used = min(quantity, remaining)
+        cumulative += quantity
+        cumulative_value += used * price
+        selected = selected_price is None and cumulative >= contracts
+        if selected:
+            selected_price = price
+        levels.append(
+            {
+                "price": price,
+                "quantity": quantity,
+                "used": used,
+                "cumulative": cumulative,
+                "selected": selected,
+            }
+        )
+        if selected:
+            break
+    vwap_price = cumulative_value / contracts if selected_price is not None and contracts else None
+    plan = {
+        "contract": contract,
+        "token_id": token_id,
+        "liquidity": cumulative,
+        "levels": levels,
+        "vwap_price": vwap_price,
+        "worst_executable_price": selected_price,
+    }
+    if selected_price is not None:
+        return selected_price, cumulative, plan
+    for price, quantity in priced_levels[len(levels):]:
+        cumulative += quantity
+        levels.append(
+            {
+                "price": price,
+                "quantity": quantity,
+                "used": 0.0,
+                "cumulative": cumulative,
+                "selected": False,
+            }
+        )
+    plan["liquidity"] = cumulative
+    return None, cumulative, plan
+
+
 def polymarket_current_bid(market: dict[str, Any], contract: str) -> float | None:
     token_id = token_ids_by_contract(market)[contract]
     orderbook = btc.clob_get("/book", {"token_id": token_id})
@@ -798,9 +922,9 @@ def polymarket_exit_position(
     if checked_balance and not balance_ready:
         raise RuntimeError(str(last_balance_error))
 
-    bid = polymarket_current_bid(market, contract)
+    bid, liquidity, _plan = polymarket_exit_plan(market, contract, contracts)
     if bid is None:
-        raise RuntimeError(f"No Polymarket {contract} bid available to exit")
+        raise RuntimeError(f"Polymarket {contract} exit liquidity {liquidity:g} < {contracts:g}")
     sell_limit = exit_sell_limit(bid, deviation)
     response = polymarket_post_order(market, contract, sell_limit, contracts, side=Side.SELL)
     filled, fill_price = polymarket_fill_summary(response, sell_limit)
@@ -1411,10 +1535,17 @@ def record_position_state(
     kalshi_snapshot: dict[str, Any],
     polymarket_snapshot: dict[str, Any],
     source_snapshot: dict[str, Any],
+    polymarket_market: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     if str(position.get("ticker") or "") != str(kalshi_snapshot.get("ticker") or ""):
         return None
-    state = position_state_metrics(position, kalshi_snapshot, polymarket_snapshot, source_snapshot)
+    state = position_state_metrics(
+        position,
+        kalshi_snapshot,
+        polymarket_snapshot,
+        source_snapshot,
+        polymarket_market,
+    )
     position["last_state_metrics"] = state
     position["last_state_time"] = kalshi_snapshot.get("timestamp_utc") or source_snapshot.get("timestamp_utc")
     return state
@@ -1460,6 +1591,56 @@ def liquidation_bid_value(
     return kalshi_bid + poly_bid
 
 
+def executable_liquidation_value(
+    position: dict[str, Any],
+    kalshi_snapshot: dict[str, Any],
+    polymarket_snapshot: dict[str, Any],
+    polymarket_market: dict[str, Any] | None,
+) -> tuple[float | None, dict[str, Any]]:
+    contracts = int(position.get("contracts") or 0)
+    ticker = str(position.get("ticker") or kalshi_snapshot.get("ticker") or "")
+    kalshi_side = str(position.get("kalshi_side") or "").lower()
+    polymarket_contract = str(position.get("polymarket_contract") or "")
+    total = 0.0
+    plans: dict[str, Any] = {}
+
+    if not position.get("kalshi_absent") and not position.get("kalshi_exited"):
+        kalshi_contracts = position_leg_contracts(position, "kalshi", contracts)
+        if not ticker or kalshi_side not in ("yes", "no") or kalshi_contracts <= 0:
+            return None, plans
+        price, liquidity, plan = kalshi_exit_plan(ticker, kalshi_side, kalshi_contracts)
+        plans["kalshi"] = plan
+        if price is None or liquidity < kalshi_contracts:
+            return None, plans
+        total += price
+    elif position.get("kalshi_exited") and not position.get("kalshi_absent"):
+        total += as_float(position.get("kalshi_exit_price"))
+
+    if not position.get("polymarket_absent") and not position.get("polymarket_exited"):
+        poly_contracts = position_leg_contracts(position, "polymarket", contracts)
+        if not polymarket_contract or poly_contracts <= 0:
+            return None, plans
+        if polymarket_market:
+            price, liquidity, plan = polymarket_exit_plan(
+                polymarket_market,
+                polymarket_contract,
+                poly_contracts,
+            )
+            plans["polymarket"] = plan
+            if price is None or liquidity < poly_contracts:
+                return None, plans
+            total += price
+        else:
+            poly_bid = finite_float(polymarket_snapshot.get(f"{polymarket_contract.lower()}_bid"))
+            if poly_bid is None:
+                return None, plans
+            total += poly_bid
+    elif position.get("polymarket_exited") and not position.get("polymarket_absent"):
+        total += as_float(position.get("polymarket_exit_price"))
+
+    return total, plans
+
+
 def source_outcome(price: float | None, target: float | None) -> str | None:
     if price is None or target is None:
         return None
@@ -1471,6 +1652,7 @@ def position_state_metrics(
     kalshi_snapshot: dict[str, Any],
     polymarket_snapshot: dict[str, Any],
     source_snapshot: dict[str, Any],
+    polymarket_market: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     kalshi_side = str(position.get("kalshi_side") or "").upper()
     polymarket_side = str(position.get("polymarket_contract") or "").upper()
@@ -1503,11 +1685,11 @@ def position_state_metrics(
     held_winners = None
     if kalshi_outcome is not None and polymarket_outcome is not None:
         held_winners = int(kalshi_outcome == kalshi_side) + int(polymarket_outcome == polymarket_side)
-    liquidation = liquidation_bid_value(
+    liquidation, liquidation_plans = executable_liquidation_value(
+        position,
         kalshi_snapshot,
         polymarket_snapshot,
-        str(position.get("kalshi_side") or ""),
-        polymarket_side,
+        polymarket_market,
     )
     entry_cost = as_float(position.get("entry_cost"))
     liquidation_pnl = liquidation - entry_cost if liquidation is not None else None
@@ -1526,6 +1708,7 @@ def position_state_metrics(
         "source_gap": source_gap,
         "seconds_to_expiry": seconds_to_expiry(kalshi_snapshot),
         "liquidation": liquidation,
+        "liquidation_plans": liquidation_plans,
         "liquidation_pnl": liquidation_pnl,
         "expected_settlement_pnl": expected_settlement_pnl,
     }
@@ -1549,6 +1732,7 @@ def exit_strategy_decision(
     hold_decision: dict[str, Any],
     take_profit_exit_value: float,
     profit_capture_min_edge: float,
+    exit_cushion: float,
 ) -> dict[str, Any]:
     held_winners = state.get("held_winners")
     remaining = state.get("seconds_to_expiry")
@@ -1558,35 +1742,46 @@ def exit_strategy_decision(
     entry_cost = as_float(position.get("entry_cost"))
 
     if held_winners is None:
-        if not hold_decision["passed"] and liquidation_pnl is not None and liquidation_pnl >= 0:
-            return {"action": "EXIT", "reason": "data incomplete and non-negative hold-review unwind available"}
+        if (
+            not hold_decision["passed"]
+            and liquidation_pnl is not None
+            and liquidation_pnl >= exit_cushion
+        ):
+            return {"action": "EXIT", "reason": "data incomplete and cushioned hold-review unwind available"}
         return {"action": "HOLD", "reason": "data incomplete; no state-aware exit"}
 
     if held_winners <= 0:
         return {"action": "EXIT", "reason": "EMERGENCY held_winners=0; both held legs currently losing"}
 
-    if liquidation_pnl is not None and liquidation_pnl >= profit_capture_min_edge:
+    required_profit = max(profit_capture_min_edge, exit_cushion)
+    if liquidation_pnl is not None and liquidation_pnl >= required_profit:
         return {
             "action": "EXIT",
             "reason": (
                 f"TAKE_PROFIT liquidation edge {cli.fmt_money(liquidation_pnl)} "
-                f">= {cli.fmt_money(profit_capture_min_edge)}"
+                f">= {cli.fmt_money(required_profit)}"
             ),
         }
 
-    if liquidation is not None and liquidation >= take_profit_exit_value:
+    if (
+        liquidation is not None
+        and liquidation >= take_profit_exit_value
+        and liquidation_pnl is not None
+        and liquidation_pnl >= exit_cushion
+    ):
         return {
             "action": "EXIT",
             "reason": (
                 f"TAKE_PROFIT liquidation {cli.fmt_display_cents(liquidation)}c "
-                f">= {cli.fmt_display_cents(take_profit_exit_value)}c"
+                f">= {cli.fmt_display_cents(take_profit_exit_value)}c; "
+                f"edge {cli.fmt_money(liquidation_pnl)} >= cushion {cli.fmt_money(exit_cushion)}"
             ),
         }
 
     if held_winners >= 2:
         near_expiry = isinstance(remaining, (int, float)) and remaining <= TWO_WINNER_PROFIT_EXIT_SECONDS
         near_target = isinstance(min_distance, (int, float)) and min_distance < TWO_WINNER_PROFIT_EXIT_DISTANCE
-        if near_expiry and near_target and liquidation_pnl is not None and liquidation_pnl >= 0:
+        if near_expiry and near_target and liquidation_pnl is not None and liquidation_pnl >= exit_cushion:
             return {
                 "action": "EXIT",
                 "reason": (
@@ -1619,12 +1814,23 @@ def exit_strategy_decision(
                     f"liquidation PnL {cli.fmt_money(liquidation_pnl)}"
                 ),
             }
-        if liquidation_pnl is not None:
+        if liquidation_pnl is not None and liquidation_pnl >= exit_cushion:
             return {
                 "action": "EXIT",
-                "reason": f"HOLD_FAIL non-negative unwind {cli.fmt_money(liquidation_pnl)}",
+                "reason": (
+                    f"HOLD_FAIL cushioned unwind {cli.fmt_money(liquidation_pnl)} "
+                    f">= {cli.fmt_money(exit_cushion)}"
+                ),
             }
-        return {"action": "HOLD", "reason": "hold failed but liquidation unavailable"}
+        if liquidation_pnl is not None:
+            return {
+                "action": "HOLD",
+                "reason": (
+                    f"HOLD_FAIL unwind edge {cli.fmt_money(liquidation_pnl)} "
+                    f"< cushion {cli.fmt_money(exit_cushion)}"
+                ),
+            }
+        return {"action": "HOLD", "reason": "hold failed but executable liquidation unavailable"}
 
     return {"action": "HOLD", "reason": "state-aware hold"}
 
@@ -1769,36 +1975,32 @@ def execute_position_exit(
     need_kalshi = not position.get("kalshi_absent") and not position.get("kalshi_exited")
 
     if need_poly and need_kalshi:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {
-                executor.submit(
-                    polymarket_exit_position,
-                    exit_polymarket_market,
-                    polymarket_contract,
-                    poly_contracts,
-                ): "polymarket",
-                executor.submit(kalshi_exit_position, ticker, kalshi_side, kalshi_contracts): "kalshi",
-            }
-            for future in concurrent.futures.as_completed(futures):
-                venue = futures[future]
-                attempted.append(venue)
-                try:
-                    if venue == "polymarket":
-                        poly_response, poly_fill_price = future.result()
-                        position["polymarket_exited"] = True
-                        position["polymarket_exit_response"] = poly_response
-                        position["polymarket_exit_price"] = poly_fill_price
-                    else:
-                        kalshi_order = future.result()
-                        _filled, kalshi_fill_price, _reference, _limit, _limit_text = kalshi_exit_summary(
-                            kalshi_order,
-                            kalshi_side,
-                        )
-                        position["kalshi_exited"] = True
-                        position["kalshi_exit_order"] = kalshi_order
-                        position["kalshi_exit_price"] = kalshi_fill_price
-                except Exception as exc:
-                    errors.append(f"{venue} failed: {type(exc).__name__}: {exc}")
+        attempted.append("polymarket")
+        try:
+            poly_response, poly_fill_price = polymarket_exit_position(
+                exit_polymarket_market,
+                polymarket_contract,
+                poly_contracts,
+            )
+            position["polymarket_exited"] = True
+            position["polymarket_exit_response"] = poly_response
+            position["polymarket_exit_price"] = poly_fill_price
+        except Exception as exc:
+            errors.append(f"polymarket failed: {type(exc).__name__}: {exc}")
+
+        if position.get("polymarket_exited"):
+            attempted.append("kalshi")
+            try:
+                kalshi_order = kalshi_exit_position(ticker, kalshi_side, kalshi_contracts)
+                _filled, kalshi_fill_price, _reference, _limit, _limit_text = kalshi_exit_summary(
+                    kalshi_order,
+                    kalshi_side,
+                )
+                position["kalshi_exited"] = True
+                position["kalshi_exit_order"] = kalshi_order
+                position["kalshi_exit_price"] = kalshi_fill_price
+            except Exception as exc:
+                errors.append(f"kalshi failed: {type(exc).__name__}: {exc}")
     elif need_poly:
         attempted.append("polymarket")
         try:
@@ -2426,8 +2628,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-adjusted-profit",
         type=float,
-        default=0.0,
-        help="Minimum executable adjusted profit required before live or dry-run trade placement.",
+        default=0.02,
+        help="Minimum executable adjusted profit required before live or dry-run trade placement. Default: 0.02.",
     )
     parser.add_argument(
         "--min-profit-after-fees",
@@ -2456,14 +2658,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--take-profit-exit-value",
         type=float,
-        default=1.02,
-        help="Exit an open matched position when liquidation bid value is at least this total. Default: 1.02.",
+        default=1.04,
+        help="Exit an open matched position when executable liquidation value is at least this total. Default: 1.04.",
     )
     parser.add_argument(
         "--profit-capture-min-edge",
         type=float,
         default=PROFIT_CAPTURE_MIN_EDGE,
-        help="Exit an open position when liquidation value exceeds entry by this amount. Default: 0.04.",
+        help="Exit an open position when executable liquidation value exceeds entry by this amount. Default: 0.06.",
+    )
+    parser.add_argument(
+        "--exit-cushion",
+        type=float,
+        default=EXIT_CUSHION,
+        help="Minimum non-emergency executable exit edge over entry. Default: 0.03.",
     )
     parser.add_argument("--contracts", type=int, default=1, help="Maximum matched contracts/shares per leg.")
     parser.add_argument("--max-trades", type=int, default=1, help="Maximum live arbitrage executions.")
@@ -2498,6 +2706,7 @@ def main() -> None:
     hold_distance_multiplier = max(0.0, args.hold_distance_multiplier)
     take_profit_exit_value = max(0.0, args.take_profit_exit_value)
     profit_capture_min_edge = max(0.0, args.profit_capture_min_edge)
+    exit_cushion = max(0.0, args.exit_cushion)
     pending_rows: dict[Path, list[dict[str, Any]]] = {}
     trades_done = 0
     open_position: dict[str, Any] | None = None
@@ -2514,6 +2723,7 @@ def main() -> None:
         f"hold distance {hold_distance_multiplier:g}x; "
         f"take-profit exit >= {cli.fmt_display_cents(take_profit_exit_value)}c; "
         f"profit capture edge >= {cli.fmt_money(profit_capture_min_edge)}; "
+        f"exit cushion >= {cli.fmt_money(exit_cushion)}; "
         f"max_trades={max_trades}; polling every {interval:g}s",
     )
     print_startup_balances()
@@ -2619,11 +2829,11 @@ def main() -> None:
                         open_position = None
                 elif boundary_reason is not None:
                     if not open_position.get("boundary_review_logged"):
-                        liquidation = liquidation_bid_value(
+                        liquidation, _liquidation_plans = executable_liquidation_value(
+                            open_position,
                             kalshi_snapshot,
                             polymarket_snapshot,
-                            open_position["kalshi_side"],
-                            open_position["polymarket_contract"],
+                            polymarket_market,
                         )
                         cli.print_line(
                             f"{display_time:<10} | "
@@ -2648,6 +2858,7 @@ def main() -> None:
                         kalshi_snapshot,
                         polymarket_snapshot,
                         source_snapshot,
+                        polymarket_market,
                     )
                     open_position["last_state_metrics"] = state_metrics
                     open_position["last_state_time"] = (
@@ -2659,6 +2870,7 @@ def main() -> None:
                         hold_decision,
                         take_profit_exit_value,
                         profit_capture_min_edge,
+                        exit_cushion,
                     )
                     should_log_hold = (
                         arbitrage
@@ -2676,7 +2888,7 @@ def main() -> None:
                     if strategy_decision["action"] == "EXIT":
                         liquidation = state_metrics.get("liquidation")
                         if liquidation is None:
-                            exit_text = "EXIT_REVIEW liquidation bid value unavailable"
+                            exit_text = "EXIT_REVIEW executable liquidation unavailable"
                         else:
                             exit_pnl = liquidation - open_position["entry_cost"]
                             exit_text = (
@@ -2721,6 +2933,7 @@ def main() -> None:
                         kalshi_snapshot,
                         polymarket_snapshot,
                         source_snapshot,
+                        polymarket_market,
                     )
                     open_position["last_state_metrics"] = state_metrics
                     open_position["last_state_time"] = (
@@ -2732,6 +2945,7 @@ def main() -> None:
                         hold_decision,
                         take_profit_exit_value,
                         profit_capture_min_edge,
+                        exit_cushion,
                     )
                     should_log_hold = (
                         arbitrage
@@ -2749,7 +2963,7 @@ def main() -> None:
                     if strategy_decision["action"] == "EXIT":
                         liquidation = state_metrics.get("liquidation")
                         if liquidation is None:
-                            exit_text = "EXIT_REVIEW liquidation bid value unavailable"
+                            exit_text = "EXIT_REVIEW executable liquidation unavailable"
                         else:
                             exit_pnl = liquidation - open_position["entry_cost"]
                             exit_text = (
