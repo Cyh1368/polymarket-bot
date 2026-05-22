@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import asyncio
 import concurrent.futures
 import json
 import os
@@ -14,6 +15,8 @@ from urllib.request import Request, urlopen
 
 import cli_server as cli
 import kalshi_btc15_server as btc
+from logic.exits import LimitWalkResult, LimitWalker
+from market_interface import AsyncMarketContext
 
 
 class FatalTradeError(RuntimeError):
@@ -69,6 +72,10 @@ ONE_WINNER_NEGATIVE_EXIT_DISTANCE = 3.0
 ONE_WINNER_NEGATIVE_EXIT_SECONDS = 45.0
 TWO_WINNER_PROFIT_EXIT_SECONDS = 90.0
 TWO_WINNER_PROFIT_EXIT_DISTANCE = 20.0
+CHASE_INTERVAL = 2.0
+CHASE_MAX_STEPS = 6
+WEBSOCKET_REPORT_INTERVAL = 2.0
+WEBSOCKET_STALE_SECONDS = 5.0
 
 
 def http_json(
@@ -388,6 +395,7 @@ def kalshi_post_order(
     contracts: int,
     client_order_id: str,
     action: str = "buy",
+    time_in_force: str = "fill_or_kill",
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "ticker": ticker,
@@ -395,7 +403,7 @@ def kalshi_post_order(
         "action": action,
         "client_order_id": client_order_id,
         "count": contracts,
-        "time_in_force": "fill_or_kill",
+        "time_in_force": time_in_force,
     }
     payload[f"{side}_price"] = cents(price)
     response = http_json("POST", btc.BASE_URL, "/portfolio/orders", payload=payload, auth=True)
@@ -424,6 +432,15 @@ def kalshi_post_order(
         if last_error:
             raise last_error
     return order
+
+
+def kalshi_cancel_order(order_id: str) -> dict[str, Any]:
+    return http_json("DELETE", btc.BASE_URL, f"/portfolio/orders/{order_id}", auth=True)
+
+
+def kalshi_get_order(order_id: str) -> dict[str, Any]:
+    response = http_json("GET", btc.BASE_URL, f"/portfolio/orders/{order_id}", auth=True)
+    return response.get("order") or response
 
 
 def is_kalshi_fok_liquidity_error(exc: Exception) -> bool:
@@ -858,12 +875,14 @@ def polymarket_post_order(
     price: float,
     contracts: int,
     side: Any = None,
+    order_type_name: str = "FOK",
 ) -> dict[str, Any]:
     from py_clob_client_v2 import OrderArgs, OrderType, PartialCreateOrderOptions, Side
 
     token_id = token_ids_by_contract(market)[contract]
     client = polymarket_client_v2()
     order_side = side or Side.BUY
+    order_type = getattr(OrderType, order_type_name.upper(), OrderType.FOK)
     response = client.create_and_post_order(
         order_args=OrderArgs(
             token_id=token_id,
@@ -872,7 +891,7 @@ def polymarket_post_order(
             size=float(contracts),
         ),
         options=PartialCreateOrderOptions(tick_size="0.01"),
-        order_type=OrderType.FOK,
+        order_type=order_type,
     )
     if not isinstance(response, dict):
         return {"response": response}
@@ -890,6 +909,25 @@ def polymarket_post_order(
         else:
             response["verified_order"] = verified
     return response
+
+
+def polymarket_cancel_order(order_id: str) -> Any:
+    from py_clob_client_v2.clob_types import OrderPayload
+
+    client = polymarket_client_v2()
+    cancel_method = getattr(client, "cancel", None)
+    if cancel_method is not None:
+        return cancel_method(str(order_id))
+    cancel_order_method = getattr(client, "cancel_order", None)
+    if cancel_order_method is not None:
+        return cancel_order_method(OrderPayload(orderID=str(order_id)))
+    raise RuntimeError("Polymarket client has no cancel/cancel_order method")
+
+
+def polymarket_get_order(order_id: str) -> dict[str, Any]:
+    client = polymarket_client_v2()
+    response = client.get_order(str(order_id))
+    return response if isinstance(response, dict) else {"response": response}
 
 
 def polymarket_exit_position(
@@ -2092,6 +2130,286 @@ def execute_position_exit(
     ), True
 
 
+async def execute_position_exit_async(
+    position: dict[str, Any],
+    kalshi_snapshot: dict[str, Any],
+    polymarket_snapshot: dict[str, Any],
+    polymarket_market: dict[str, Any],
+    live: bool,
+    market_context: AsyncMarketContext | None,
+    chase_interval: float,
+    chase_max_steps: int,
+) -> tuple[str, bool]:
+    if not live or market_context is None:
+        return await asyncio.to_thread(
+            execute_position_exit,
+            position,
+            kalshi_snapshot,
+            polymarket_snapshot,
+            polymarket_market,
+            live,
+        )
+    if market_context.failsafe_required():
+        cli.print_line(
+            f"{btc.iso_utc()} | WEBSOCKET FAILSAFE live position cleanup via HTTP fallback"
+        )
+        return await asyncio.to_thread(
+            execute_position_exit,
+            position,
+            kalshi_snapshot,
+            polymarket_snapshot,
+            polymarket_market,
+            live,
+        )
+
+    contracts = int(position.get("contracts") or 0)
+    if contracts <= 0:
+        return f"EXIT FAILED invalid position size {position.get('contracts')}", False
+
+    ticker = str(position.get("ticker") or kalshi_snapshot.get("ticker") or "")
+    kalshi_side = str(position.get("kalshi_side") or "").lower()
+    polymarket_contract = str(position.get("polymarket_contract") or "")
+    if not ticker or kalshi_side not in ("yes", "no") or not polymarket_contract:
+        return f"EXIT FAILED incomplete position {position}", False
+
+    exit_polymarket_market = position.setdefault("polymarket_market", polymarket_market)
+    position["exit_started"] = True
+    errors: list[str] = []
+    if position.get("kalshi_order_unknown"):
+        reconcile_text = await asyncio.to_thread(reconcile_unknown_kalshi_order, position)
+        if position.get("kalshi_order_unknown"):
+            return f"EXIT WAIT {reconcile_text}", False
+        if reconcile_text:
+            errors.append(reconcile_text)
+
+    poly_response = position.get("polymarket_exit_response")
+    poly_fill_price = finite_float(position.get("polymarket_exit_price"))
+    kalshi_order = position.get("kalshi_exit_order")
+    kalshi_fill_price = finite_float(position.get("kalshi_exit_price"))
+    poly_contracts = position_leg_contracts(position, "polymarket", contracts)
+    kalshi_contracts = position_leg_contracts(position, "kalshi", contracts)
+    need_poly = not position.get("polymarket_absent") and not position.get("polymarket_exited")
+    need_kalshi = not position.get("kalshi_absent") and not position.get("kalshi_exited")
+    attempted: list[str] = []
+
+    if need_poly:
+        attempted.append("polymarket")
+        result = await walk_polymarket_exit(
+            market_context,
+            exit_polymarket_market,
+            polymarket_contract,
+            poly_contracts,
+            chase_interval,
+            chase_max_steps,
+        )
+        if result.filled:
+            poly_response = result.order or {}
+            poly_response["exit_method"] = "sell"
+            poly_response["limit_price"] = result.fill_price
+            poly_response.setdefault("best_bid", result.fill_price)
+            poly_fill_price = result.fill_price
+            position["polymarket_exited"] = True
+            position["polymarket_exit_response"] = poly_response
+            position["polymarket_exit_price"] = poly_fill_price
+        else:
+            errors.append(f"polymarket failed: {result.reason}")
+
+    if need_kalshi and (not need_poly or position.get("polymarket_exited")):
+        attempted.append("kalshi")
+        result = await walk_kalshi_exit(
+            market_context,
+            ticker,
+            kalshi_side,
+            kalshi_contracts,
+            chase_interval,
+            chase_max_steps,
+        )
+        if result.filled:
+            kalshi_order = result.order or {}
+            kalshi_order["exit_method"] = "sell"
+            kalshi_order["limit_price"] = result.fill_price
+            kalshi_order.setdefault("best_bid", result.fill_price)
+            kalshi_fill_price = result.fill_price
+            position["kalshi_exited"] = True
+            position["kalshi_exit_order"] = kalshi_order
+            position["kalshi_exit_price"] = kalshi_fill_price
+        else:
+            errors.append(f"kalshi failed: {result.reason}")
+
+    if (need_kalshi and not position.get("kalshi_exited")) or (
+        need_poly and not position.get("polymarket_exited")
+    ):
+        remaining = []
+        if need_kalshi and not position.get("kalshi_exited"):
+            remaining.append(f"Kalshi {ticker} {kalshi_side.upper()} size {kalshi_contracts}")
+        if need_poly and not position.get("polymarket_exited"):
+            remaining.append(
+                f"Polymarket {polymarket_contract} size {poly_contracts} "
+                f"{polymarket_token_ref(exit_polymarket_market, polymarket_contract)}"
+            )
+        done = []
+        if position.get("kalshi_exited"):
+            done.append(
+                f"Kalshi {ticker} {kalshi_side.upper()} @ "
+                f"{cli.fmt_display_cents(kalshi_fill_price)}c {kalshi_order_ref(kalshi_order)}"
+            )
+        if position.get("polymarket_exited"):
+            done.append(
+                f"Polymarket {polymarket_contract} @ {cli.fmt_display_cents(poly_fill_price)}c "
+                f"{polymarket_order_ref(poly_response)}"
+            )
+        done_text = f"; exited {' and '.join(done)}" if done else ""
+        attempted_text = f"attempted {', '.join(attempted) or 'none'}"
+        error_text = "; ".join(errors) if errors else "no fill"
+        return (
+            f"EXIT PARTIAL {attempted_text}{done_text}; "
+            f"remaining {' and '.join(remaining)}; will retry next tick; {error_text}"
+        ), False
+
+    return await asyncio.to_thread(
+        execute_position_exit,
+        position,
+        kalshi_snapshot,
+        polymarket_snapshot,
+        polymarket_market,
+        live,
+    )
+
+
+async def walk_kalshi_exit(
+    market_context: AsyncMarketContext,
+    ticker: str,
+    side: str,
+    contracts: int,
+    chase_interval: float,
+    chase_max_steps: int,
+) -> LimitWalkResult:
+    async def best_price() -> float | None:
+        _km, snapshot, _pm, _ps, _ss = await market_context.snapshot()
+        if str(snapshot.get("ticker") or "") == ticker:
+            return finite_float(snapshot.get(f"{side}_bid"))
+        return await asyncio.to_thread(kalshi_current_bid, ticker, side)
+
+    async def place(price: float) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            kalshi_post_order,
+            ticker,
+            side,
+            price,
+            contracts,
+            f"btc15-walk-k-{uuid.uuid4().hex[:16]}",
+            "sell",
+            "good_till_canceled",
+        )
+
+    async def cancel(order: dict[str, Any]) -> None:
+        order_id = order.get("order_id")
+        if order_id:
+            await asyncio.to_thread(kalshi_cancel_order, str(order_id))
+
+    async def is_filled(order: dict[str, Any], expected_price: float) -> tuple[bool, float]:
+        order_id = order.get("order_id")
+        verified = await asyncio.to_thread(kalshi_get_order, str(order_id)) if order_id else order
+        filled = fill_count(verified)
+        if filled > 0:
+            verified["exit_method"] = "sell"
+            verified["best_bid"] = expected_price
+            verified["limit_price"] = expected_price
+            order.update(verified)
+            return True, filled_price(verified, side, action="sell") or expected_price
+        return False, expected_price
+
+    walker = LimitWalker(
+        venue="Kalshi",
+        side="sell",
+        contracts=contracts,
+        tick_size=0.01,
+        chase_interval=chase_interval,
+        max_steps=chase_max_steps,
+        logger=cli.print_line,
+        best_price=best_price,
+        place_order=place,
+        cancel_order=cancel,
+        is_filled=is_filled,
+    )
+    return await walker.run()
+
+
+async def walk_polymarket_exit(
+    market_context: AsyncMarketContext,
+    market: dict[str, Any],
+    contract: str,
+    contracts: int,
+    chase_interval: float,
+    chase_max_steps: int,
+) -> LimitWalkResult:
+    from py_clob_client_v2 import Side
+
+    token_id = token_ids_by_contract(market)[contract]
+
+    async def best_price() -> float | None:
+        _km, _ks, _pm, snapshot, _ss = await market_context.snapshot()
+        return finite_float(snapshot.get(f"{contract.lower()}_bid"))
+
+    async def place(price: float) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            polymarket_post_order,
+            market,
+            contract,
+            price,
+            contracts,
+            Side.SELL,
+            "GTC",
+        )
+
+    async def cancel(order: dict[str, Any]) -> None:
+        order_id = response_order_id(order)
+        if order_id != "--":
+            await asyncio.to_thread(polymarket_cancel_order, order_id)
+
+    async def is_filled(order: dict[str, Any], expected_price: float) -> tuple[bool, float]:
+        order_id = response_order_id(order)
+        if order_id != "--":
+            verified = await asyncio.to_thread(polymarket_get_order, order_id)
+            order["verified_order"] = verified
+        filled, fill_price = polymarket_fill_summary(order, expected_price)
+        return filled, fill_price
+
+    last_balance_error: Exception | None = None
+    for attempt in range(POLYMARKET_SELL_BALANCE_ATTEMPTS):
+        try:
+            balance, allowance = await asyncio.to_thread(polymarket_conditional_balance_amounts, token_id)
+            if balance >= contracts and allowance >= contracts:
+                break
+            last_balance_error = RuntimeError(
+                "Polymarket conditional balance/allowance below cleanup size: "
+                f"balance {balance:g}, allowance {allowance:g}, need {contracts:g}"
+            )
+        except Exception as exc:
+            last_balance_error = exc
+            break
+        await asyncio.sleep(POLYMARKET_SELL_BALANCE_DELAY_SECONDS)
+    else:
+        return LimitWalkResult(False, reason=str(last_balance_error))
+    if last_balance_error is not None and attempt == 0:
+        return LimitWalkResult(False, reason=str(last_balance_error))
+
+    walker = LimitWalker(
+        venue="Polymarket",
+        side="sell",
+        contracts=contracts,
+        tick_size=0.01,
+        chase_interval=chase_interval,
+        max_steps=chase_max_steps,
+        logger=cli.print_line,
+        best_price=best_price,
+        place_order=place,
+        cancel_order=cancel,
+        is_filled=is_filled,
+    )
+    return await walker.run()
+
+
 def trade_preflight(
     kalshi_snapshot: dict[str, Any],
     polymarket_market: dict[str, Any],
@@ -2688,10 +3006,39 @@ def parse_args() -> argparse.Namespace:
         default=6,
         help="Maximum executable/book levels to print with --print-arb-orderbook.",
     )
+    parser.add_argument(
+        "--disable-websocket",
+        action="store_true",
+        help="Use the legacy HTTP polling loop instead of websocket-driven updates.",
+    )
+    parser.add_argument(
+        "--ws-report-interval",
+        type=float,
+        default=WEBSOCKET_REPORT_INTERVAL,
+        help="Print/refresh websocket state at least this often while waiting for market events. Default: 2.",
+    )
+    parser.add_argument(
+        "--ws-stale-seconds",
+        type=float,
+        default=WEBSOCKET_STALE_SECONDS,
+        help="Treat websocket books as stale after this many seconds and use HTTP cleanup for live exits.",
+    )
+    parser.add_argument(
+        "--chase-interval",
+        type=float,
+        default=CHASE_INTERVAL,
+        help="Seconds to wait for a passive exit fill before canceling and walking the limit. Default: 2.",
+    )
+    parser.add_argument(
+        "--chase-max-steps",
+        type=int,
+        default=CHASE_MAX_STEPS,
+        help="Maximum cancel/replace attempts for a walking limit exit. Default: 6.",
+    )
     return parser.parse_args()
 
 
-def main() -> None:
+async def main() -> None:
     args = parse_args()
     interval = max(0.1, args.interval)
     sma_window_size = kalshi_sma_window_size(interval)
@@ -2707,6 +3054,9 @@ def main() -> None:
     take_profit_exit_value = max(0.0, args.take_profit_exit_value)
     profit_capture_min_edge = max(0.0, args.profit_capture_min_edge)
     exit_cushion = max(0.0, args.exit_cushion)
+    chase_interval = max(0.1, args.chase_interval)
+    chase_max_steps = max(1, args.chase_max_steps)
+    market_context: AsyncMarketContext | None = None
     pending_rows: dict[Path, list[dict[str, Any]]] = {}
     trades_done = 0
     open_position: dict[str, Any] | None = None
@@ -2724,19 +3074,37 @@ def main() -> None:
         f"take-profit exit >= {cli.fmt_display_cents(take_profit_exit_value)}c; "
         f"profit capture edge >= {cli.fmt_money(profit_capture_min_edge)}; "
         f"exit cushion >= {cli.fmt_money(exit_cushion)}; "
-        f"max_trades={max_trades}; polling every {interval:g}s",
+        f"max_trades={max_trades}; "
+        f"{'HTTP polling' if args.disable_websocket else 'websocket event loop'} every {interval:g}s",
     )
     print_startup_balances()
+    if not args.disable_websocket:
+        market_context = AsyncMarketContext(
+            fetch_market_state,
+            logger=cli.print_line,
+            report_interval=max(0.25, args.ws_report_interval),
+            stale_seconds=max(1.0, args.ws_stale_seconds),
+        )
+        await market_context.start()
     while True:
         started = time.monotonic()
         try:
-            (
-                _kalshi_market,
-                kalshi_snapshot,
-                polymarket_market,
-                polymarket_snapshot,
-                source_snapshot,
-            ) = fetch_market_state()
+            if market_context is not None:
+                (
+                    _kalshi_market,
+                    kalshi_snapshot,
+                    polymarket_market,
+                    polymarket_snapshot,
+                    source_snapshot,
+                ) = await market_context.wait_for_update(timeout=max(0.25, args.ws_report_interval))
+            else:
+                (
+                    _kalshi_market,
+                    kalshi_snapshot,
+                    polymarket_market,
+                    polymarket_snapshot,
+                    source_snapshot,
+                ) = await asyncio.to_thread(fetch_market_state)
             arbitrage = cli.best_arbitrage(kalshi_snapshot, polymarket_snapshot)
             csv_path = cli.csv_path_for_contract(args.csv_dir, kalshi_snapshot)
             rows = pending_rows.setdefault(csv_path, [])
@@ -2812,12 +3180,15 @@ def main() -> None:
 
             if open_position is not None:
                 if position_has_pending_exit(open_position):
-                    exit_result, exit_complete = execute_position_exit(
+                    exit_result, exit_complete = await execute_position_exit_async(
                         open_position,
                         kalshi_snapshot,
                         polymarket_snapshot,
                         polymarket_market,
                         args.live,
+                        market_context,
+                        chase_interval,
+                        chase_max_steps,
                     )
                     cli.print_line(f"{display_time:<10} | {exit_result}")
                     if exit_complete:
@@ -2899,12 +3270,15 @@ def main() -> None:
                                 f"{cli.fmt_money(exit_pnl)} before exit fees"
                             )
                         cli.print_line(f"{display_time:<10} | {exit_text}")
-                        exit_result, exit_complete = execute_position_exit(
+                        exit_result, exit_complete = await execute_position_exit_async(
                             open_position,
                             kalshi_snapshot,
                             polymarket_snapshot,
                             polymarket_market,
                             args.live,
+                            market_context,
+                            chase_interval,
+                            chase_max_steps,
                         )
                         cli.print_line(f"{display_time:<10} | {exit_result}")
                         if exit_complete:
@@ -2974,12 +3348,15 @@ def main() -> None:
                                 f"{cli.fmt_money(exit_pnl)} before exit fees"
                             )
                         cli.print_line(f"{display_time:<10} | {exit_text}")
-                        exit_result, exit_complete = execute_position_exit(
+                        exit_result, exit_complete = await execute_position_exit_async(
                             open_position,
                             kalshi_snapshot,
                             polymarket_snapshot,
                             polymarket_market,
                             args.live,
+                            market_context,
+                            chase_interval,
+                            chase_max_steps,
                         )
                         cli.print_line(f"{display_time:<10} | {exit_result}")
                         if exit_complete:
@@ -3029,10 +3406,11 @@ def main() -> None:
                     if args.once:
                         break
                     elapsed = time.monotonic() - started
-                    time.sleep(max(0.0, interval - elapsed))
+                    await asyncio.sleep(max(0.0, interval - elapsed))
                     continue
 
-                preflight = trade_preflight(
+                preflight = await asyncio.to_thread(
+                    trade_preflight,
                     kalshi_snapshot,
                     polymarket_market,
                     arbitrage,
@@ -3080,7 +3458,8 @@ def main() -> None:
                 else:
                     partial_position = None
                     try:
-                        result = execute_arbitrage(
+                        result = await asyncio.to_thread(
+                            execute_arbitrage,
                             kalshi_snapshot,
                             polymarket_market,
                             arbitrage,
@@ -3191,8 +3570,8 @@ def main() -> None:
         if args.once:
             break
         elapsed = time.monotonic() - started
-        time.sleep(max(0.0, interval - elapsed))
+        await asyncio.sleep(max(0.0, interval - elapsed))
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
