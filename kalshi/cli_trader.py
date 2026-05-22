@@ -3194,13 +3194,11 @@ async def main() -> None:
                 or log_interval <= 0
                 or now_monotonic - last_snapshot_log_at >= log_interval
             )
-            actionable_arbitrage = bool(
-                arbitrage and arbitrage["expected_profit"] > args.min_profit
-            )
-            if snapshot_log_due or actionable_arbitrage:
+            snapshot_printed = False
+            if snapshot_log_due:
                 cli.print_snapshot(kalshi_snapshot, polymarket_snapshot, arbitrage, ref_suffix)
-                if snapshot_log_due:
-                    last_snapshot_log_at = now_monotonic
+                snapshot_printed = True
+                last_snapshot_log_at = now_monotonic
 
             if open_position is not None:
                 if position_has_pending_exit(open_position):
@@ -3402,7 +3400,11 @@ async def main() -> None:
                 cooldown_reason,
             )
             if entry_gate_reason is not None:
-                if cooldown_reason is not None and entry_gate_reason == cooldown_reason:
+                if (
+                    snapshot_log_due
+                    and cooldown_reason is not None
+                    and entry_gate_reason == cooldown_reason
+                ):
                     cli.print_line(f"{display_time:<10} | ENTRY SKIP {cooldown_reason}")
             else:
                 fallback_cost = arbitrage["kalshi_price"] + polymarket_execution_price(
@@ -3422,7 +3424,10 @@ async def main() -> None:
                     min_profit_after_fees,
                 )
                 if not preliminary_decision["passed"]:
-                    if filter_check_passed(preliminary_decision, "profit_after_fees"):
+                    if (
+                        snapshot_log_due
+                        and filter_check_passed(preliminary_decision, "profit_after_fees")
+                    ):
                         cli.print_line(f"{display_time:<10} | {format_entry_skip(preliminary_decision)}")
                     if len(rows) >= flush_every:
                         cli.append_rows(csv_path, rows)
@@ -3432,6 +3437,10 @@ async def main() -> None:
                     elapsed = time.monotonic() - started
                     await asyncio.sleep(max(0.0, interval - elapsed))
                     continue
+
+                if not snapshot_printed:
+                    cli.print_snapshot(kalshi_snapshot, polymarket_snapshot, arbitrage, ref_suffix)
+                    snapshot_printed = True
 
                 preflight = await asyncio.to_thread(
                     trade_preflight,

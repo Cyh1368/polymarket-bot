@@ -5,7 +5,7 @@ This is a flow chart and description of an arbitrage bot trading on Kalshi and P
 The bot has two separate cadences:
 
 - `--interval` controls the decision loop cadence: how often the bot calculates arbitrage, evaluates entry/hold/exit checks, writes CSV rows, and may act.
-- `--log-interval` controls routine snapshot logging only. The default is 10 seconds. Actionable arbitrage, preflight, trade, partial-entry, hold, and exit logs are still emitted immediately.
+- `--log-interval` controls routine snapshot logging only. The default is 10 seconds. Entry candidates that pass preliminary source filters, preflight, trade, partial-entry, hold, and exit logs are still emitted immediately.
 
 When websocket mode is enabled, background websocket tasks continuously update cached market state. The decision loop waits for a websocket event or a timeout, calculates once, and then sleeps out the remaining `--interval`. Rapid websocket messages are therefore coalesced into the next decision tick unless the loop is already waiting.
 
@@ -31,7 +31,7 @@ flowchart TD
 
     TickContext --> CalcArb["Calculate best_arbitrage"]
     CalcArb --> CsvBuffer["Append CSV row"]
-    CsvBuffer --> LogGate{{"Routine log due or actionable arbitrage?"}}
+    CsvBuffer --> LogGate{{"Routine log due?"}}
     LogGate -- yes --> PrintSnapshot["Print snapshot/log signal"]
     LogGate -- no --> ContractChanged
     PrintSnapshot --> ContractChanged
@@ -126,7 +126,7 @@ flowchart TD
 | Area | Checks and outcomes |
 | --- | --- |
 | `DataMode` | Uses `AsyncMarketContext.wait_for_update()` unless `--disable-websocket` is set. Websocket updates run in background tasks; the decision loop still runs at the `--interval` cadence after each tick. |
-| `LogGate` | Prints routine snapshot lines only when `--log-interval` has elapsed, on `--once`, on a new contract, or when an actionable raw arbitrage exceeds `--min-profit`. Operational logs are not throttled by this gate. |
+| `LogGate` | Prints routine snapshot lines only when `--log-interval` has elapsed, on `--once`, or on a new contract. Preliminary filter failures and cooldown skip lines are routine-throttled; entry candidates that pass preliminary source filters and trade/exit logs are immediate. |
 | `EntryGate` | Requires no open position, outside no-trade boundary, an arbitrage candidate, raw expected profit above `min_profit`, `trades_done` below `max_trades`, and no contract cooldown. Failure means no new entry this tick. |
 | `PreliminaryEntryFilter` | Requires Polymarket data, active Kalshi market, both targets, direction agreement, source gap within `source_gap_threshold`, entry distance above `entry_required_distance`, target divergence within `target_divergence_threshold`, and fee-aware profit at least `min_profit_after_fees`. Failure means no new entry this tick. |
 | `EntryFilter` | Requires executable contracts, Kalshi liquidity, Polymarket liquidity, Polymarket notional at least `POLYMARKET_MIN_ORDER_NOTIONAL`, adjusted profit above `min_adjusted_profit`, and source checks still passing with executable cost. No Kalshi or Polymarket liquidity means no trade before any order is placed. |
@@ -152,8 +152,8 @@ flowchart TD
 | `Tick context` | Prepares per-tick contract and state context. | Without this, the bot cannot detect contract changes or write the correct CSV row. |
 | `Calculate best_arbitrage` | Runs `cli.best_arbitrage()` against the current Kalshi and Polymarket snapshots. | This is the raw opportunity calculation and happens every decision tick, independent of routine log frequency. |
 | `Append CSV row` | Buffers the current tick's CSV row. | Preserves per-tick data even when routine terminal/log snapshots are throttled. |
-| `Routine log due or actionable arbitrage?` | Checks `--log-interval`, `--once`, new-contract status, and raw arbitrage above `--min-profit`. | Separates high-frequency scanning from lower-frequency routine logging while keeping signals immediate. |
-| `Print snapshot/log signal` | Prints the market snapshot when due or when raw arbitrage is actionable. | Keeps `trader_log.txt` readable without hiding actionable opportunities. |
+| `Routine log due?` | Checks `--log-interval`, `--once`, and new-contract status. | Separates high-frequency scanning from lower-frequency routine logging. |
+| `Print snapshot/log signal` | Prints the market snapshot when routine logging is due. Preliminary filter failures and cooldown skips follow this cadence; entry candidates that pass preliminary filters print their own immediate signal before preflight. | Keeps `trader_log.txt` readable without hiding actionable opportunities. |
 | `New contract?` | Detects a transition to a different BTC 15m contract. | Prevents old SMA/context from leaking into the next contract. |
 | `Reset contract state` | Clears per-contract tracking and logs the new contract context. | Without this, boundary checks and reference deltas can be wrong. |
 | `Open position?` | Checks whether the bot is already holding a matched or cleanup position. | Prevents overlapping trades unless the current one is resolved. |
@@ -217,7 +217,7 @@ flowchart TD
 | `TWO_WINNER_PROFIT_EXIT_SECONDS` | `90.0` | Time threshold for favorable two-winner near-expiry profit exit. |
 | `TWO_WINNER_PROFIT_EXIT_DISTANCE` | `20.0` | Distance threshold for favorable two-winner near-target profit exit. |
 | `--interval` | `btc.POLL_SECONDS` | Decision-loop interval for arbitrage calculation, entry/hold/exit checks, CSV buffering, and possible actions. |
-| `--log-interval` | `10.0` | Routine snapshot log interval. Actionable arbitrage and trading/exit signals still log immediately. |
+| `--log-interval` | `10.0` | Routine snapshot log interval. Entry candidates passing preliminary filters and trading/exit signals still log immediately. |
 | `--csv-dir` | `btc.DATA_DIR` | Directory for per-contract CSV output. |
 | `--flush-every` | `1` | Number of pending CSV rows before append. |
 | `--min-profit` | `0.0` | Minimum raw displayed profit before preflight. |
