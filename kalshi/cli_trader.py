@@ -2935,6 +2935,15 @@ def parse_args() -> argparse.Namespace:
         description="Print Kalshi/Polymarket BTC 15m arbitrage and optionally execute live trades."
     )
     parser.add_argument("--interval", type=float, default=btc.POLL_SECONDS)
+    parser.add_argument(
+        "--log-interval",
+        type=float,
+        default=10.0,
+        help=(
+            "Seconds between routine market snapshot log lines. "
+            "Arbitrage/trade signals still log immediately. Default: 10."
+        ),
+    )
     parser.add_argument("--csv-dir", type=Path, default=btc.DATA_DIR)
     parser.add_argument("--flush-every", type=int, default=1)
     parser.add_argument(
@@ -2970,8 +2979,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hold-distance-multiplier",
         type=float,
-        default=1.00,
-        help="Hold distance multiplier applied to max(10, seconds_to_expiry * 0.05). Default: 1.00.",
+        default=0.25,
+        help="Hold distance multiplier applied to max(10, seconds_to_expiry * 0.05). Default: 0.25.",
     )
     parser.add_argument(
         "--take-profit-exit-value",
@@ -3041,6 +3050,7 @@ def parse_args() -> argparse.Namespace:
 async def main() -> None:
     args = parse_args()
     interval = max(0.1, args.interval)
+    log_interval = max(0.0, args.log_interval)
     sma_window_size = kalshi_sma_window_size(interval)
     kalshi_brtis: deque[float] = deque(maxlen=sma_window_size)
     flush_every = max(1, args.flush_every)
@@ -3061,6 +3071,7 @@ async def main() -> None:
     trades_done = 0
     open_position: dict[str, Any] | None = None
     last_contract_key: str | None = None
+    last_snapshot_log_at = 0.0
     contract_cooldowns: dict[str, tuple[float, str]] = {}
 
     mode = "LIVE TRADING" if args.live else "DRY RUN"
@@ -3075,7 +3086,8 @@ async def main() -> None:
         f"profit capture edge >= {cli.fmt_money(profit_capture_min_edge)}; "
         f"exit cushion >= {cli.fmt_money(exit_cushion)}; "
         f"max_trades={max_trades}; "
-        f"{'HTTP polling' if args.disable_websocket else 'websocket event loop'} every {interval:g}s",
+        f"{'HTTP polling' if args.disable_websocket else 'websocket event loop'} every {interval:g}s; "
+        f"routine snapshot log every {log_interval:g}s",
     )
     print_startup_balances()
     if not args.disable_websocket:
@@ -3175,8 +3187,20 @@ async def main() -> None:
                 cli.print_line(f"{display_time:<10} | {combined_balance_line()}")
                 cli.print_line(f"{display_time:<10} | {format_contract_start(kalshi_snapshot, polymarket_snapshot, source_snapshot)}")
 
-            if arbitrage:
+            now_monotonic = time.monotonic()
+            snapshot_log_due = (
+                args.once
+                or new_contract
+                or log_interval <= 0
+                or now_monotonic - last_snapshot_log_at >= log_interval
+            )
+            actionable_arbitrage = bool(
+                arbitrage and arbitrage["expected_profit"] > args.min_profit
+            )
+            if snapshot_log_due or actionable_arbitrage:
                 cli.print_snapshot(kalshi_snapshot, polymarket_snapshot, arbitrage, ref_suffix)
+                if snapshot_log_due:
+                    last_snapshot_log_at = now_monotonic
 
             if open_position is not None:
                 if position_has_pending_exit(open_position):
