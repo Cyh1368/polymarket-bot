@@ -381,6 +381,7 @@ def kalshi_liquidity_plan_for_buy(ticker: str, side: str, price: float) -> dict[
         "min_opposite_bid": min_opposite_bid,
         "liquidity": cumulative,
         "levels": levels,
+        "source": "http",
     }
 
 
@@ -2416,26 +2417,36 @@ def trade_preflight(
     arbitrage: dict[str, Any],
     max_contracts: int,
     min_adjusted_profit: float,
+    kalshi_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     kalshi_side = arbitrage["kalshi_contract"].lower()
     polymarket_contract = arbitrage["polymarket_contract"]
     kalshi_price = arbitrage["kalshi_price"]
     fallback_poly_price = polymarket_execution_price(arbitrage["polymarket_price"])
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        kalshi_plan_future = executor.submit(
-            kalshi_liquidity_plan_for_buy,
-            str(kalshi_snapshot["ticker"]),
-            kalshi_side,
-            kalshi_price,
-        )
-        poly_plan_future = executor.submit(
-            polymarket_execution_plan,
+    if kalshi_plan is not None:
+        poly_price, poly_liquidity, poly_plan = polymarket_execution_plan(
             polymarket_market,
             polymarket_contract,
             max_contracts,
         )
-        kalshi_plan = kalshi_plan_future.result()
-        poly_price, poly_liquidity, poly_plan = poly_plan_future.result()
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            kalshi_plan_future = executor.submit(
+                kalshi_liquidity_plan_for_buy,
+                str(kalshi_snapshot["ticker"]),
+                kalshi_side,
+                kalshi_price,
+            )
+            poly_plan_future = executor.submit(
+                polymarket_execution_plan,
+                polymarket_market,
+                polymarket_contract,
+                max_contracts,
+            )
+            kalshi_plan = kalshi_plan_future.result()
+            poly_price, poly_liquidity, poly_plan = poly_plan_future.result()
+    if kalshi_plan is None:
+        raise RuntimeError("Kalshi preflight plan unavailable")
     kalshi_liquidity = as_float(kalshi_plan.get("liquidity"))
     executable_contracts = min(max_contracts, int(kalshi_liquidity), int(poly_liquidity))
     if executable_contracts > 0 and executable_contracts < max_contracts:
@@ -2488,6 +2499,7 @@ def trade_preflight(
         "kalshi_side": kalshi_side,
         "kalshi_price": kalshi_price,
         "kalshi_liquidity": kalshi_liquidity,
+        "kalshi_plan_source": kalshi_plan.get("source") or "http",
         "polymarket_contract": polymarket_contract,
         "polymarket_price": poly_order_price,
         "polymarket_notional": polymarket_notional,
@@ -2500,12 +2512,53 @@ def trade_preflight(
     }
 
 
+async def trade_preflight_async(
+    kalshi_snapshot: dict[str, Any],
+    polymarket_market: dict[str, Any],
+    arbitrage: dict[str, Any],
+    max_contracts: int,
+    min_adjusted_profit: float,
+    market_context: AsyncMarketContext | None,
+) -> dict[str, Any]:
+    kalshi_plan = None
+    if market_context is not None:
+        try:
+            kalshi_plan = await market_context.kalshi_liquidity_plan_for_buy(
+                str(kalshi_snapshot["ticker"]),
+                arbitrage["kalshi_contract"].lower(),
+                arbitrage["kalshi_price"],
+            )
+        except Exception as exc:
+            cli.print_line(
+                f"{btc.iso_utc()} | WEBSOCKET Kalshi local preflight unavailable: "
+                f"{type(exc).__name__}: {exc}"
+            )
+    if kalshi_plan is None:
+        return await asyncio.to_thread(
+            trade_preflight,
+            kalshi_snapshot,
+            polymarket_market,
+            arbitrage,
+            max_contracts,
+            min_adjusted_profit,
+        )
+    return await asyncio.to_thread(
+        trade_preflight,
+        kalshi_snapshot,
+        polymarket_market,
+        arbitrage,
+        max_contracts,
+        min_adjusted_profit,
+        kalshi_plan,
+    )
+
+
 def format_preflight(preflight: dict[str, Any]) -> str:
     return (
         f"CHECK {preflight['decision']} {preflight['reason']} | "
         f"size {preflight['contracts']:g}/{preflight['max_contracts']:g} | "
         f"K {preflight['kalshi_side'].upper()} @ {cli.fmt_display_cents(preflight['kalshi_price'])}c "
-        f"liq {preflight['kalshi_liquidity']:g} | "
+        f"liq {preflight['kalshi_liquidity']:g} ({preflight.get('kalshi_plan_source') or 'http'}) | "
         f"P {preflight['polymarket_contract']} @ {cli.fmt_display_cents(preflight['polymarket_price'])}c "
         f"liq {preflight['polymarket_liquidity']:g} | "
         f"adj profit {cli.fmt_money(preflight['adjusted_profit'])}"
@@ -2568,6 +2621,7 @@ def format_orderbook_debug(preflight: dict[str, Any], contracts: int, max_levels
     return [
         (
             f"BOOK K {kalshi_side} buy limit {cli.fmt_display_cents(preflight['kalshi_price'])}c "
+            f"source {kalshi_plan.get('source') or 'http'}; "
             f"needs opposite bid >= {cli.fmt_display_cents(kalshi_plan['min_opposite_bid'])}c; "
             f"executable {kalshi_plan['liquidity']:g}; levels {kalshi_text}"
         ),
@@ -2714,6 +2768,7 @@ def execute_arbitrage(
     min_adjusted_profit: float,
     live: bool,
     preflight: dict[str, Any] | None = None,
+    live_recheck_preflight: dict[str, Any] | None = None,
 ) -> str:
     kalshi_side = arbitrage["kalshi_contract"].lower()
     polymarket_contract = arbitrage["polymarket_contract"]
@@ -2747,12 +2802,16 @@ def execute_arbitrage(
             f"SKIP {preflight['reason']}"
         )
 
-    live_preflight = trade_preflight(
-        kalshi_snapshot,
-        polymarket_market,
-        arbitrage,
-        contracts,
-        min_adjusted_profit,
+    live_preflight = (
+        live_recheck_preflight
+        if live_recheck_preflight is not None
+        else trade_preflight(
+            kalshi_snapshot,
+            polymarket_market,
+            arbitrage,
+            contracts,
+            min_adjusted_profit,
+        )
     )
     if live_preflight["decision"] != "PLACE":
         return f"SKIP live recheck: {live_preflight['reason']}"
@@ -3442,13 +3501,13 @@ async def main() -> None:
                     cli.print_snapshot(kalshi_snapshot, polymarket_snapshot, arbitrage, ref_suffix)
                     snapshot_printed = True
 
-                preflight = await asyncio.to_thread(
-                    trade_preflight,
+                preflight = await trade_preflight_async(
                     kalshi_snapshot,
                     polymarket_market,
                     arbitrage,
                     contracts,
                     min_adjusted_profit,
+                    market_context,
                 )
                 cli.print_line(
                     f"{cli.fmt_display_time(kalshi_snapshot.get('timestamp_utc')):<10} | "
@@ -3490,6 +3549,16 @@ async def main() -> None:
                     result = f"ENTRY SKIP preflight: {preflight['reason']}"
                 else:
                     partial_position = None
+                    live_recheck_preflight = None
+                    if args.live:
+                        live_recheck_preflight = await trade_preflight_async(
+                            kalshi_snapshot,
+                            polymarket_market,
+                            arbitrage,
+                            contracts,
+                            min_adjusted_profit,
+                            market_context,
+                        )
                     try:
                         result = await asyncio.to_thread(
                             execute_arbitrage,
@@ -3500,6 +3569,7 @@ async def main() -> None:
                             min_adjusted_profit,
                             args.live,
                             preflight,
+                            live_recheck_preflight,
                         )
                     except PartialEntryError as exc:
                         result = str(exc)

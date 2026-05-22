@@ -9,6 +9,8 @@ The bot has two separate cadences:
 
 When websocket mode is enabled, background websocket tasks continuously update cached market state. The decision loop waits for a websocket event or a timeout, calculates once, and then sleeps out the remaining `--interval`. Rapid websocket messages are therefore coalesced into the next decision tick unless the loop is already waiting.
 
+Kalshi orderbook handling now keeps a local websocket book. The bot bootstraps the book from HTTP, applies Kalshi `orderbook_snapshot` and `orderbook_delta` messages to local YES/NO bid levels, periodically resyncs from HTTP, and falls back to HTTP if the local book is stale, incomplete, or hits a sequence gap. Preflight logs show the Kalshi liquidity source as `ws_local` or `http`.
+
 ```mermaid
 flowchart TD
     TickStart([Tick start])
@@ -125,7 +127,7 @@ flowchart TD
 
 | Area | Checks and outcomes |
 | --- | --- |
-| `DataMode` | Uses `AsyncMarketContext.wait_for_update()` unless `--disable-websocket` is set. Websocket updates run in background tasks; the decision loop still runs at the `--interval` cadence after each tick. |
+| `DataMode` | Uses `AsyncMarketContext.wait_for_update()` unless `--disable-websocket` is set. Websocket updates run in background tasks; the decision loop still runs at the `--interval` cadence after each tick. Kalshi local-book maintenance also runs in the websocket context. |
 | `LogGate` | Prints routine snapshot lines only when `--log-interval` has elapsed, on `--once`, or on a new contract. Preliminary filter failures and cooldown skip lines are routine-throttled; entry candidates that pass preliminary source filters and trade/exit logs are immediate. |
 | `EntryGate` | Requires no open position, outside no-trade boundary, an arbitrage candidate, raw expected profit above `min_profit`, `trades_done` below `max_trades`, and no contract cooldown. Failure means no new entry this tick. |
 | `PreliminaryEntryFilter` | Requires Polymarket data, active Kalshi market, both targets, direction agreement, source gap within `source_gap_threshold`, entry distance above `entry_required_distance`, target divergence within `target_divergence_threshold`, and fee-aware profit at least `min_profit_after_fees`. Failure means no new entry this tick. |
@@ -173,8 +175,8 @@ flowchart TD
 | `Exit partial remains` | Records that at least one exit leg is still open. | This is the path seen in concise logs when FOK sell or Kalshi liquidity fails. |
 | `Entry gate passes?` | Checks high-level conditions for considering a new trade. | Avoids expensive preflight and live orders when basic requirements fail. |
 | `Preliminary source checks pass?` | Validates source, target, direction, distance, and fee-aware profit before preflight. | Prevents trades based on raw market edge when source context is unsafe. |
-| `trade_preflight` | Builds executable Kalshi and Polymarket plans. | Converts displayed arbitrage into actual book-aware tradeability. |
-| `Parallel: Kalshi buy liquidity` | Checks executable Kalshi buy liquidity. | Without it, Kalshi FOK orders may fail or partially expose cleanup logic. |
+| `trade_preflight` | Builds executable Kalshi and Polymarket plans. | Converts displayed arbitrage into actual book-aware tradeability. Kalshi uses the fresh local websocket book when available and HTTP otherwise. |
+| `Parallel: Kalshi buy liquidity` | Checks executable Kalshi buy liquidity from `ws_local` or HTTP fallback. | Without it, Kalshi FOK orders may fail or partially expose cleanup logic. |
 | `Parallel: Polymarket buy liquidity` | Checks executable Polymarket buy liquidity. | Without it, the bot can buy Kalshi first and then fail to hedge. |
 | `Executable entry checks pass?` | Confirms size, liquidity, notional, adjusted profit, and source checks. | Blocks trades that are profitable only on displayed top-of-book quotes. |
 | `No trade` | Ends entry attempt when liquidity or edge is insufficient. | Avoids unnecessary live order placement. |
@@ -240,3 +242,4 @@ flowchart TD
 | `--ws-stale-seconds` | `5.0` | Treat websocket books as stale for live exit handling after this many seconds without updates. |
 | `--chase-interval` | `2.0` | Seconds to wait for a passive walking-limit exit order before checking/canceling/repricing. |
 | `--chase-max-steps` | `6` | Maximum cancel/replace attempts for walking-limit live exits. |
+| `KALSHI_LOCAL_BOOK_RESYNC_SECONDS` | `30.0` | Periodic HTTP resync interval for the local Kalshi websocket book. |

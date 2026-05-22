@@ -11,6 +11,7 @@ import kalshi_btc15_server as btc
 
 
 MarketState = tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
+KALSHI_LOCAL_BOOK_RESYNC_SECONDS = 30.0
 
 
 def _as_float(value: Any) -> float | None:
@@ -68,6 +69,79 @@ def _book_signature(kalshi_snapshot: dict[str, Any], polymarket_snapshot: dict[s
     )
 
 
+def _level_price(level: Any) -> float | None:
+    if not isinstance(level, (list, tuple)) or not level:
+        return None
+    return btc.normalize_price(level[0])
+
+
+def _level_quantity(level: Any) -> float:
+    if not isinstance(level, (list, tuple)) or len(level) < 2:
+        return 0.0
+    try:
+        return float(level[1])
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _levels_to_book(levels: Any) -> dict[float, float]:
+    book: dict[float, float] = {}
+    if not isinstance(levels, list):
+        return book
+    for level in levels:
+        price = _level_price(level)
+        quantity = _level_quantity(level)
+        if price is not None and quantity > 0:
+            book[round(price, 10)] = quantity
+    return book
+
+
+def _book_to_levels(book: dict[float, float]) -> list[list[float]]:
+    return [
+        [price, quantity]
+        for price, quantity in sorted(book.items(), key=lambda item: item[0], reverse=True)
+        if quantity > 0
+    ]
+
+
+def _int_value(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _snapshot_with_kalshi_book(
+    snapshot: dict[str, Any],
+    yes_book: dict[float, float],
+    no_book: dict[float, float],
+) -> dict[str, Any]:
+    yes_levels = _book_to_levels(yes_book)
+    no_levels = _book_to_levels(no_book)
+    best_yes_bid, best_yes_bid_qty = btc.best_level(yes_levels)
+    best_no_bid, best_no_bid_qty = btc.best_level(no_levels)
+    updated = dict(snapshot)
+    updated["yes_levels"] = yes_levels
+    updated["no_levels"] = no_levels
+    updated["yes_bid"] = best_yes_bid
+    updated["yes_ask"] = btc.invert_price(best_no_bid)
+    updated["no_bid"] = best_no_bid
+    updated["no_ask"] = btc.invert_price(best_yes_bid)
+    updated["best_yes_bid_qty"] = best_yes_bid_qty
+    updated["best_no_bid_qty"] = best_no_bid_qty
+    if updated["yes_bid"] is not None and updated["yes_ask"] is not None:
+        updated["yes_mid"] = (updated["yes_bid"] + updated["yes_ask"]) / 2.0
+    elif updated["yes_bid"] is not None:
+        updated["yes_mid"] = updated["yes_bid"]
+    elif updated["yes_ask"] is not None:
+        updated["yes_mid"] = updated["yes_ask"]
+    else:
+        updated["yes_mid"] = None
+    return updated
+
+
 def _kalshi_ws_headers() -> dict[str, str]:
     key_id = (
         os.getenv("KALSHI_API_ID")
@@ -118,6 +192,7 @@ class AsyncMarketContext:
         self._state: MarketState | None = None
         self._last_signature: tuple[Any, ...] | None = None
         self._last_source: tuple[Any, Any] | None = None
+        self._kalshi_local_book: dict[str, Any] | None = None
         self._tasks: list[asyncio.Task[None]] = []
         self._running = False
         self.kalshi_connected = False
@@ -136,6 +211,7 @@ class AsyncMarketContext:
             asyncio.create_task(self._kalshi_ws_loop(), name="kalshi-ws"),
             asyncio.create_task(self._polymarket_ws_loop(), name="polymarket-ws"),
             asyncio.create_task(self._source_loop(), name="source-ws"),
+            asyncio.create_task(self._kalshi_resync_loop(), name="kalshi-resync"),
         ]
 
     async def stop(self) -> None:
@@ -151,6 +227,7 @@ class AsyncMarketContext:
             self._state = state
             self._last_signature = _book_signature(state[1], state[3])
             self._last_source = (state[4].get("kalshi_price"), state[4].get("polymarket_price"))
+            self._reset_kalshi_local_book_from_snapshot(state[1], reason)
         self.update_event.set()
         self.logger(f"WEBSOCKET bootstrap via HTTP ({reason})")
         return state
@@ -192,9 +269,50 @@ class AsyncMarketContext:
             self._state = state
             self._last_signature = _book_signature(state[1], state[3])
             self._last_source = (state[4].get("kalshi_price"), state[4].get("polymarket_price"))
+            self._reset_kalshi_local_book_from_snapshot(state[1], reason)
             changed = old_signature != self._last_signature or old_source != self._last_source
         if changed:
             self.update_event.set()
+
+    async def kalshi_liquidity_plan_for_buy(
+        self,
+        ticker: str,
+        side: str,
+        price: float,
+    ) -> dict[str, Any] | None:
+        async with self.lock:
+            book = self._kalshi_local_book
+            if not book or book.get("ticker") != ticker or not book.get("complete"):
+                return None
+            now = time.monotonic()
+            if now - float(book.get("updated_at") or 0.0) > self.stale_seconds:
+                return None
+            opposite_book = book["no"] if side == "yes" else book["yes"]
+            min_opposite_bid = round(1.0 - price, 10)
+            priced_levels = sorted(opposite_book.items(), key=lambda item: item[0], reverse=True)
+        cumulative = 0.0
+        levels = []
+        for opposite_bid, quantity in priced_levels:
+            executable = opposite_bid >= min_opposite_bid
+            if executable:
+                cumulative += quantity
+            levels.append(
+                {
+                    "opposite_bid": opposite_bid,
+                    "buy_price": round(1.0 - opposite_bid, 10),
+                    "quantity": quantity,
+                    "cumulative": cumulative if executable else None,
+                    "executable": executable,
+                }
+            )
+        return {
+            "side": side,
+            "limit_price": price,
+            "min_opposite_bid": min_opposite_bid,
+            "liquidity": cumulative,
+            "levels": levels,
+            "source": "ws_local",
+        }
 
     async def _kalshi_ws_loop(self) -> None:
         import websockets
@@ -227,6 +345,7 @@ class AsyncMarketContext:
                                 "params": {
                                     "channels": ["ticker", "orderbook_delta", "fill"],
                                     "market_tickers": [ticker],
+                                    "use_yes_price": False,
                                 },
                             }
                         )
@@ -259,9 +378,14 @@ class AsyncMarketContext:
             return True
         if msg_type == "ticker" and await self._apply_kalshi_ticker(data.get("msg") or data):
             return True
-        if msg_type in ("orderbook_snapshot", "orderbook_delta"):
-            await self.refresh_after_event(f"kalshi {msg_type}")
-            return True
+        if msg_type == "orderbook_snapshot":
+            return await self._apply_kalshi_orderbook_snapshot(data)
+        if msg_type == "orderbook_delta":
+            changed = await self._apply_kalshi_orderbook_delta(data)
+            if changed is None:
+                await self.refresh_after_event("kalshi orderbook_delta fallback")
+                return True
+            return changed
         return False
 
     async def _apply_kalshi_ticker(self, message: dict[str, Any]) -> bool:
@@ -285,6 +409,118 @@ class AsyncMarketContext:
             self._state = (kalshi_market, updated, polymarket_market, polymarket_snapshot, source_snapshot)
             self._last_signature = _book_signature(updated, polymarket_snapshot)
             return old_signature != self._last_signature
+
+    def _reset_kalshi_local_book_from_snapshot(self, snapshot: dict[str, Any], reason: str) -> None:
+        ticker = str(snapshot.get("ticker") or "")
+        if not ticker:
+            self._kalshi_local_book = None
+            return
+        self._kalshi_local_book = {
+            "ticker": ticker,
+            "yes": _levels_to_book(snapshot.get("yes_levels")),
+            "no": _levels_to_book(snapshot.get("no_levels")),
+            "seq": None,
+            "complete": True,
+            "updated_at": time.monotonic(),
+            "reason": reason,
+        }
+
+    async def _apply_kalshi_orderbook_snapshot(self, data: dict[str, Any]) -> bool:
+        message = data.get("msg") if isinstance(data.get("msg"), dict) else data
+        ticker = str(message.get("market_ticker") or message.get("ticker") or "")
+        yes_levels = (
+            message.get("yes_dollars_fp")
+            or message.get("yes_dollars")
+            or message.get("yes")
+            or []
+        )
+        no_levels = (
+            message.get("no_dollars_fp")
+            or message.get("no_dollars")
+            or message.get("no")
+            or []
+        )
+        async with self.lock:
+            current = self._state
+            if current is None:
+                return False
+            kalshi_market, kalshi_snapshot, polymarket_market, polymarket_snapshot, source_snapshot = current
+            if ticker and ticker != str(kalshi_snapshot.get("ticker") or ""):
+                return False
+            ticker = ticker or str(kalshi_snapshot.get("ticker") or "")
+            yes_book = _levels_to_book(yes_levels)
+            no_book = _levels_to_book(no_levels)
+            updated = _snapshot_with_kalshi_book(kalshi_snapshot, yes_book, no_book)
+            old_signature = self._last_signature
+            self._kalshi_local_book = {
+                "ticker": ticker,
+                "yes": yes_book,
+                "no": no_book,
+                "seq": data.get("seq"),
+                "complete": True,
+                "updated_at": time.monotonic(),
+                "reason": "ws_snapshot",
+            }
+            self._state = (kalshi_market, updated, polymarket_market, polymarket_snapshot, source_snapshot)
+            self._last_signature = _book_signature(updated, polymarket_snapshot)
+            return old_signature != self._last_signature
+
+    async def _apply_kalshi_orderbook_delta(self, data: dict[str, Any]) -> bool | None:
+        message = data.get("msg") if isinstance(data.get("msg"), dict) else data
+        side = str(message.get("side") or "").lower()
+        if side not in ("yes", "no"):
+            return None
+        price = btc.normalize_price(
+            message.get("price_dollars")
+            or message.get("price_dollars_fp")
+            or message.get("price")
+        )
+        delta = _as_float(message.get("delta_fp") or message.get("delta") or message.get("contracts_fp"))
+        ticker = str(message.get("market_ticker") or message.get("ticker") or "")
+        if price is None or delta is None:
+            return None
+        async with self.lock:
+            current = self._state
+            book = self._kalshi_local_book
+            if current is None or book is None or not book.get("complete"):
+                return None
+            kalshi_market, kalshi_snapshot, polymarket_market, polymarket_snapshot, source_snapshot = current
+            current_ticker = str(kalshi_snapshot.get("ticker") or "")
+            if ticker and ticker != current_ticker:
+                return False
+            expected_seq = _int_value(book.get("seq"))
+            seq = _int_value(data.get("seq"))
+            if expected_seq is not None and seq is not None and seq != expected_seq + 1:
+                book["complete"] = False
+                self.logger(
+                    f"WEBSOCKET Kalshi sequence gap expected {expected_seq + 1}, got {seq}; resyncing"
+                )
+                return None
+            side_book = book[side]
+            price = round(price, 10)
+            next_quantity = float(side_book.get(price, 0.0)) + delta
+            if next_quantity <= 0:
+                side_book.pop(price, None)
+            else:
+                side_book[price] = next_quantity
+            book["seq"] = seq if seq is not None else expected_seq
+            book["updated_at"] = time.monotonic()
+            updated = _snapshot_with_kalshi_book(kalshi_snapshot, book["yes"], book["no"])
+            old_signature = self._last_signature
+            self._state = (kalshi_market, updated, polymarket_market, polymarket_snapshot, source_snapshot)
+            self._last_signature = _book_signature(updated, polymarket_snapshot)
+            return old_signature != self._last_signature
+
+    async def _kalshi_resync_loop(self) -> None:
+        while self._running:
+            try:
+                await asyncio.sleep(KALSHI_LOCAL_BOOK_RESYNC_SECONDS)
+                if self.kalshi_connected:
+                    await self.refresh_after_event("kalshi periodic local book resync")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.logger(f"WEBSOCKET Kalshi periodic resync failed: {type(exc).__name__}: {exc}")
 
     async def _polymarket_ws_loop(self) -> None:
         import websockets
