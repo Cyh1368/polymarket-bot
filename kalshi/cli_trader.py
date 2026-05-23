@@ -66,7 +66,7 @@ POLYMARKET_SELL_BALANCE_DELAY_SECONDS = 0.75
 CONTRACT_FAILURE_COOLDOWN_SECONDS = 60.0
 EDGE_RECHECK_COOLDOWN_SECONDS = 30.0
 EXECUTION_FAILURE_COOLDOWN_SECONDS = 5 * 60.0
-PROFIT_CAPTURE_MIN_EDGE = 0.06
+PROFIT_CAPTURE_MIN_EDGE = 0.07
 EXIT_CUSHION = 0.03
 ONE_WINNER_NEGATIVE_EXIT_DISTANCE = 3.0
 ONE_WINNER_NEGATIVE_EXIT_SECONDS = 45.0
@@ -1884,6 +1884,19 @@ def position_has_pending_exit(position: dict[str, Any]) -> bool:
     )
 
 
+def position_has_exit_progress(position: dict[str, Any]) -> bool:
+    return bool(
+        position.get("kalshi_exited")
+        or position.get("polymarket_exited")
+        or position.get("kalshi_absent")
+        or position.get("polymarket_absent")
+    )
+
+
+def is_take_profit_exit(strategy_decision: dict[str, Any]) -> bool:
+    return str(strategy_decision.get("reason") or "").startswith("TAKE_PROFIT")
+
+
 def position_leg_contracts(position: dict[str, Any], leg: str, default: int) -> int:
     return int(position.get(f"{leg}_contracts") or position.get("contracts") or default)
 
@@ -3051,7 +3064,7 @@ def parse_args() -> argparse.Namespace:
         "--profit-capture-min-edge",
         type=float,
         default=PROFIT_CAPTURE_MIN_EDGE,
-        help="Exit an open position when executable liquidation value exceeds entry by this amount. Default: 0.06.",
+        help="Exit an open position when executable liquidation value exceeds entry by this amount. Default: 0.07.",
     )
     parser.add_argument(
         "--exit-cushion",
@@ -3338,37 +3351,52 @@ async def main() -> None:
                             f"{strategy_decision['action']} {strategy_decision['reason']}"
                         )
                     if strategy_decision["action"] == "EXIT":
-                        liquidation = state_metrics.get("liquidation")
-                        if liquidation is None:
-                            exit_text = "EXIT_REVIEW executable liquidation unavailable"
+                        take_profit_exit = is_take_profit_exit(strategy_decision)
+                        if (
+                            take_profit_exit
+                            and open_position.get("take_profit_exit_attempted")
+                            and not position_has_exit_progress(open_position)
+                        ):
+                            cli.print_line(
+                                f"{display_time:<10} | "
+                                "EXIT_REVIEW TAKE_PROFIT already attempted once; holding position"
+                            )
                         else:
-                            exit_pnl = liquidation - open_position["entry_cost"]
-                            exit_text = (
-                                "EXIT_REVIEW "
-                                f"{strategy_decision['reason']}; "
-                                f"liquidation {cli.fmt_display_cents(liquidation)}c - "
-                                f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
-                                f"{cli.fmt_money(exit_pnl)} before exit fees"
+                            liquidation = state_metrics.get("liquidation")
+                            if liquidation is None:
+                                exit_text = "EXIT_REVIEW executable liquidation unavailable"
+                            else:
+                                exit_pnl = liquidation - open_position["entry_cost"]
+                                exit_text = (
+                                    "EXIT_REVIEW "
+                                    f"{strategy_decision['reason']}; "
+                                    f"liquidation {cli.fmt_display_cents(liquidation)}c - "
+                                    f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
+                                    f"{cli.fmt_money(exit_pnl)} before exit fees"
+                                )
+                            cli.print_line(f"{display_time:<10} | {exit_text}")
+                            if take_profit_exit:
+                                open_position["take_profit_exit_attempted"] = True
+                            exit_result, exit_complete = await execute_position_exit_async(
+                                open_position,
+                                kalshi_snapshot,
+                                polymarket_snapshot,
+                                polymarket_market,
+                                args.live,
+                                market_context,
+                                chase_interval,
+                                chase_max_steps,
                             )
-                        cli.print_line(f"{display_time:<10} | {exit_text}")
-                        exit_result, exit_complete = await execute_position_exit_async(
-                            open_position,
-                            kalshi_snapshot,
-                            polymarket_snapshot,
-                            polymarket_market,
-                            args.live,
-                            market_context,
-                            chase_interval,
-                            chase_max_steps,
-                        )
-                        cli.print_line(f"{display_time:<10} | {exit_result}")
-                        if exit_complete:
-                            mark_contract_cooldown(
-                                contract_cooldowns,
-                                contract_key,
-                                "post-exit safety pause",
-                            )
-                            open_position = None
+                            cli.print_line(f"{display_time:<10} | {exit_result}")
+                            if exit_complete:
+                                mark_contract_cooldown(
+                                    contract_cooldowns,
+                                    contract_key,
+                                    "post-exit safety pause",
+                                )
+                                open_position = None
+                            elif take_profit_exit and not position_has_exit_progress(open_position):
+                                open_position["exit_started"] = False
                 else:
                     hold_metrics = source_filter_metrics(
                         kalshi_snapshot,
@@ -3416,37 +3444,52 @@ async def main() -> None:
                             f"{strategy_decision['action']} {strategy_decision['reason']}"
                         )
                     if strategy_decision["action"] == "EXIT":
-                        liquidation = state_metrics.get("liquidation")
-                        if liquidation is None:
-                            exit_text = "EXIT_REVIEW executable liquidation unavailable"
+                        take_profit_exit = is_take_profit_exit(strategy_decision)
+                        if (
+                            take_profit_exit
+                            and open_position.get("take_profit_exit_attempted")
+                            and not position_has_exit_progress(open_position)
+                        ):
+                            cli.print_line(
+                                f"{display_time:<10} | "
+                                "EXIT_REVIEW TAKE_PROFIT already attempted once; holding position"
+                            )
                         else:
-                            exit_pnl = liquidation - open_position["entry_cost"]
-                            exit_text = (
-                                "EXIT_REVIEW "
-                                f"{strategy_decision['reason']}; "
-                                f"liquidation {cli.fmt_display_cents(liquidation)}c - "
-                                f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
-                                f"{cli.fmt_money(exit_pnl)} before exit fees"
+                            liquidation = state_metrics.get("liquidation")
+                            if liquidation is None:
+                                exit_text = "EXIT_REVIEW executable liquidation unavailable"
+                            else:
+                                exit_pnl = liquidation - open_position["entry_cost"]
+                                exit_text = (
+                                    "EXIT_REVIEW "
+                                    f"{strategy_decision['reason']}; "
+                                    f"liquidation {cli.fmt_display_cents(liquidation)}c - "
+                                    f"entry {cli.fmt_display_cents(open_position['entry_cost'])}c = "
+                                    f"{cli.fmt_money(exit_pnl)} before exit fees"
+                                )
+                            cli.print_line(f"{display_time:<10} | {exit_text}")
+                            if take_profit_exit:
+                                open_position["take_profit_exit_attempted"] = True
+                            exit_result, exit_complete = await execute_position_exit_async(
+                                open_position,
+                                kalshi_snapshot,
+                                polymarket_snapshot,
+                                polymarket_market,
+                                args.live,
+                                market_context,
+                                chase_interval,
+                                chase_max_steps,
                             )
-                        cli.print_line(f"{display_time:<10} | {exit_text}")
-                        exit_result, exit_complete = await execute_position_exit_async(
-                            open_position,
-                            kalshi_snapshot,
-                            polymarket_snapshot,
-                            polymarket_market,
-                            args.live,
-                            market_context,
-                            chase_interval,
-                            chase_max_steps,
-                        )
-                        cli.print_line(f"{display_time:<10} | {exit_result}")
-                        if exit_complete:
-                            mark_contract_cooldown(
-                                contract_cooldowns,
-                                contract_key,
-                                "post-exit safety pause",
-                            )
-                            open_position = None
+                            cli.print_line(f"{display_time:<10} | {exit_result}")
+                            if exit_complete:
+                                mark_contract_cooldown(
+                                    contract_cooldowns,
+                                    contract_key,
+                                    "post-exit safety pause",
+                                )
+                                open_position = None
+                            elif take_profit_exit and not position_has_exit_progress(open_position):
+                                open_position["exit_started"] = False
 
             cooldown_reason = contract_cooldown_reason(contract_cooldowns, contract_key)
             entry_gate_reason = entry_prefilter_reason(
