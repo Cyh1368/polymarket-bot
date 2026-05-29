@@ -51,6 +51,7 @@ SUMMARY_METRICS_PATH = OUT_DIR / "horizon_model_metrics.csv"
 COMBINED_CARD_PATH = OUT_DIR / "combined_horizon_model_card.md"
 
 HORIZONS = {
+    "10m": 10 * 60,
     "5m": 5 * 60,
     "3m": 3 * 60,
     "2m": 2 * 60,
@@ -60,11 +61,28 @@ WINDOW_SECONDS = 60
 MIN_WINDOW_ROWS = 10
 MAX_ASOF_GAP_SECONDS = 10.0
 CALIBRATION_METHOD = "sigmoid"
+KALSHI_FEE_RATE = 0.07
+POLYMARKET_FEE_RATE = 0.05
+CONTRACTS_PER_LEG = 1.0
 
 AGG_STATS = ("last", "mean", "std", "min", "max", "range", "change")
 ENTRY_COST_FEATURES = [
     "k_yes_p_no_entry_cost",
+    "k_yes_p_no_kalshi_fee",
+    "k_yes_p_no_polymarket_fee",
+    "k_yes_p_no_total_fee",
+    "k_yes_p_no_all_in_cost",
+    "k_yes_p_no_fee_adjusted_edge",
     "k_no_p_yes_entry_cost",
+    "k_no_p_yes_kalshi_fee",
+    "k_no_p_yes_polymarket_fee",
+    "k_no_p_yes_total_fee",
+    "k_no_p_yes_all_in_cost",
+    "k_no_p_yes_fee_adjusted_edge",
+    "best_raw_entry_cost",
+    "best_total_fee",
+    "best_all_in_cost",
+    "fee_adjusted_edge",
     "best_entry_cost",
     "entry_edge",
 ]
@@ -84,6 +102,14 @@ def finite_or_nan(value: Any) -> float:
     except (TypeError, ValueError):
         return math.nan
     return out if math.isfinite(out) else math.nan
+
+
+def kalshi_fee(price: pd.Series) -> pd.Series:
+    return KALSHI_FEE_RATE * CONTRACTS_PER_LEG * price * (1.0 - price)
+
+
+def polymarket_fee(price: pd.Series) -> pd.Series:
+    return POLYMARKET_FEE_RATE * CONTRACTS_PER_LEG * price * (1.0 - price)
 
 
 def split_contracts(labels: pd.DataFrame) -> tuple[set[str], set[str], set[str]]:
@@ -161,9 +187,46 @@ def aggregate_window(
             status = "ok"
 
     window["k_yes_p_no_entry_cost"] = window["kalshi_yes_ask"] + window["polymarket_no_ask"]
+    window["k_yes_p_no_kalshi_fee"] = kalshi_fee(window["kalshi_yes_ask"])
+    window["k_yes_p_no_polymarket_fee"] = polymarket_fee(window["polymarket_no_ask"])
+    window["k_yes_p_no_total_fee"] = (
+        window["k_yes_p_no_kalshi_fee"] + window["k_yes_p_no_polymarket_fee"]
+    )
+    window["k_yes_p_no_all_in_cost"] = (
+        window["k_yes_p_no_entry_cost"] + window["k_yes_p_no_total_fee"]
+    )
+    window["k_yes_p_no_fee_adjusted_edge"] = 1.0 - window["k_yes_p_no_all_in_cost"]
+
     window["k_no_p_yes_entry_cost"] = window["kalshi_no_ask"] + window["polymarket_yes_ask"]
-    window["best_entry_cost"] = window[["k_yes_p_no_entry_cost", "k_no_p_yes_entry_cost"]].min(axis=1)
-    window["entry_edge"] = 1.0 - window["best_entry_cost"]
+    window["k_no_p_yes_kalshi_fee"] = kalshi_fee(window["kalshi_no_ask"])
+    window["k_no_p_yes_polymarket_fee"] = polymarket_fee(window["polymarket_yes_ask"])
+    window["k_no_p_yes_total_fee"] = (
+        window["k_no_p_yes_kalshi_fee"] + window["k_no_p_yes_polymarket_fee"]
+    )
+    window["k_no_p_yes_all_in_cost"] = (
+        window["k_no_p_yes_entry_cost"] + window["k_no_p_yes_total_fee"]
+    )
+    window["k_no_p_yes_fee_adjusted_edge"] = 1.0 - window["k_no_p_yes_all_in_cost"]
+
+    yes_no_better = window["k_yes_p_no_all_in_cost"] <= window["k_no_p_yes_all_in_cost"]
+    window["best_raw_entry_cost"] = np.where(
+        yes_no_better,
+        window["k_yes_p_no_entry_cost"],
+        window["k_no_p_yes_entry_cost"],
+    )
+    window["best_total_fee"] = np.where(
+        yes_no_better,
+        window["k_yes_p_no_total_fee"],
+        window["k_no_p_yes_total_fee"],
+    )
+    window["best_all_in_cost"] = np.where(
+        yes_no_better,
+        window["k_yes_p_no_all_in_cost"],
+        window["k_no_p_yes_all_in_cost"],
+    )
+    window["fee_adjusted_edge"] = 1.0 - window["best_all_in_cost"]
+    window["best_entry_cost"] = window["best_all_in_cost"]
+    window["entry_edge"] = window["fee_adjusted_edge"]
 
     row: dict[str, Any] = {
         "contract_id": label["contract_id"],
@@ -281,9 +344,9 @@ def threshold_metrics(y: pd.Series, probs: np.ndarray) -> tuple[dict[str, float]
 def choose_trade_threshold(test_df: pd.DataFrame, probs: np.ndarray) -> tuple[float, pd.DataFrame]:
     frame = test_df.copy()
     frame["predicted_diverge_prob"] = probs
-    frame["best_entry_cost"] = frame.get("best_entry_cost_last", pd.Series(np.nan, index=frame.index))
-    frame["arb_return"] = 1.0 - frame["best_entry_cost"]
-    tradeable = frame["best_entry_cost"] < 0.98
+    frame["best_all_in_cost"] = frame.get("best_all_in_cost_last", pd.Series(np.nan, index=frame.index))
+    frame["fee_adjusted_edge"] = 1.0 - frame["best_all_in_cost"]
+    tradeable = frame["best_all_in_cost"] < 1.0
 
     rows = []
     for threshold in np.linspace(0.01, 0.30, 60):
@@ -301,8 +364,8 @@ def choose_trade_threshold(test_df: pd.DataFrame, probs: np.ndarray) -> tuple[fl
             continue
         proxy_return = np.where(
             frame.loc[selected, "diverge"].to_numpy() == 0,
-            frame.loc[selected, "arb_return"].to_numpy(),
-            -1.0,
+            frame.loc[selected, "fee_adjusted_edge"].to_numpy(),
+            -frame.loc[selected, "best_all_in_cost"].to_numpy(),
         )
         rows.append(
             {
@@ -327,10 +390,12 @@ def choose_trade_threshold(test_df: pd.DataFrame, probs: np.ndarray) -> tuple[fl
 def trade_threshold_coverage(test_df: pd.DataFrame, probs: np.ndarray, threshold: float) -> dict[str, Any]:
     frame = test_df.copy()
     frame["predicted_diverge_prob"] = probs
-    frame["best_entry_cost"] = frame.get("best_entry_cost_last", pd.Series(np.nan, index=frame.index))
-    frame["arb_return"] = 1.0 - frame["best_entry_cost"]
+    frame["best_raw_entry_cost"] = frame.get("best_raw_entry_cost_last", pd.Series(np.nan, index=frame.index))
+    frame["best_total_fee"] = frame.get("best_total_fee_last", pd.Series(np.nan, index=frame.index))
+    frame["best_all_in_cost"] = frame.get("best_all_in_cost_last", pd.Series(np.nan, index=frame.index))
+    frame["fee_adjusted_edge"] = 1.0 - frame["best_all_in_cost"]
 
-    tradable = frame["best_entry_cost"] < 0.98
+    tradable = frame["best_all_in_cost"] < 1.0
     passes = tradable & (frame["predicted_diverge_prob"] < threshold)
     fails = tradable & ~passes
 
@@ -338,16 +403,28 @@ def trade_threshold_coverage(test_df: pd.DataFrame, probs: np.ndarray, threshold
         return float(frame.loc[mask, "diverge"].mean()) if int(mask.sum()) else math.nan
 
     def mean_return(mask: pd.Series) -> float:
-        return float(frame.loc[mask, "arb_return"].mean()) if int(mask.sum()) else math.nan
+        return float(frame.loc[mask, "fee_adjusted_edge"].mean()) if int(mask.sum()) else math.nan
 
     def mean_predicted_diverge_prob(mask: pd.Series) -> float:
         return float(frame.loc[mask, "predicted_diverge_prob"].mean()) if int(mask.sum()) else math.nan
 
-    pass_mean_entry_cost = (
-        float(frame.loc[passes, "best_entry_cost"].mean()) if int(passes.sum()) else math.nan
+    pass_mean_raw_entry_cost = (
+        float(frame.loc[passes, "best_raw_entry_cost"].mean()) if int(passes.sum()) else math.nan
     )
-    fail_mean_entry_cost = (
-        float(frame.loc[fails, "best_entry_cost"].mean()) if int(fails.sum()) else math.nan
+    fail_mean_raw_entry_cost = (
+        float(frame.loc[fails, "best_raw_entry_cost"].mean()) if int(fails.sum()) else math.nan
+    )
+    pass_mean_total_fee = (
+        float(frame.loc[passes, "best_total_fee"].mean()) if int(passes.sum()) else math.nan
+    )
+    fail_mean_total_fee = (
+        float(frame.loc[fails, "best_total_fee"].mean()) if int(fails.sum()) else math.nan
+    )
+    pass_mean_all_in_cost = (
+        float(frame.loc[passes, "best_all_in_cost"].mean()) if int(passes.sum()) else math.nan
+    )
+    fail_mean_all_in_cost = (
+        float(frame.loc[fails, "best_all_in_cost"].mean()) if int(fails.sum()) else math.nan
     )
     pass_mean_predicted_diverge_prob = mean_predicted_diverge_prob(passes)
     fail_mean_predicted_diverge_prob = mean_predicted_diverge_prob(fails)
@@ -363,26 +440,30 @@ def trade_threshold_coverage(test_df: pd.DataFrame, probs: np.ndarray, threshold
         "trade_threshold_fail_divergences": int(frame.loc[fails, "diverge"].sum()) if int(fails.sum()) else 0,
         "trade_threshold_pass_diverge_rate": pass_diverge_rate,
         "trade_threshold_fail_diverge_rate": fail_diverge_rate,
-        "trade_threshold_pass_mean_arb_return": mean_return(passes),
-        "trade_threshold_fail_mean_arb_return": mean_return(fails),
-        "trade_threshold_pass_mean_entry_cost": pass_mean_entry_cost,
-        "trade_threshold_fail_mean_entry_cost": fail_mean_entry_cost,
+        "trade_threshold_pass_mean_fee_adjusted_edge": mean_return(passes),
+        "trade_threshold_fail_mean_fee_adjusted_edge": mean_return(fails),
+        "trade_threshold_pass_mean_raw_entry_cost": pass_mean_raw_entry_cost,
+        "trade_threshold_fail_mean_raw_entry_cost": fail_mean_raw_entry_cost,
+        "trade_threshold_pass_mean_total_fee": pass_mean_total_fee,
+        "trade_threshold_fail_mean_total_fee": fail_mean_total_fee,
+        "trade_threshold_pass_mean_all_in_cost": pass_mean_all_in_cost,
+        "trade_threshold_fail_mean_all_in_cost": fail_mean_all_in_cost,
         "trade_threshold_pass_mean_predicted_diverge_prob": pass_mean_predicted_diverge_prob,
         "trade_threshold_fail_mean_predicted_diverge_prob": fail_mean_predicted_diverge_prob,
         "trade_threshold_pass_expected_return": 1.0
-        - pass_mean_entry_cost
+        - pass_mean_all_in_cost
         - pass_mean_predicted_diverge_prob
         if int(passes.sum())
         else math.nan,
         "trade_threshold_fail_expected_return": 1.0
-        - fail_mean_entry_cost
+        - fail_mean_all_in_cost
         - fail_mean_predicted_diverge_prob
         if int(fails.sum())
         else math.nan,
-        "trade_threshold_pass_test_return": 1.0 - pass_mean_entry_cost - pass_diverge_rate
+        "trade_threshold_pass_test_return": 1.0 - pass_mean_all_in_cost - pass_diverge_rate
         if int(passes.sum())
         else math.nan,
-        "trade_threshold_fail_test_return": 1.0 - fail_mean_entry_cost - fail_diverge_rate
+        "trade_threshold_fail_test_return": 1.0 - fail_mean_all_in_cost - fail_diverge_rate
         if int(fails.sum())
         else math.nan,
     }
@@ -456,7 +537,7 @@ def plot_feature_importance(importance: pd.DataFrame, horizon_name: str, output_
 
 
 def plot_horizon_summary(metrics: pd.DataFrame, output_path: Path) -> None:
-    order = ["5m", "3m", "2m", "1m"]
+    order = list(HORIZONS)
     frame = metrics.set_index("horizon").loc[order].reset_index()
     x = np.arange(len(frame))
     plt.figure(figsize=(7.4, 4.8))
@@ -564,6 +645,14 @@ def train_one_horizon(
         "window_seconds": WINDOW_SECONDS,
         "min_window_rows": MIN_WINDOW_ROWS,
         "max_asof_gap_seconds": MAX_ASOF_GAP_SECONDS,
+        "fee_model": {
+            "contracts_per_leg": CONTRACTS_PER_LEG,
+            "kalshi_fee": "0.07 * N * p * (1-p)",
+            "polymarket_fee": "0.05 * N * p * (1-p)",
+            "kalshi_fee_rate": KALSHI_FEE_RATE,
+            "polymarket_fee_rate": POLYMARKET_FEE_RATE,
+            "tradable_rule": "min(raw_combo_cost + kalshi_fee + polymarket_fee) < 1.0",
+        },
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "feature_names": features,
         "metrics": metrics,
@@ -632,7 +721,7 @@ def combined_model_card(
         "## Setup",
         "",
         "- Unit of analysis: one row per contract per prediction horizon.",
-        f"- Horizon rows use only the trailing {WINDOW_SECONDS} seconds ending at 5m, 3m, 2m, or 1m before `kalshi_close_time`.",
+        f"- Horizon rows use only the trailing {WINDOW_SECONDS} seconds ending at 10m, 5m, 3m, 2m, or 1m before `kalshi_close_time`.",
         "- Base snapshot features are the same leakage-safe features from the snapshot model, then aggregated with last/mean/std/min/max/range/change.",
         "- Model family: calibrated Logistic Regression, continuing with the best-performing snapshot model family.",
         f"- Calibration method: `{CALIBRATION_METHOD}` on a held-out calibration-contract split.",
@@ -686,12 +775,14 @@ def combined_model_card(
         "## Trading Threshold Coverage",
         "",
         "Counts below are on the final test set only. A contract is `tradable` when one buy-side",
-        "combination is cheaper than 0.98:",
-        "`min(kalshi_yes_ask + polymarket_no_ask, kalshi_no_ask + polymarket_yes_ask) < 0.98`.",
+        "combination has positive fee-adjusted edge:",
+        "`min(raw_combo_cost + Kalshi_fee + Polymarket_fee) < 1.0`.",
+        f"Fees are computed per contract with `N={CONTRACTS_PER_LEG:g}`: `Kalshi_fee = {KALSHI_FEE_RATE:.2f} * N * p * (1-p)`",
+        f"and `Polymarket_fee = {POLYMARKET_FEE_RATE:.2f} * N * p * (1-p)`.",
         "`Pass` means `diverge_prob` is below that horizon's recommended trading threshold.",
-        "`Expected return` is per executed trade after the filter: `1.0 - mean_entry_cost - mean_predicted_diverge_prob`,",
+        "`Expected return` is per executed trade after the filter: `1.0 - mean_all_in_cost - mean_predicted_diverge_prob`,",
         "assuming a divergence pays 0 and non-divergence pays 1.00.",
-        "`Test return` uses the actual held-out divergence rate instead: `1.0 - mean_entry_cost - actual_diverge_rate`.",
+        "`Test return` uses the actual held-out divergence rate instead: `1.0 - mean_all_in_cost - actual_diverge_rate`.",
         "",
         md_table(
             summary_metrics[
@@ -705,13 +796,15 @@ def combined_model_card(
                     "trade_threshold_fail_divergences",
                     "trade_threshold_pass_diverge_rate",
                     "trade_threshold_fail_diverge_rate",
-                    "trade_threshold_pass_mean_entry_cost",
-                    "trade_threshold_fail_mean_entry_cost",
+                    "trade_threshold_pass_mean_raw_entry_cost",
+                    "trade_threshold_pass_mean_total_fee",
+                    "trade_threshold_pass_mean_all_in_cost",
+                    "trade_threshold_fail_mean_all_in_cost",
                     "trade_threshold_pass_mean_predicted_diverge_prob",
                     "trade_threshold_pass_expected_return",
                     "trade_threshold_pass_test_return",
-                    "trade_threshold_pass_mean_arb_return",
-                    "trade_threshold_fail_mean_arb_return",
+                    "trade_threshold_pass_mean_fee_adjusted_edge",
+                    "trade_threshold_fail_mean_fee_adjusted_edge",
                 ]
             ]
         ),
@@ -735,8 +828,8 @@ def combined_model_card(
                 f"- Recommended trading filter threshold: `diverge_prob < {metrics['recommended_trade_threshold']:.4f}`.",
                 f"- Tradable final-test contracts: `{metrics['tradable_test_contracts']}`; pass threshold: `{metrics['trade_threshold_pass_contracts']}`; fail threshold: `{metrics['trade_threshold_fail_contracts']}`.",
                 f"- Pass/fail observed divergence rates: `{metrics['trade_threshold_pass_diverge_rate']:.4f}` / `{metrics['trade_threshold_fail_diverge_rate']:.4f}`.",
-                f"- Filtered expected return per executed trade: `{metrics['trade_threshold_pass_expected_return']:.4f}`.",
-                f"- Filtered test return per executed trade: `{metrics['trade_threshold_pass_test_return']:.4f}`.",
+                f"- Filtered fee-adjusted expected return per executed trade: `{metrics['trade_threshold_pass_expected_return']:.4f}`.",
+                f"- Filtered fee-adjusted test return per executed trade: `{metrics['trade_threshold_pass_test_return']:.4f}`.",
                 "",
                 "Top features:",
                 "",

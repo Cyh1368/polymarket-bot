@@ -16,6 +16,9 @@ FEATURE_LIST_PATH = ARTIFACT_DIR / "feature_list.json"
 METADATA_PATH = ARTIFACT_DIR / "divergence_model_metadata.json"
 
 CONTRACT_SECONDS = 15 * 60
+KALSHI_FEE_RATE = 0.07
+POLYMARKET_FEE_RATE = 0.05
+CONTRACTS_PER_LEG = 1.0
 
 _MODEL = None
 _FEATURES: list[str] | None = None
@@ -59,6 +62,14 @@ def _to_float(value: Any) -> float:
     except (TypeError, ValueError):
         return math.nan
     return out if math.isfinite(out) else math.nan
+
+
+def _kalshi_fee(price: float) -> float:
+    return KALSHI_FEE_RATE * CONTRACTS_PER_LEG * price * (1.0 - price) if math.isfinite(price) else math.nan
+
+
+def _polymarket_fee(price: float) -> float:
+    return POLYMARKET_FEE_RATE * CONTRACTS_PER_LEG * price * (1.0 - price) if math.isfinite(price) else math.nan
 
 
 def _parse_timestamp(value: Any) -> pd.Timestamp | None:
@@ -324,31 +335,42 @@ def should_trade(snapshot: dict, min_arb_return: float = 0.02) -> dict:
     _model, _feature_names, metadata = _load_artifacts()
     threshold = float(metadata.get("recommended_diverge_prob_threshold", 0.05))
 
-    k_yes_p_no_cost = _to_float(snapshot.get("kalshi_yes_ask")) + _to_float(snapshot.get("polymarket_no_ask"))
-    k_no_p_yes_cost = _to_float(snapshot.get("kalshi_no_ask")) + _to_float(snapshot.get("polymarket_yes_ask"))
-    k_return = 1.0 - k_yes_p_no_cost if math.isfinite(k_yes_p_no_cost) else math.nan
-    nk_return = 1.0 - k_no_p_yes_cost if math.isfinite(k_no_p_yes_cost) else math.nan
+    kalshi_yes_ask = _to_float(snapshot.get("kalshi_yes_ask"))
+    kalshi_no_ask = _to_float(snapshot.get("kalshi_no_ask"))
+    poly_yes_ask = _to_float(snapshot.get("polymarket_yes_ask"))
+    poly_no_ask = _to_float(snapshot.get("polymarket_no_ask"))
+
+    k_yes_p_no_raw_cost = kalshi_yes_ask + poly_no_ask
+    k_yes_p_no_fee = _kalshi_fee(kalshi_yes_ask) + _polymarket_fee(poly_no_ask)
+    k_yes_p_no_all_in = k_yes_p_no_raw_cost + k_yes_p_no_fee
+    k_yes_p_no_edge = 1.0 - k_yes_p_no_all_in if math.isfinite(k_yes_p_no_all_in) else math.nan
+
+    k_no_p_yes_raw_cost = kalshi_no_ask + poly_yes_ask
+    k_no_p_yes_fee = _kalshi_fee(kalshi_no_ask) + _polymarket_fee(poly_yes_ask)
+    k_no_p_yes_all_in = k_no_p_yes_raw_cost + k_no_p_yes_fee
+    k_no_p_yes_edge = 1.0 - k_no_p_yes_all_in if math.isfinite(k_no_p_yes_all_in) else math.nan
 
     candidates = [
-        ("KALSHI_YES_POLYMARKET_NO", k_return),
-        ("KALSHI_NO_POLYMARKET_YES", nk_return),
+        ("KALSHI_YES_POLYMARKET_NO", k_yes_p_no_edge, k_yes_p_no_raw_cost, k_yes_p_no_fee, k_yes_p_no_all_in),
+        ("KALSHI_NO_POLYMARKET_YES", k_no_p_yes_edge, k_no_p_yes_raw_cost, k_no_p_yes_fee, k_no_p_yes_all_in),
     ]
-    direction, arb_return = max(
+    direction, arb_return, raw_entry_cost, total_fees, all_in_cost = max(
         candidates,
         key=lambda item: item[1] if math.isfinite(item[1]) else -math.inf,
     )
-    best_entry_cost = 1.0 - arb_return if math.isfinite(arb_return) else math.nan
-    raw_arb_available = math.isfinite(best_entry_cost) and best_entry_cost < (1.0 - min_arb_return)
-    meets_min_return = bool(raw_arb_available)
+    raw_arb_available = math.isfinite(all_in_cost) and all_in_cost < 1.0
+    meets_min_return = math.isfinite(arb_return) and arb_return >= min_arb_return
     divergence_ok = prediction["diverge_prob"] < threshold
     recommend = bool(raw_arb_available and meets_min_return and divergence_ok)
 
     if not raw_arb_available:
-        reason = "no buy-side arb is cheaper than the required entry cost"
+        reason = "no fee-adjusted buy-side arb has positive edge"
+    elif not meets_min_return:
+        reason = "fee-adjusted edge is below min_arb_return"
     elif not divergence_ok:
         reason = "divergence probability is above threshold"
     else:
-        reason = "entry cost and divergence risk are acceptable"
+        reason = "fee-adjusted edge and divergence risk are acceptable"
 
     return {
         "recommend_trade": recommend,
@@ -356,7 +378,10 @@ def should_trade(snapshot: dict, min_arb_return: float = 0.02) -> dict:
         "reason": reason,
         "arb_available": bool(raw_arb_available),
         "arb_return": arb_return if math.isfinite(arb_return) else None,
-        "entry_cost": best_entry_cost if math.isfinite(best_entry_cost) else None,
+        "raw_entry_cost": raw_entry_cost if math.isfinite(raw_entry_cost) else None,
+        "total_fees": total_fees if math.isfinite(total_fees) else None,
+        "all_in_cost": all_in_cost if math.isfinite(all_in_cost) else None,
+        "entry_cost": all_in_cost if math.isfinite(all_in_cost) else None,
         "min_arb_return": float(min_arb_return),
         "diverge_prob": prediction["diverge_prob"],
         "diverge_threshold": threshold,
