@@ -284,6 +284,20 @@ def fmt_money(value: Any) -> str:
     return f"${number:.4f}"
 
 
+def json_safe_value(value: Any) -> Any:
+    number = finite_float(value)
+    if number is not None:
+        return number
+    if value in (None, ""):
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
 def as_float(value: Any) -> float:
     if value in (None, ""):
         return 0.0
@@ -2214,7 +2228,34 @@ def load_horizon_models(model_dir: Path) -> dict[str, HorizonModel]:
     return loaded
 
 
-def evaluate_horizon_model(runtime: ContractRuntime, horizon: HorizonModel) -> dict[str, Any]:
+def model_feature_debug_message(
+    runtime: ContractRuntime,
+    horizon: HorizonModel,
+    feature_row: dict[str, Any],
+    status: str,
+) -> str:
+    features = {name: json_safe_value(feature_row.get(name, math.nan)) for name in horizon.feature_names}
+    null_features = [name for name, value in features.items() if value is None]
+    payload = {
+        "ticker": runtime.ticker,
+        "horizon": horizon.name,
+        "status": status,
+        "threshold": horizon.threshold,
+        "feature_count": len(horizon.feature_names),
+        "null_feature_count": len(null_features),
+        "null_features": null_features,
+        "features": features,
+    }
+    return f"MODEL_FEATURES {horizon.name} {runtime.ticker} | {json.dumps(payload, separators=(',', ':'), sort_keys=False)}"
+
+
+def evaluate_horizon_model(
+    runtime: ContractRuntime,
+    horizon: HorizonModel,
+    *,
+    debug_features: bool = False,
+    logger: Any = None,
+) -> dict[str, Any]:
     feature_row, status = aggregate_horizon_features(runtime.history, horizon.name, horizon.seconds)
     decision: dict[str, Any] = {
         "horizon": horizon.name,
@@ -2228,6 +2269,8 @@ def evaluate_horizon_model(runtime: ContractRuntime, horizon: HorizonModel) -> d
     for feature in horizon.feature_names:
         feature_row.setdefault(feature, math.nan)
     x = pd.DataFrame([{feature: feature_row.get(feature, math.nan) for feature in horizon.feature_names}])
+    if debug_features and logger is not None:
+        logger(model_feature_debug_message(runtime, horizon, feature_row, status))
     prob = float(horizon.model.predict_proba(x)[0, 1])
     decision["diverge_prob"] = prob
     decision["tradable"] = bool(prob < horizon.threshold)
@@ -2774,6 +2817,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--csv-dir", type=Path, default=DEFAULT_CSV_DIR, help=f"Directory for contract CSVs. Default: {DEFAULT_CSV_DIR}.")
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL_DIR, help=f"Horizon model directory. Default: {DEFAULT_MODEL_DIR}.")
     parser.add_argument("--dry-run", action="store_true", help="Log trades without placing orders.")
+    parser.add_argument(
+        "--debug-model-features",
+        action="store_true",
+        help="Print and log the exact ordered feature vector sent to each horizon model before prediction.",
+    )
     return parser.parse_args()
 
 
@@ -2786,7 +2834,8 @@ async def run() -> None:
 
     append_log(
         f"START cli_trader_v2 contracts={contracts} profit_margin={profit_margin:.4f} "
-        f"csv_interval={csv_save_interval:g}s dry_run={args.dry_run} models={','.join(models)}",
+        f"csv_interval={csv_save_interval:g}s dry_run={args.dry_run} "
+        f"debug_model_features={args.debug_model_features} models={','.join(models)}",
         concise=True,
     )
     context = AsyncMarketContext(fetch_market_state, logger=lambda line: append_log(line))
@@ -2853,7 +2902,12 @@ async def run() -> None:
                 for horizon in models.values():
                     if horizon.evaluated or remaining > horizon.seconds:
                         continue
-                    decision = evaluate_horizon_model(runtime, horizon)
+                    decision = evaluate_horizon_model(
+                        runtime,
+                        horizon,
+                        debug_features=args.debug_model_features,
+                        logger=lambda message: append_log(message),
+                    )
                     horizon.evaluated = True
                     horizon.last_status = str(decision.get("status") or "")
                     horizon.last_prob = finite_float(decision.get("diverge_prob"))
