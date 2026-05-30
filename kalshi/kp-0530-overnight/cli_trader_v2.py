@@ -55,6 +55,7 @@ TRADER_LOG_PATH = ROOT / "trader_log.txt"
 CONCISE_LOG_PATH = ROOT / "concise_trader_log.txt"
 
 CONTRACT_SECONDS = 15 * 60
+BALANCE_MIDPOINT_SECONDS_TO_EXPIRY = CONTRACT_SECONDS / 2
 WINDOW_SECONDS = 60
 MODEL_SAMPLE_INTERVAL_SECONDS = 2
 MODEL_WINDOW_SAMPLE_COUNT = WINDOW_SECONDS // MODEL_SAMPLE_INTERVAL_SECONDS
@@ -219,6 +220,8 @@ CSV_FIELDS = [
 BALANCE_CSV_FILENAME = "cli_trader_v2_balances.csv"
 BALANCE_CSV_FIELDS = [
     "timestamp_utc",
+    "balance_event",
+    "seconds_to_expiry",
     "kalshi_ticker",
     "kalshi_close_time",
     "polymarket_ticker",
@@ -2694,6 +2697,8 @@ def polymarket_balance_amounts() -> tuple[float, float]:
 
 def balance_snapshot_row(
     *,
+    balance_event: str = "",
+    seconds_to_expiry: Any = "",
     kalshi_ticker: str = "",
     kalshi_close_time: str = "",
     polymarket_ticker: str = "",
@@ -2703,6 +2708,8 @@ def balance_snapshot_row(
 ) -> dict[str, Any]:
     row: dict[str, Any] = {
         "timestamp_utc": iso_utc(),
+        "balance_event": balance_event,
+        "seconds_to_expiry": json_safe_value(seconds_to_expiry),
         "kalshi_ticker": kalshi_ticker,
         "kalshi_close_time": kalshi_close_time,
         "polymarket_ticker": polymarket_ticker,
@@ -2741,6 +2748,10 @@ def balance_snapshot_row(
 
 def balance_line_from_row(row: dict[str, Any]) -> str:
     parts = []
+    balance_event = str(row.get("balance_event") or "").strip()
+    remaining = finite_float(row.get("seconds_to_expiry"))
+    event_text = f" {balance_event}" if balance_event else ""
+    remaining_text = f" T={remaining:.1f}s" if remaining is not None else ""
     if row.get("kalshi_error"):
         parts.append(f"Kalshi ERROR {row['kalshi_error']}")
     else:
@@ -2751,11 +2762,41 @@ def balance_line_from_row(row: dict[str, Any]) -> str:
         parts.append(f"Polymarket ERROR {row['polymarket_error']}")
     else:
         parts.append(f"Polymarket {fmt_money(row.get('polymarket_balance'))}")
-    return f"BALANCE {' | '.join(parts)} | total {fmt_money(row.get('total_balance'))}"
+    prefix = f"BALANCE{event_text}{remaining_text}"
+    separator = " | " if event_text or remaining_text else " "
+    return f"{prefix}{separator}{' | '.join(parts)} | total {fmt_money(row.get('total_balance'))}"
 
 
 def combined_balance_line() -> str:
     return balance_line_from_row(balance_snapshot_row())
+
+
+async def record_balance_snapshot(
+    csv_dir: Path,
+    *,
+    balance_event: str,
+    ticker: str,
+    close_time: str,
+    remaining: float | None,
+    polymarket_snapshot: dict[str, Any],
+    source_snapshot: dict[str, Any],
+) -> None:
+    balance_row = await asyncio.to_thread(
+        balance_snapshot_row,
+        balance_event=balance_event,
+        seconds_to_expiry=remaining,
+        kalshi_ticker=ticker,
+        kalshi_close_time=close_time,
+        polymarket_ticker=str(polymarket_snapshot.get("ticker") or ""),
+        polymarket_close_time=str(polymarket_snapshot.get("close_time") or ""),
+        kalshi_target=source_snapshot.get("kalshi_target"),
+        polymarket_target=source_snapshot.get("polymarket_target"),
+    )
+    append_log(balance_line_from_row(balance_row), concise=True)
+    try:
+        append_balance_csv_row(balance_csv_path(csv_dir), balance_row)
+    except Exception as exc:
+        append_log(f"BALANCE CSV ERROR {type(exc).__name__}: {exc}", concise=True)
 
 
 def polymarket_post_order(
@@ -3571,7 +3612,7 @@ async def run() -> None:
 
     runtime: ContractRuntime | None = None
     active_position: dict[str, Any] | None = None
-    balance_recorded_tickers: set[str] = set()
+    balance_recorded_events: set[tuple[str, str]] = set()
 
     try:
         while True:
@@ -3597,22 +3638,18 @@ async def run() -> None:
                     f"P target {fmt_price(source_snapshot.get('polymarket_target'), 2)}",
                     concise=True,
                 )
-                if ticker not in balance_recorded_tickers:
-                    balance_row = await asyncio.to_thread(
-                        balance_snapshot_row,
-                        kalshi_ticker=ticker,
-                        kalshi_close_time=close_time,
-                        polymarket_ticker=str(polymarket_snapshot.get("ticker") or ""),
-                        polymarket_close_time=str(polymarket_snapshot.get("close_time") or ""),
-                        kalshi_target=source_snapshot.get("kalshi_target"),
-                        polymarket_target=source_snapshot.get("polymarket_target"),
+                balance_event_key = (ticker, "contract_start")
+                if balance_event_key not in balance_recorded_events:
+                    await record_balance_snapshot(
+                        args.csv_dir,
+                        balance_event="contract_start",
+                        ticker=ticker,
+                        close_time=close_time,
+                        remaining=remaining,
+                        polymarket_snapshot=polymarket_snapshot,
+                        source_snapshot=source_snapshot,
                     )
-                    append_log(balance_line_from_row(balance_row), concise=True)
-                    try:
-                        append_balance_csv_row(balance_csv_path(args.csv_dir), balance_row)
-                    except Exception as exc:
-                        append_log(f"BALANCE CSV ERROR {type(exc).__name__}: {exc}", concise=True)
-                    balance_recorded_tickers.add(ticker)
+                    balance_recorded_events.add(balance_event_key)
 
             if remaining is not None and remaining <= -2:
                 append_log(f"CONTRACT ROLLOVER {ticker} expired; refreshing active market")
@@ -3633,6 +3670,22 @@ async def run() -> None:
             now = time.monotonic()
 
             if remaining is not None:
+                balance_event_key = (ticker, "contract_midpoint")
+                if (
+                    remaining <= BALANCE_MIDPOINT_SECONDS_TO_EXPIRY
+                    and balance_event_key not in balance_recorded_events
+                ):
+                    await record_balance_snapshot(
+                        args.csv_dir,
+                        balance_event="contract_midpoint",
+                        ticker=ticker,
+                        close_time=close_time,
+                        remaining=remaining,
+                        polymarket_snapshot=polymarket_snapshot,
+                        source_snapshot=source_snapshot,
+                    )
+                    balance_recorded_events.add(balance_event_key)
+
                 for horizon in models.values():
                     if not horizon.collection_started and remaining <= horizon.seconds + WINDOW_SECONDS:
                         horizon.collection_started = True
