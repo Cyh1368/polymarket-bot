@@ -1830,6 +1830,11 @@ def polymarket_fee(price: Any, contracts: float = 1.0) -> float | None:
     return POLYMARKET_FEE_RATE * contracts * p * (1.0 - p)
 
 
+def ask_liquidity(snapshot: dict[str, Any], contract: str) -> float:
+    key = "best_yes_ask_qty" if contract.upper() == "YES" else "best_no_ask_qty"
+    return as_float(snapshot.get(key))
+
+
 def arbitrage_candidate(
     name: str,
     kalshi_contract: str,
@@ -1838,6 +1843,10 @@ def arbitrage_candidate(
     polymarket_price: Any,
     profit_margin: float,
     contracts: float = 1.0,
+    kalshi_liquidity: float | None = None,
+    polymarket_liquidity: float | None = None,
+    min_liquidity: float | None = None,
+    require_liquidity: bool = True,
 ) -> dict[str, Any] | None:
     k_price = finite_float(kalshi_price)
     p_price = finite_float(polymarket_price)
@@ -1851,12 +1860,22 @@ def arbitrage_candidate(
     total_fee = k_fee + p_fee
     all_in_cost = raw_cost + total_fee
     edge = 1.0 - all_in_cost
+    min_size = float(min_liquidity if min_liquidity is not None else contracts)
+    k_liquidity = as_float(kalshi_liquidity)
+    p_liquidity = as_float(polymarket_liquidity)
+    liquid = k_liquidity >= min_size and p_liquidity >= min_size
+    if require_liquidity and not liquid:
+        return None
     return {
         "name": name,
         "kalshi_contract": kalshi_contract,
         "polymarket_contract": polymarket_contract,
         "kalshi_price": k_price,
         "polymarket_price": p_price,
+        "kalshi_liquidity": k_liquidity,
+        "polymarket_liquidity": p_liquidity,
+        "min_liquidity": min_size,
+        "liquid": liquid,
         "raw_cost": raw_cost,
         "kalshi_fee": k_fee,
         "polymarket_fee": p_fee,
@@ -1873,6 +1892,8 @@ def arbitrage_candidates(
     polymarket_snapshot: dict[str, Any],
     profit_margin: float,
     contracts: float = 1.0,
+    *,
+    require_liquidity: bool = True,
 ) -> list[dict[str, Any]]:
     candidates = [
         arbitrage_candidate(
@@ -1883,6 +1904,10 @@ def arbitrage_candidates(
             polymarket_snapshot.get("no_ask"),
             profit_margin,
             contracts,
+            ask_liquidity(kalshi_snapshot, "YES"),
+            ask_liquidity(polymarket_snapshot, "NO"),
+            contracts,
+            require_liquidity,
         ),
         arbitrage_candidate(
             "NK+P",
@@ -1892,6 +1917,10 @@ def arbitrage_candidates(
             polymarket_snapshot.get("yes_ask"),
             profit_margin,
             contracts,
+            ask_liquidity(kalshi_snapshot, "NO"),
+            ask_liquidity(polymarket_snapshot, "YES"),
+            contracts,
+            require_liquidity,
         ),
     ]
     return [candidate for candidate in candidates if candidate is not None]
@@ -1920,8 +1949,16 @@ def best_arbitrage_candidate(
     polymarket_snapshot: dict[str, Any],
     profit_margin: float,
     contracts: float = 1.0,
+    *,
+    require_liquidity: bool = True,
 ) -> dict[str, Any] | None:
-    candidates = arbitrage_candidates(kalshi_snapshot, polymarket_snapshot, profit_margin, contracts)
+    candidates = arbitrage_candidates(
+        kalshi_snapshot,
+        polymarket_snapshot,
+        profit_margin,
+        contracts,
+        require_liquidity=require_liquidity,
+    )
     if not candidates:
         return None
     candidates.sort(key=lambda item: item["all_in_cost"])
@@ -1948,17 +1985,18 @@ def build_csv_row(
     source_snapshot: dict[str, Any],
     runtime: "ContractRuntime",
     profit_margin: float,
+    contracts: int,
     active_position: dict[str, Any] | None,
     polymarket_error: str = "",
 ) -> dict[str, Any]:
     candidates = {
         item["name"]: item
-        for item in arbitrage_candidates(kalshi_snapshot, polymarket_snapshot, profit_margin)
+        for item in arbitrage_candidates(kalshi_snapshot, polymarket_snapshot, profit_margin, contracts)
     }
     k_plus_np = candidates.get("K+NP")
     nk_plus_p = candidates.get("NK+P")
     bid_sum_features = bid_sum_arbitrage_features(kalshi_snapshot, polymarket_snapshot)
-    best = best_arbitrage_candidate(kalshi_snapshot, polymarket_snapshot, profit_margin)
+    best = best_arbitrage_candidate(kalshi_snapshot, polymarket_snapshot, profit_margin, contracts)
     last_decision = runtime.last_model_decision()
     row = {
         "timestamp_utc": iso_utc(),
@@ -2774,9 +2812,9 @@ def preflight_trade(
     profit_margin: float,
 ) -> dict[str, Any]:
     kalshi_snapshot, polymarket_snapshot = fresh_orderbook_snapshots(kalshi_market, polymarket_market)
-    best = best_arbitrage_candidate(kalshi_snapshot, polymarket_snapshot, profit_margin)
+    best = best_arbitrage_candidate(kalshi_snapshot, polymarket_snapshot, profit_margin, contracts)
     if best is None:
-        return {"decision": "SKIP", "reason": "missing fresh orderbook prices"}
+        return {"decision": "SKIP", "reason": f"missing fresh liquid orderbook prices for size {contracts:g}"}
     kalshi_side = best["kalshi_contract"].lower()
     poly_contract = best["polymarket_contract"]
     kalshi_qty_key = "best_yes_ask_qty" if kalshi_side == "yes" else "best_no_ask_qty"
@@ -3065,10 +3103,11 @@ def status_line(
     polymarket_snapshot: dict[str, Any],
     source_snapshot: dict[str, Any],
     profit_margin: float,
+    contracts: int,
     active_position: dict[str, Any] | None,
 ) -> str:
     remaining = seconds_to_expiry(kalshi_snapshot)
-    candidates = arbitrage_candidates(kalshi_snapshot, polymarket_snapshot, profit_margin)
+    candidates = arbitrage_candidates(kalshi_snapshot, polymarket_snapshot, profit_margin, contracts)
     by_name = {candidate["name"]: candidate for candidate in candidates}
     k_np = by_name.get("K+NP", {})
     nk_p = by_name.get("NK+P", {})
@@ -3163,6 +3202,7 @@ async def run() -> None:
                 source_snapshot,
                 runtime,
                 profit_margin,
+                contracts,
                 active_position,
             )
             runtime.history.append(row)
@@ -3226,14 +3266,14 @@ async def run() -> None:
                         runtime.entry_blocked_reason = ""
 
             if now - runtime.last_status_log_at >= STATUS_LOG_INTERVAL_SECONDS:
-                append_log(status_line(runtime, kalshi_snapshot, polymarket_snapshot, source_snapshot, profit_margin, active_position))
+                append_log(status_line(runtime, kalshi_snapshot, polymarket_snapshot, source_snapshot, profit_margin, contracts, active_position))
                 runtime.last_status_log_at = now
 
             if active_position is not None or runtime.entry_in_progress or runtime.entry_blocked_reason or not runtime.tradable:
                 continue
             if remaining is None or remaining <= 0:
                 continue
-            best = best_arbitrage_candidate(kalshi_snapshot, polymarket_snapshot, profit_margin)
+            best = best_arbitrage_candidate(kalshi_snapshot, polymarket_snapshot, profit_margin, contracts)
             if best is None or not best["profitable"]:
                 continue
             if context.failsafe_required():
