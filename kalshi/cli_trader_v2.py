@@ -216,6 +216,25 @@ CSV_FIELDS = [
     "polymarket_error",
 ]
 
+BALANCE_CSV_FILENAME = "cli_trader_v2_balances.csv"
+BALANCE_CSV_FIELDS = [
+    "timestamp_utc",
+    "kalshi_ticker",
+    "kalshi_close_time",
+    "polymarket_ticker",
+    "polymarket_close_time",
+    "kalshi_target",
+    "polymarket_target",
+    "kalshi_balance",
+    "kalshi_available_balance",
+    "kalshi_error",
+    "polymarket_balance",
+    "polymarket_allowance",
+    "polymarket_error",
+    "total_balance",
+    "balance_complete",
+]
+
 MarketState = tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
 
 KALSHI_MARKET_CACHE: dict[str, dict[str, Any]] = {}
@@ -1978,6 +1997,11 @@ def csv_path_for_contract(csv_dir: Path, ticker: Any) -> Path:
     return csv_dir / f"cli_trader_v2_{safe_filename(ticker)}.csv"
 
 
+def balance_csv_path(csv_dir: Path) -> Path:
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    return csv_dir / BALANCE_CSV_FILENAME
+
+
 def append_csv_row(csv_path: Path, row: dict[str, Any]) -> None:
     exists = csv_path.exists()
     with csv_path.open("a", newline="") as file_obj:
@@ -1985,6 +2009,15 @@ def append_csv_row(csv_path: Path, row: dict[str, Any]) -> None:
         if not exists:
             writer.writeheader()
         writer.writerow({field: row.get(field, "") for field in CSV_FIELDS})
+
+
+def append_balance_csv_row(csv_path: Path, row: dict[str, Any]) -> None:
+    exists = csv_path.exists()
+    with csv_path.open("a", newline="") as file_obj:
+        writer = csv.DictWriter(file_obj, fieldnames=BALANCE_CSV_FIELDS)
+        if not exists:
+            writer.writeheader()
+        writer.writerow({field: row.get(field, "") for field in BALANCE_CSV_FIELDS})
 
 
 def build_csv_row(
@@ -2659,23 +2692,70 @@ def polymarket_balance_amounts() -> tuple[float, float]:
     return as_float(balance) / 1_000_000.0, as_float(allowance) / 1_000_000.0
 
 
-def combined_balance_line() -> str:
-    parts = []
-    total = 0.0
+def balance_snapshot_row(
+    *,
+    kalshi_ticker: str = "",
+    kalshi_close_time: str = "",
+    polymarket_ticker: str = "",
+    polymarket_close_time: str = "",
+    kalshi_target: Any = "",
+    polymarket_target: Any = "",
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "timestamp_utc": iso_utc(),
+        "kalshi_ticker": kalshi_ticker,
+        "kalshi_close_time": kalshi_close_time,
+        "polymarket_ticker": polymarket_ticker,
+        "polymarket_close_time": polymarket_close_time,
+        "kalshi_target": json_safe_value(kalshi_target),
+        "polymarket_target": json_safe_value(polymarket_target),
+        "kalshi_balance": "",
+        "kalshi_available_balance": "",
+        "kalshi_error": "",
+        "polymarket_balance": "",
+        "polymarket_allowance": "",
+        "polymarket_error": "",
+        "total_balance": 0.0,
+        "balance_complete": True,
+    }
+    total_balance = 0.0
     try:
         kalshi_cash, kalshi_available = kalshi_balance_amounts()
-        total += kalshi_cash
-        available_text = f" available {fmt_money(kalshi_available)}" if kalshi_available is not None else ""
-        parts.append(f"Kalshi {fmt_money(kalshi_cash)}{available_text}")
+        total_balance += kalshi_cash
+        row["kalshi_balance"] = kalshi_cash
+        row["kalshi_available_balance"] = "" if kalshi_available is None else kalshi_available
     except Exception as exc:
-        parts.append(f"Kalshi ERROR {type(exc).__name__}: {exc}")
+        row["kalshi_error"] = f"{type(exc).__name__}: {exc}"
+        row["balance_complete"] = False
     try:
-        polymarket_cash, _polymarket_allowance = polymarket_balance_amounts()
-        total += polymarket_cash
-        parts.append(f"Polymarket {fmt_money(polymarket_cash)}")
+        polymarket_cash, polymarket_allowance = polymarket_balance_amounts()
+        total_balance += polymarket_cash
+        row["polymarket_balance"] = polymarket_cash
+        row["polymarket_allowance"] = polymarket_allowance
     except Exception as exc:
-        parts.append(f"Polymarket ERROR {type(exc).__name__}: {exc}")
-    return f"BALANCE {' | '.join(parts)} | total {fmt_money(total)}"
+        row["polymarket_error"] = f"{type(exc).__name__}: {exc}"
+        row["balance_complete"] = False
+    row["total_balance"] = total_balance
+    return row
+
+
+def balance_line_from_row(row: dict[str, Any]) -> str:
+    parts = []
+    if row.get("kalshi_error"):
+        parts.append(f"Kalshi ERROR {row['kalshi_error']}")
+    else:
+        kalshi_available = finite_float(row.get("kalshi_available_balance"))
+        available_text = f" available {fmt_money(kalshi_available)}" if kalshi_available is not None else ""
+        parts.append(f"Kalshi {fmt_money(row.get('kalshi_balance'))}{available_text}")
+    if row.get("polymarket_error"):
+        parts.append(f"Polymarket ERROR {row['polymarket_error']}")
+    else:
+        parts.append(f"Polymarket {fmt_money(row.get('polymarket_balance'))}")
+    return f"BALANCE {' | '.join(parts)} | total {fmt_money(row.get('total_balance'))}"
+
+
+def combined_balance_line() -> str:
+    return balance_line_from_row(balance_snapshot_row())
 
 
 def polymarket_post_order(
@@ -3491,6 +3571,7 @@ async def run() -> None:
 
     runtime: ContractRuntime | None = None
     active_position: dict[str, Any] | None = None
+    balance_recorded_tickers: set[str] = set()
 
     try:
         while True:
@@ -3516,8 +3597,22 @@ async def run() -> None:
                     f"P target {fmt_price(source_snapshot.get('polymarket_target'), 2)}",
                     concise=True,
                 )
-                balance_line = await asyncio.to_thread(combined_balance_line)
-                append_log(balance_line, concise=True)
+                if ticker not in balance_recorded_tickers:
+                    balance_row = await asyncio.to_thread(
+                        balance_snapshot_row,
+                        kalshi_ticker=ticker,
+                        kalshi_close_time=close_time,
+                        polymarket_ticker=str(polymarket_snapshot.get("ticker") or ""),
+                        polymarket_close_time=str(polymarket_snapshot.get("close_time") or ""),
+                        kalshi_target=source_snapshot.get("kalshi_target"),
+                        polymarket_target=source_snapshot.get("polymarket_target"),
+                    )
+                    append_log(balance_line_from_row(balance_row), concise=True)
+                    try:
+                        append_balance_csv_row(balance_csv_path(args.csv_dir), balance_row)
+                    except Exception as exc:
+                        append_log(f"BALANCE CSV ERROR {type(exc).__name__}: {exc}", concise=True)
+                    balance_recorded_tickers.add(ticker)
 
             if remaining is not None and remaining <= -2:
                 append_log(f"CONTRACT ROLLOVER {ticker} expired; refreshing active market")
