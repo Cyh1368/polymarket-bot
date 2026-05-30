@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="720" viewBox="0 0 1300 720">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#1f2933}.axis{stroke:#334155;stroke-width:1}.grid{stroke:#e2e8f0;stroke-width:1}.line{fill:none;stroke:#2563eb;stroke-width:3}.gain{fill:#0f766e}.loss{fill:#b91c1c}.neutral{fill:#475569}.label{font-size:12px}.title{font-size:22px;font-weight:700}.subtitle{font-size:13px;fill:#64748b}.small{font-size:11px;fill:#475569}</style>
+<text x="90" y="28" class="title">Total cash balance vs time</text>
+<text x="90" y="48" class="subtitle">Unique BALANCE changes from concise_trader_log.txt; timestamps are UTC. This is cash balance, not mark-to-market value of open or unsettled positions.</text>
+<line x1="90" y1="604.4" x2="1260" y2="604.4" class="grid"/>
+<text x="80" y="608.4" text-anchor="end" class="label">$13</text>
+<line x1="90" y1="561.3" x2="1260" y2="561.3" class="grid"/>
+<text x="80" y="565.3" text-anchor="end" class="label">$14</text>
+<line x1="90" y1="518.1" x2="1260" y2="518.1" class="grid"/>
+<text x="80" y="522.1" text-anchor="end" class="label">$15</text>
+<line x1="90" y1="475.0" x2="1260" y2="475.0" class="grid"/>
+<text x="80" y="479.0" text-anchor="end" class="label">$16</text>
+<line x1="90" y1="431.9" x2="1260" y2="431.9" class="grid"/>
+<text x="80" y="435.9" text-anchor="end" class="label">$17</text>
+<line x1="90" y1="388.8" x2="1260" y2="388.8" class="grid"/>
+<text x="80" y="392.8" text-anchor="end" class="label">$18</text>
+<line x1="90" y1="345.7" x2="1260" y2="345.7" class="grid"/>
+<text x="80" y="349.7" text-anchor="end" class="label">$19</text>
+<line x1="90" y1="302.5" x2="1260" y2="302.5" class="grid"/>
+<text x="80" y="306.5" text-anchor="end" class="label">$20</text>
+<line x1="90" y1="259.4" x2="1260" y2="259.4" class="grid"/>
+<text x="80" y="263.4" text-anchor="end" class="label">$21</text>
+<line x1="90" y1="216.3" x2="1260" y2="216.3" class="grid"/>
+<text x="80" y="220.3" text-anchor="end" class="label">$22</text>
+<line x1="90" y1="173.2" x2="1260" y2="173.2" class="grid"/>
+<text x="80" y="177.2" text-anchor="end" class="label">$23</text>
+<line x1="90" y1="130.0" x2="1260" y2="130.0" class="grid"/>
+<text x="80" y="134.0" text-anchor="end" class="label">$24</text>
+<line x1="90" y1="86.9" x2="1260" y2="86.9" class="grid"/>
+<text x="80" y="90.9" text-anchor="end" class="label">$25</text>
+<line x1="189.8" y1="625" x2="189.8" y2="45" class="grid"/>
+<text x="189.8" y="649" text-anchor="middle" class="label">05:00</text>
+<line x1="323.5" y1="625" x2="323.5" y2="45" class="grid"/>
+<text x="323.5" y="649" text-anchor="middle" class="label">06:00</text>
+<line x1="457.3" y1="625" x2="457.3" y2="45" class="grid"/>
+<text x="457.3" y="649" text-anchor="middle" class="label">07:00</text>
+<line x1="591.1" y1="625" x2="591.1" y2="45" class="grid"/>
+<text x="591.1" y="649" text-anchor="middle" class="label">08:00</text>
+<line x1="724.8" y1="625" x2="724.8" y2="45" class="grid"/>
+<text x="724.8" y="649" text-anchor="middle" class="label">09:00</text>
+<line x1="858.6" y1="625" x2="858.6" y2="45" class="grid"/>
+<text x="858.6" y="649" text-anchor="middle" class="label">10:00</text>
+<line x1="992.3" y1="625" x2="992.3" y2="45" class="grid"/>
+<text x="992.3" y="649" text-anchor="middle" class="label">11:00</text>
+<line x1="1126.1" y1="625" x2="1126.1" y2="45" class="grid"/>
+<text x="1126.1" y="649" text-anchor="middle" class="label">12:00</text>
+<line x1="1259.8" y1="625" x2="1259.8" y2="45" class="grid"/>
+<text x="1259.8" y="649" text-anchor="middle" class="label">13:00</text>
+<line x1="90" y1="625" x2="1260" y2="625" class="axis"/>
+<line x1="90" y1="625" x2="90" y2="45" class="axis"/>
+<path d="M 90.0 537.9 L 123.1 537.9 L 123.1 144.8 L 256.8 144.8 L 256.8 233.4 L 290.2 233.4 L 290.2 147.2 L 323.7 147.2 L 323.7 234.1 L 357.1 234.1 L 357.1 145.8 L 624.6 145.8 L 624.6 187.4 L 624.9 187.4 L 624.9 101.1 L 691.5 101.1 L 691.5 183.5 L 725.0 183.5 L 725.0 232.6 L 725.2 232.6 L 725.2 146.4 L 758.8 146.4 L 758.8 230.8 L 791.9 230.8 L 791.9 141.5 L 825.3 141.5 L 825.3 146.3 L 892.2 146.3 L 892.2 229.4 L 926.0 229.4 L 926.0 217.1 L 959.0 217.1 L 959.0 298.3 L 992.5 298.3 L 992.5 568.9 L 992.8 568.9 L 992.8 310.1 L 1059.5 310.1 L 1059.5 352.1 L 1159.7 352.1 L 1159.7 354.8 L 1226.5 354.8 L 1226.5 437.4 L 1260.0 437.4 L 1260.0 354.8" class="line"/>
+<circle cx="90.0" cy="537.9" r="5" class="neutral"><title>2026-05-30T04:15:14.260Z total $14.5414 delta start</title></circle>
+<circle cx="123.1" cy="144.8" r="5" class="gain"><title>2026-05-30T04:30:04.567Z total $23.6580 delta +9.1166</title></circle>
+<text x="123.1" y="132.8" text-anchor="middle" class="small gain">04:30 +9.12</text>
+<circle cx="256.8" cy="233.4" r="5" class="loss"><title>2026-05-30T05:30:04.605Z total $21.6025 delta -2.0555</title></circle>
+<text x="256.8" y="263.4" text-anchor="middle" class="small loss">05:30 -2.06</text>
+<circle cx="290.2" cy="147.2" r="5" class="gain"><title>2026-05-30T05:45:03.544Z total $23.6025 delta +2.0000</title></circle>
+<text x="290.2" y="135.2" text-anchor="middle" class="small gain">05:45 +2.00</text>
+<circle cx="323.7" cy="234.1" r="5" class="loss"><title>2026-05-30T06:00:04.837Z total $21.5879 delta -2.0146</title></circle>
+<text x="323.7" y="264.1" text-anchor="middle" class="small loss">06:00 -2.01</text>
+<circle cx="357.1" cy="145.8" r="5" class="gain"><title>2026-05-30T06:15:03.922Z total $23.6342 delta +2.0463</title></circle>
+<text x="357.1" y="133.8" text-anchor="middle" class="small gain">06:15 +2.05</text>
+<circle cx="624.6" cy="187.4" r="5" class="loss"><title>2026-05-30T08:15:03.950Z total $22.6706 delta -0.9636</title></circle>
+<text x="624.6" y="217.4" text-anchor="middle" class="small loss">08:15 -0.96</text>
+<circle cx="624.9" cy="101.1" r="5" class="gain"><title>2026-05-30T08:15:11.436Z total $24.6706 delta +2.0000</title></circle>
+<text x="624.9" y="89.1" text-anchor="middle" class="small gain">08:15 +2.00</text>
+<circle cx="691.5" cy="183.5" r="5" class="loss"><title>2026-05-30T08:45:03.589Z total $22.7615 delta -1.9091</title></circle>
+<text x="691.5" y="213.5" text-anchor="middle" class="small loss">08:45 -1.91</text>
+<circle cx="725.0" cy="232.6" r="5" class="loss"><title>2026-05-30T09:00:04.564Z total $21.6206 delta -1.1409</title></circle>
+<text x="725.0" y="252.6" text-anchor="middle" class="small loss">09:00 -1.14</text>
+<circle cx="725.2" cy="146.4" r="5" class="gain"><title>2026-05-30T09:00:11.543Z total $23.6206 delta +2.0000</title></circle>
+<text x="725.2" y="144.4" text-anchor="middle" class="small gain">09:00 +2.00</text>
+<circle cx="758.8" cy="230.8" r="5" class="loss"><title>2026-05-30T09:15:13.514Z total $21.6629 delta -1.9577</title></circle>
+<text x="758.8" y="250.8" text-anchor="middle" class="small loss">09:15 -1.96</text>
+<circle cx="791.9" cy="141.5" r="5" class="gain"><title>2026-05-30T09:30:04.237Z total $23.7351 delta +2.0722</title></circle>
+<text x="791.9" y="139.5" text-anchor="middle" class="small gain">09:30 +2.07</text>
+<circle cx="825.3" cy="146.3" r="5" class="loss"><title>2026-05-30T09:45:03.891Z total $23.6220 delta -0.1131</title></circle>
+<text x="825.3" y="166.3" text-anchor="middle" class="small loss">09:45 -0.11</text>
+<circle cx="892.2" cy="229.4" r="5" class="loss"><title>2026-05-30T10:15:05.256Z total $21.6954 delta -1.9266</title></circle>
+<text x="892.2" y="259.4" text-anchor="middle" class="small loss">10:15 -1.93</text>
+<circle cx="926.0" cy="217.1" r="5" class="gain"><title>2026-05-30T10:30:13.805Z total $21.9821 delta +0.2867</title></circle>
+<text x="926.0" y="205.1" text-anchor="middle" class="small gain">10:30 +0.29</text>
+<circle cx="959.0" cy="298.3" r="5" class="loss"><title>2026-05-30T10:45:03.611Z total $20.0989 delta -1.8832</title></circle>
+<text x="959.0" y="328.3" text-anchor="middle" class="small loss">10:45 -1.88</text>
+<circle cx="992.5" cy="568.9" r="5" class="loss"><title>2026-05-30T11:00:04.249Z total $13.8235 delta -6.2754</title></circle>
+<text x="992.5" y="588.9" text-anchor="middle" class="small loss">11:00 -6.28</text>
+<circle cx="992.8" cy="310.1" r="5" class="gain"><title>2026-05-30T11:00:13.850Z total $19.8235 delta +6.0000</title></circle>
+<text x="992.8" y="308.1" text-anchor="middle" class="small gain">11:00 +6.00</text>
+<circle cx="1059.5" cy="352.1" r="5" class="loss"><title>2026-05-30T11:30:06.746Z total $18.8514 delta -0.9721</title></circle>
+<text x="1059.5" y="372.1" text-anchor="middle" class="small loss">11:30 -0.97</text>
+<circle cx="1159.7" cy="354.8" r="5" class="loss"><title>2026-05-30T12:15:04.427Z total $18.7868 delta -0.0646</title></circle>
+<text x="1159.7" y="384.8" text-anchor="middle" class="small loss">12:15 -0.06</text>
+<circle cx="1226.5" cy="437.4" r="5" class="loss"><title>2026-05-30T12:45:03.576Z total $16.8731 delta -1.9137</title></circle>
+<text x="1226.5" y="457.4" text-anchor="middle" class="small loss">12:45 -1.91</text>
+<circle cx="1260.0" cy="354.8" r="5" class="gain"><title>2026-05-30T13:00:04.160Z total $18.7875 delta +1.9144</title></circle>
+<text x="1260.0" y="352.8" text-anchor="middle" class="small gain">13:00 +1.91</text>
+<text x="675.0" y="695" text-anchor="middle" class="label">UTC time on 2026-05-30</text>
+<text transform="translate(24 335.0) rotate(-90)" text-anchor="middle" class="label">Total cash balance ($)</text>
+</svg>
