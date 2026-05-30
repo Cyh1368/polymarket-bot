@@ -2938,7 +2938,7 @@ def retry_entry_plan(
     kalshi_snapshot, polymarket_snapshot = fresh_orderbook_snapshots(kalshi_market, polymarket_market)
     time_reason = entry_time_reject_reason(seconds_to_expiry(kalshi_snapshot))
     if time_reason:
-        return {"decision": "SKIP", "reason": time_reason}
+        return {"decision": "STOP", "reason": time_reason}
     candidates = arbitrage_candidates(
         kalshi_snapshot,
         polymarket_snapshot,
@@ -2948,11 +2948,20 @@ def retry_entry_plan(
     )
     candidate = next((item for item in candidates if item.get("name") == candidate_name), None)
     if candidate is None:
-        return {"decision": "SKIP", "reason": f"{candidate_name} no longer has fresh prices"}
-    if not candidate["profitable"]:
+        return {"decision": "WAIT", "reason": f"{candidate_name} no longer has fresh prices"}
+    edge = finite_float(candidate.get("fee_adjusted_edge"))
+    if edge is None:
+        return {"decision": "WAIT", "reason": f"{candidate_name} has no computable edge", "candidate": candidate}
+    if edge <= 0:
         return {
-            "decision": "SKIP",
-            "reason": f"{candidate_name} edge {fmt_money(candidate['fee_adjusted_edge'])} <= margin {fmt_money(profit_margin)}",
+            "decision": "STOP",
+            "reason": f"{candidate_name} edge {fmt_money(edge)} <= 0",
+            "candidate": candidate,
+        }
+    if edge <= profit_margin:
+        return {
+            "decision": "WAIT",
+            "reason": f"{candidate_name} edge {fmt_money(edge)} <= margin {fmt_money(profit_margin)}",
             "candidate": candidate,
         }
     kalshi_side = candidate["kalshi_contract"].lower()
@@ -2961,19 +2970,19 @@ def retry_entry_plan(
         kalshi_qty_key = "best_yes_ask_qty" if kalshi_side == "yes" else "best_no_ask_qty"
         kalshi_qty = as_float(kalshi_snapshot.get(kalshi_qty_key))
         if missing_kalshi < KALSHI_MIN_ORDER_CONTRACTS:
-            return {"decision": "SKIP", "reason": f"missing Kalshi size {missing_kalshi:g} below minimum {KALSHI_MIN_ORDER_CONTRACTS:g}", "candidate": candidate}
+            return {"decision": "STOP", "reason": f"missing Kalshi size {missing_kalshi:g} below minimum {KALSHI_MIN_ORDER_CONTRACTS:g}", "candidate": candidate}
         if kalshi_qty < missing_kalshi:
-            return {"decision": "SKIP", "reason": f"fresh Kalshi {kalshi_side.upper()} ask liquidity {kalshi_qty:g} < {missing_kalshi:g}", "candidate": candidate}
+            return {"decision": "WAIT", "reason": f"fresh Kalshi {kalshi_side.upper()} ask liquidity {kalshi_qty:g} < {missing_kalshi:g}", "candidate": candidate}
     if missing_poly > 0:
         poly_qty_key = "best_yes_ask_qty" if poly_contract == "YES" else "best_no_ask_qty"
         poly_qty = as_float(polymarket_snapshot.get(poly_qty_key))
         poly_notional = candidate["polymarket_price"] * missing_poly
         if missing_poly < POLYMARKET_MIN_ORDER_CONTRACTS:
-            return {"decision": "SKIP", "reason": f"missing Polymarket size {missing_poly:g} below minimum {POLYMARKET_MIN_ORDER_CONTRACTS:g}", "candidate": candidate}
+            return {"decision": "STOP", "reason": f"missing Polymarket size {missing_poly:g} below minimum {POLYMARKET_MIN_ORDER_CONTRACTS:g}", "candidate": candidate}
         if poly_qty < missing_poly:
-            return {"decision": "SKIP", "reason": f"fresh Polymarket {poly_contract} ask liquidity {poly_qty:g} < {missing_poly:g}", "candidate": candidate}
+            return {"decision": "WAIT", "reason": f"fresh Polymarket {poly_contract} ask liquidity {poly_qty:g} < {missing_poly:g}", "candidate": candidate}
         if poly_notional < POLYMARKET_MIN_ORDER_NOTIONAL:
-            return {"decision": "SKIP", "reason": f"Polymarket retry notional {fmt_money(poly_notional)} < {fmt_money(POLYMARKET_MIN_ORDER_NOTIONAL)} minimum", "candidate": candidate}
+            return {"decision": "WAIT", "reason": f"Polymarket retry notional {fmt_money(poly_notional)} < {fmt_money(POLYMARKET_MIN_ORDER_NOTIONAL)} minimum", "candidate": candidate}
     return {"decision": "PLACE", "reason": "same arbitrage still profitable and liquid", "candidate": candidate}
 
 
@@ -3073,9 +3082,14 @@ async def execute_entry(
                 missing_poly,
                 profit_margin,
             )
-            if plan.get("decision") != "PLACE":
+            if plan.get("decision") == "STOP":
                 retry_messages.append(f"retry {attempt} stop: {plan.get('reason')}")
                 break
+            if plan.get("decision") != "PLACE":
+                retry_messages.append(f"retry {attempt} wait: {plan.get('reason')}")
+                if attempt < ENTRY_MISSING_LEG_RETRY_ATTEMPTS:
+                    await asyncio.sleep(ENTRY_MISSING_LEG_RETRY_DELAY_SECONDS)
+                continue
             retry_candidate = plan["candidate"]
             retry_attempts: list[tuple[str, Any]] = []
             if missing_kalshi > 0:
@@ -3141,6 +3155,9 @@ async def execute_entry(
                 break
             if attempt < ENTRY_MISSING_LEG_RETRY_ATTEMPTS:
                 await asyncio.sleep(ENTRY_MISSING_LEG_RETRY_DELAY_SECONDS)
+        else:
+            if kalshi_filled < contracts or poly_filled < contracts:
+                retry_messages.append(f"retry attempts exhausted after {ENTRY_MISSING_LEG_RETRY_ATTEMPTS:g} attempts")
 
     if kalshi_filled >= contracts and poly_filled >= contracts:
         k_price = float(kalshi_fill_price or candidate["kalshi_price"])
