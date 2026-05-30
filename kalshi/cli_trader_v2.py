@@ -2289,7 +2289,9 @@ class ContractRuntime:
     history: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=900))
     tradable: bool = False
     horizon_decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
-    trade_attempted: bool = False
+    entry_in_progress: bool = False
+    entry_blocked_reason: str = ""
+    entry_attempt_count: int = 0
     last_csv_save_at: float = 0.0
     last_status_log_at: float = 0.0
 
@@ -2739,7 +2741,7 @@ async def execute_entry(
     contracts: int,
     profit_margin: float,
     dry_run: bool,
-) -> tuple[dict[str, Any] | None, str]:
+) -> tuple[dict[str, Any] | None, str, bool]:
     preflight = await asyncio.to_thread(preflight_trade, kalshi_market, polymarket_market, contracts, profit_margin)
     if preflight.get("decision") != "PLACE":
         candidate = preflight.get("candidate") or {}
@@ -2747,7 +2749,7 @@ async def execute_entry(
             f"ENTRY SKIP {preflight.get('reason')} | "
             f"best {candidate.get('name', '--')} all-in {fmt_cents(candidate.get('all_in_cost'))} "
             f"edge {fmt_money(candidate.get('fee_adjusted_edge'))}"
-        )
+        ), False
     candidate = preflight["candidate"]
     kalshi_side = candidate["kalshi_contract"].lower()
     poly_contract = candidate["polymarket_contract"]
@@ -2772,7 +2774,7 @@ async def execute_entry(
             f"K {kalshi_side.upper()} {fmt_cents(candidate['kalshi_price'])} + "
             f"P {poly_contract} {fmt_cents(candidate['polymarket_price'])} | "
             f"all-in {fmt_cents(candidate['all_in_cost'])} edge {fmt_money(candidate['fee_adjusted_edge'])}"
-        )
+        ), False
 
     kalshi_task = asyncio.to_thread(
         kalshi_post_order,
@@ -2831,7 +2833,7 @@ async def execute_entry(
             f"K {kalshi_side.upper()} {fmt_cents(k_price)} order {position['kalshi_order_id']} + "
             f"P {poly_contract} {fmt_cents(p_price)} order {position['polymarket_order_id']} | "
             f"all-in {fmt_cents(position['entry_all_in_cost'])} edge {fmt_money(position['entry_fee_adjusted_edge'])}"
-        )
+        ), False
 
     cleanup_messages = []
     cleanup_tasks = []
@@ -2842,10 +2844,14 @@ async def execute_entry(
     if cleanup_tasks:
         cleanup_results = await asyncio.gather(*cleanup_tasks, return_exceptions=True)
         cleanup_messages = [f"{type(item).__name__}: {item}" if isinstance(item, Exception) else "cleanup_ok" for item in cleanup_results]
+    any_fill = kalshi_filled > 0 or poly_filled > 0
+    cleanup_ok = not cleanup_tasks or all(message == "cleanup_ok" for message in cleanup_messages)
+    block_reentry = any_fill and not cleanup_ok
+    block_text = " | ENTRY BLOCKED unresolved partial fill" if block_reentry else ""
     return None, (
         f"ENTRY FAILED/PARTIAL | K result {type(kalshi_result).__name__} filled {kalshi_filled:g}; "
-        f"P result {type(poly_result).__name__} filled {poly_filled:g}; cleanup {cleanup_messages}"
-    )
+        f"P result {type(poly_result).__name__} filled {poly_filled:g}; cleanup {cleanup_messages}{block_text}"
+    ), block_reentry
 
 
 async def execute_emergency_exit(
@@ -3045,7 +3051,7 @@ async def run() -> None:
                 append_log(status_line(runtime, kalshi_snapshot, polymarket_snapshot, source_snapshot, profit_margin, active_position))
                 runtime.last_status_log_at = now
 
-            if active_position is not None or runtime.trade_attempted or not runtime.tradable:
+            if active_position is not None or runtime.entry_in_progress or runtime.entry_blocked_reason or not runtime.tradable:
                 continue
             if remaining is None or remaining <= 0:
                 continue
@@ -3054,9 +3060,21 @@ async def run() -> None:
                 continue
             if context.failsafe_required():
                 await context.refresh_after_event("pre-trade stale websocket")
-            position, message = await execute_entry(kalshi_market, polymarket_market, contracts, profit_margin, args.dry_run)
+            runtime.entry_in_progress = True
+            runtime.entry_attempt_count += 1
+            try:
+                position, message, block_reentry = await execute_entry(
+                    kalshi_market,
+                    polymarket_market,
+                    contracts,
+                    profit_margin,
+                    args.dry_run,
+                )
+            finally:
+                runtime.entry_in_progress = False
             append_log(message, concise=True)
-            runtime.trade_attempted = True
+            if block_reentry:
+                runtime.entry_blocked_reason = message
             if position is not None:
                 active_position = position
     except asyncio.CancelledError:
