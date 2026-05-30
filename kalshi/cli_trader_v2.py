@@ -2284,7 +2284,7 @@ def aggregate_horizon_features(rows: deque[dict[str, Any]], horizon_name: str, h
         )
         last_seen_ts = source_ts.max()
         asof_gap = float((asof_time - last_seen_ts).total_seconds())
-        if len(window) < MODEL_WINDOW_SAMPLE_COUNT:
+        if len(window) < MIN_WINDOW_ROWS:
             status = "too_few_window_rows"
         elif asof_gap > MAX_ASOF_GAP_SECONDS:
             status = "stale_asof_snapshot"
@@ -2346,6 +2346,14 @@ class ContractRuntime:
             return {}
         ordered = [self.horizon_decisions[name] for name in HORIZONS if name in self.horizon_decisions]
         return ordered[-1] if ordered else {}
+
+
+@dataclass
+class TraderSharedState:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    runtime: ContractRuntime | None = None
+    active_position: dict[str, Any] | None = None
+    last_sample_bucket: int | None = None
 
 
 def load_horizon_models(model_dir: Path) -> dict[str, HorizonModel]:
@@ -2415,6 +2423,17 @@ def evaluate_horizon_model(
         "threshold": horizon.threshold,
         "diverge_prob": math.nan,
         "tradable": False,
+        "window_rows": feature_row.get("window_rows", math.nan),
+        "expected_window_rows": feature_row.get("model_expected_window_rows", math.nan),
+        "min_window_rows": MIN_WINDOW_ROWS,
+        "sampled_history_rows": feature_row.get("model_sampled_history_rows", math.nan),
+        "raw_history_rows": feature_row.get("model_raw_history_rows", math.nan),
+        "asof_gap_seconds": feature_row.get("asof_gap_seconds", math.nan),
+        "partial_window": (
+            (finite_float(feature_row.get("window_rows")) or 0.0) < MODEL_WINDOW_SAMPLE_COUNT
+            if feature_row
+            else False
+        ),
     }
     if status != "ok":
         return decision
@@ -3373,6 +3392,55 @@ def status_line(
     )
 
 
+async def feature_sampler_loop(
+    context_getter: Any,
+    shared: TraderSharedState,
+    profit_margin: float,
+    contracts: int,
+    csv_dir: Path,
+    csv_save_interval: float,
+) -> None:
+    while True:
+        loop_started = time.monotonic()
+        try:
+            context = context_getter()
+            kalshi_market, kalshi_snapshot, _polymarket_market, polymarket_snapshot, source_snapshot = await context.snapshot()
+            ticker = str(kalshi_snapshot.get("ticker") or kalshi_market.get("ticker") or "")
+            sample_bucket = int(datetime.now(timezone.utc).timestamp() // MODEL_SAMPLE_INTERVAL_SECONDS)
+            row_to_write: dict[str, Any] | None = None
+            csv_path: Path | None = None
+
+            async with shared.lock:
+                runtime = shared.runtime
+                if runtime is not None and runtime.ticker == ticker and shared.last_sample_bucket != sample_bucket:
+                    row = build_csv_row(
+                        kalshi_snapshot,
+                        polymarket_snapshot,
+                        source_snapshot,
+                        runtime,
+                        profit_margin,
+                        contracts,
+                        shared.active_position,
+                    )
+                    runtime.history.append(row)
+                    shared.last_sample_bucket = sample_bucket
+                    now = time.monotonic()
+                    if now - runtime.last_csv_save_at >= csv_save_interval:
+                        runtime.last_csv_save_at = now
+                        row_to_write = row
+                        csv_path = csv_path_for_contract(csv_dir, ticker)
+
+            if row_to_write is not None and csv_path is not None:
+                append_csv_row(csv_path, row_to_write)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            append_log(f"FEATURE SAMPLER ERROR {type(exc).__name__}: {exc}", concise=True)
+
+        elapsed = time.monotonic() - loop_started
+        await asyncio.sleep(max(0.1, MODEL_SAMPLE_INTERVAL_SECONDS - elapsed))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BTC 15m Kalshi/Polymarket horizon-model arbitrage trader v2.")
     parser.add_argument("--contracts", type=int, default=1, help="Contracts per leg. Default: 1.")
@@ -3404,6 +3472,22 @@ async def run() -> None:
     )
     context = AsyncMarketContext(fetch_market_state, logger=lambda line: append_log(line))
     await context.start()
+    shared = TraderSharedState()
+
+    def current_context() -> AsyncMarketContext:
+        return context
+
+    sampler_task = asyncio.create_task(
+        feature_sampler_loop(
+            current_context,
+            shared,
+            profit_margin,
+            contracts,
+            args.csv_dir,
+            csv_save_interval,
+        ),
+        name="feature-sampler-v2",
+    )
 
     runtime: ContractRuntime | None = None
     active_position: dict[str, Any] | None = None
@@ -3417,6 +3501,10 @@ async def run() -> None:
 
             if runtime is None or ticker != runtime.ticker:
                 runtime = ContractRuntime(ticker=ticker, close_time=close_time)
+                async with shared.lock:
+                    shared.runtime = runtime
+                    shared.active_position = active_position
+                    shared.last_sample_bucket = None
                 for horizon in models.values():
                     horizon.collection_started = False
                     horizon.evaluated = False
@@ -3436,6 +3524,10 @@ async def run() -> None:
                 if active_position is not None:
                     append_log(f"POSITION CLEAR {active_position.get('ticker')} reached expiry", concise=True)
                     active_position = None
+                async with shared.lock:
+                    shared.runtime = None
+                    shared.active_position = None
+                    shared.last_sample_bucket = None
                 KALSHI_MARKET_CACHE.pop(SERIES_TICKER, None)
                 await context.stop()
                 context = AsyncMarketContext(fetch_market_state, logger=lambda line: append_log(line))
@@ -3443,20 +3535,7 @@ async def run() -> None:
                 runtime = None
                 continue
 
-            row = build_csv_row(
-                kalshi_snapshot,
-                polymarket_snapshot,
-                source_snapshot,
-                runtime,
-                profit_margin,
-                contracts,
-                active_position,
-            )
-            runtime.history.append(row)
             now = time.monotonic()
-            if now - runtime.last_csv_save_at >= csv_save_interval:
-                append_csv_row(csv_path_for_contract(args.csv_dir, ticker), row)
-                runtime.last_csv_save_at = now
 
             if remaining is not None:
                 for horizon in models.values():
@@ -3480,15 +3559,37 @@ async def run() -> None:
                     horizon.last_status = str(decision.get("status") or "")
                     horizon.last_prob = finite_float(decision.get("diverge_prob"))
                     old_tradable = runtime.tradable
-                    runtime.tradable = bool(decision["tradable"])
+                    if decision["status"] == "ok":
+                        runtime.tradable = bool(decision["tradable"])
+                    else:
+                        decision["tradable"] = runtime.tradable
                     runtime.horizon_decisions[horizon.name] = decision
+                    detail = ""
+                    if decision["status"] != "ok":
+                        detail = (
+                            f" rows={fmt_price(decision.get('window_rows'), 0)}/"
+                            f"{fmt_price(decision.get('expected_window_rows'), 0)}"
+                            f" min={fmt_price(decision.get('min_window_rows'), 0)}"
+                            f" sampled={fmt_price(decision.get('sampled_history_rows'), 0)}"
+                            f" raw={fmt_price(decision.get('raw_history_rows'), 0)}"
+                            f" asof_gap={fmt_price(decision.get('asof_gap_seconds'), 1)}s"
+                        )
                     append_log(
                         f"MODEL {horizon.name} {ticker} | status={decision['status']} "
                         f"diverge_prob={fmt_price(decision.get('diverge_prob'), 4)} "
                         f"threshold={horizon.threshold:.4f} tradable={runtime.tradable} "
-                        f"(was {old_tradable})",
+                        f"(was {old_tradable}){detail}",
                         concise=True,
                     )
+                    if decision.get("partial_window"):
+                        append_log(
+                            f"MODEL WARNING {horizon.name} {ticker} | partial feature window "
+                            f"rows={fmt_price(decision.get('window_rows'), 0)}/"
+                            f"{fmt_price(decision.get('expected_window_rows'), 0)} "
+                            f"min={fmt_price(decision.get('min_window_rows'), 0)} "
+                            f"status={decision['status']} asof_gap={fmt_price(decision.get('asof_gap_seconds'), 1)}s",
+                            concise=True,
+                        )
                     if active_position is not None and active_position.get("needs_exit"):
                         active_position["last_emergency_exit_attempt_monotonic"] = time.monotonic()
                         ok, message = await execute_emergency_exit(active_position, polymarket_market)
@@ -3496,6 +3597,8 @@ async def run() -> None:
                         if ok:
                             active_position = None
                             runtime.entry_blocked_reason = ""
+                            async with shared.lock:
+                                shared.active_position = None
 
             model_exit_required = (
                 MODEL_EXIT_ON_NONTRADABLE
@@ -3514,6 +3617,8 @@ async def run() -> None:
                     if ok:
                         active_position = None
                         runtime.entry_blocked_reason = ""
+                        async with shared.lock:
+                            shared.active_position = None
 
             if now - runtime.last_status_log_at >= STATUS_LOG_INTERVAL_SECONDS:
                 append_log(status_line(runtime, kalshi_snapshot, polymarket_snapshot, source_snapshot, profit_margin, contracts, active_position))
@@ -3545,9 +3650,13 @@ async def run() -> None:
                 runtime.entry_blocked_reason = message
             if position is not None:
                 active_position = position
+            async with shared.lock:
+                shared.active_position = active_position
     except asyncio.CancelledError:
         raise
     finally:
+        sampler_task.cancel()
+        await asyncio.gather(sampler_task, return_exceptions=True)
         await context.stop()
 
 
