@@ -2527,6 +2527,92 @@ def polymarket_client_v2() -> Any:
     return ClobClient(**kwargs, creds=creds)
 
 
+def kalshi_balance_dollars(value: Any, key: str) -> float:
+    number = as_float(value)
+    if "dollars" in key:
+        return number
+    if number >= 100:
+        return number / 100.0
+    return number
+
+
+def kalshi_balance_amounts() -> tuple[float, float | None]:
+    data = http_json("GET", BASE_URL, "/portfolio/balance", auth=True, timeout=20)
+    balance = data.get("balance") if isinstance(data, dict) else None
+    if isinstance(balance, dict):
+        cash_key = next(
+            (
+                key
+                for key in ("cash_balance_dollars", "cash_balance", "balance_dollars", "balance")
+                if balance.get(key) not in (None, "")
+            ),
+            "balance",
+        )
+        cash = (
+            balance.get("cash_balance_dollars")
+            or balance.get("cash_balance")
+            or balance.get("balance_dollars")
+            or balance.get("balance")
+        )
+        available_key = next(
+            (
+                key
+                for key in ("available_balance_dollars", "available_balance", "cash_available_dollars", "cash_available")
+                if balance.get(key) not in (None, "")
+            ),
+            "",
+        )
+        available = (
+            balance.get("available_balance_dollars")
+            or balance.get("available_balance")
+            or balance.get("cash_available_dollars")
+            or balance.get("cash_available")
+        )
+    else:
+        cash_key = "balance"
+        cash = data.get("balance") if isinstance(data, dict) else None
+        available_key = "available_balance"
+        available = data.get("available_balance") if isinstance(data, dict) else None
+    cash_dollars = kalshi_balance_dollars(cash, cash_key)
+    available_dollars = kalshi_balance_dollars(available, available_key) if available not in (None, "") else None
+    return cash_dollars, available_dollars
+
+
+def polymarket_balance_amounts() -> tuple[float, float]:
+    from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+
+    client = polymarket_client_v2()
+    data = client.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Polymarket balance response {data}")
+    balance = data.get("balance") or data.get("usdc_balance") or data.get("collateral")
+    allowances = data.get("allowances")
+    if isinstance(allowances, dict) and allowances:
+        allowance = max(as_float(value) for value in allowances.values())
+    else:
+        allowance = data.get("allowance") or data.get("usdc_allowance")
+    return as_float(balance) / 1_000_000.0, as_float(allowance) / 1_000_000.0
+
+
+def combined_balance_line() -> str:
+    parts = []
+    total = 0.0
+    try:
+        kalshi_cash, kalshi_available = kalshi_balance_amounts()
+        total += kalshi_cash
+        available_text = f" available {fmt_money(kalshi_available)}" if kalshi_available is not None else ""
+        parts.append(f"Kalshi {fmt_money(kalshi_cash)}{available_text}")
+    except Exception as exc:
+        parts.append(f"Kalshi ERROR {type(exc).__name__}: {exc}")
+    try:
+        polymarket_cash, _polymarket_allowance = polymarket_balance_amounts()
+        total += polymarket_cash
+        parts.append(f"Polymarket {fmt_money(polymarket_cash)}")
+    except Exception as exc:
+        parts.append(f"Polymarket ERROR {type(exc).__name__}: {exc}")
+    return f"BALANCE {' | '.join(parts)} | total {fmt_money(total)}"
+
+
 def polymarket_post_order(
     market: dict[str, Any],
     contract: str,
@@ -2735,6 +2821,18 @@ def response_order_id(response: dict[str, Any] | None) -> str:
     return "--"
 
 
+def cleanup_result_message(label: str, result: Any, side: str = "") -> str:
+    if isinstance(result, Exception):
+        return f"{label} FAILED {type(result).__name__}: {result}"
+    if isinstance(result, tuple) and len(result) >= 2:
+        return f"{label} ok fill {fmt_cents(result[1])}"
+    if isinstance(result, dict):
+        fill = fill_count(result)
+        price = filled_price(result, side, action="sell") if side else finite_float(result.get("limit_price"))
+        return f"{label} ok filled {fill:g} at {fmt_cents(price)}"
+    return f"{label} ok"
+
+
 async def execute_entry(
     kalshi_market: dict[str, Any],
     polymarket_market: dict[str, Any],
@@ -2835,20 +2933,72 @@ async def execute_entry(
             f"all-in {fmt_cents(position['entry_all_in_cost'])} edge {fmt_money(position['entry_fee_adjusted_edge'])}"
         ), False
 
-    cleanup_messages = []
-    cleanup_tasks = []
+    cleanup_attempts: list[tuple[str, str, Any]] = []
     if kalshi_filled > 0:
-        cleanup_tasks.append(asyncio.to_thread(kalshi_exit_position, str(kalshi_market["ticker"]), kalshi_side, int(kalshi_filled)))
+        cleanup_attempts.append(
+            (
+                f"Kalshi {kalshi_side.upper()} sell size {kalshi_filled:g}",
+                kalshi_side,
+                asyncio.to_thread(kalshi_exit_position, str(kalshi_market["ticker"]), kalshi_side, int(kalshi_filled)),
+            )
+        )
     if poly_filled > 0:
-        cleanup_tasks.append(asyncio.to_thread(polymarket_exit_position, polymarket_market, poly_contract, int(poly_filled)))
-    if cleanup_tasks:
-        cleanup_results = await asyncio.gather(*cleanup_tasks, return_exceptions=True)
-        cleanup_messages = [f"{type(item).__name__}: {item}" if isinstance(item, Exception) else "cleanup_ok" for item in cleanup_results]
+        cleanup_attempts.append(
+            (
+                f"Polymarket {poly_contract} sell size {poly_filled:g}",
+                "",
+                asyncio.to_thread(polymarket_exit_position, polymarket_market, poly_contract, int(poly_filled)),
+            )
+        )
+    cleanup_results: list[Any] = []
+    cleanup_messages: list[str] = []
+    if cleanup_attempts:
+        cleanup_results = list(
+            await asyncio.gather(*(attempt[2] for attempt in cleanup_attempts), return_exceptions=True)
+        )
+        cleanup_messages = [
+            cleanup_result_message(label, result, side)
+            for (label, side, _task), result in zip(cleanup_attempts, cleanup_results, strict=False)
+        ]
     any_fill = kalshi_filled > 0 or poly_filled > 0
-    cleanup_ok = not cleanup_tasks or all(message == "cleanup_ok" for message in cleanup_messages)
+    cleanup_ok = not cleanup_attempts or all(not isinstance(result, Exception) for result in cleanup_results)
     block_reentry = any_fill and not cleanup_ok
+    remaining_kalshi = 0
+    remaining_poly = 0
+    if block_reentry:
+        for (label, _side, _task), result in zip(cleanup_attempts, cleanup_results, strict=False):
+            if not isinstance(result, Exception):
+                continue
+            if label.startswith("Kalshi"):
+                remaining_kalshi = int(kalshi_filled)
+            elif label.startswith("Polymarket"):
+                remaining_poly = int(poly_filled)
+    partial_position = None
+    if remaining_kalshi > 0 or remaining_poly > 0:
+        partial_position = {
+            "dry_run": False,
+            "partial_entry": True,
+            "needs_exit": True,
+            "ticker": kalshi_market.get("ticker"),
+            "close_time": kalshi_market.get("close_time") or kalshi_market.get("close_ts"),
+            "kalshi_side": kalshi_side,
+            "polymarket_contract": poly_contract,
+            "contracts": max(remaining_kalshi, remaining_poly),
+            "kalshi_contracts": remaining_kalshi,
+            "polymarket_contracts": remaining_poly,
+            "entry_time": iso_utc(),
+            "kalshi_fill_price": float(kalshi_fill_price or candidate["kalshi_price"]) if kalshi_filled > 0 else None,
+            "polymarket_fill_price": float(poly_fill_price or candidate["polymarket_price"]) if poly_filled > 0 else None,
+            "entry_raw_cost": (float(kalshi_fill_price or candidate["kalshi_price"]) if kalshi_filled > 0 else 0.0)
+            + (float(poly_fill_price or candidate["polymarket_price"]) if poly_filled > 0 else 0.0),
+            "entry_total_fee": 0.0,
+            "entry_all_in_cost": math.nan,
+            "entry_fee_adjusted_edge": math.nan,
+            "kalshi_order_id": response_order_id(kalshi_result if isinstance(kalshi_result, dict) else None),
+            "polymarket_order_id": response_order_id(poly_result if isinstance(poly_result, dict) else None),
+        }
     block_text = " | ENTRY BLOCKED unresolved partial fill" if block_reentry else ""
-    return None, (
+    return partial_position, (
         f"ENTRY FAILED/PARTIAL | K result {type(kalshi_result).__name__} filled {kalshi_filled:g}; "
         f"P result {type(poly_result).__name__} filled {poly_filled:g}; cleanup {cleanup_messages}{block_text}"
     ), block_reentry
@@ -2858,37 +3008,55 @@ async def execute_emergency_exit(
     position: dict[str, Any],
     polymarket_market: dict[str, Any],
 ) -> tuple[bool, str]:
+    label = "PARTIAL CLEANUP EXIT" if position.get("partial_entry") or position.get("needs_exit") else "EMERGENCY EXIT"
     if position.get("dry_run"):
         return True, (
-            f"DRY EMERGENCY EXIT {position.get('ticker')} | "
+            f"DRY {label} {position.get('ticker')} | "
             f"K {str(position.get('kalshi_side')).upper()} + P {position.get('polymarket_contract')}"
         )
-    contracts = int(position.get("contracts") or 0)
-    if contracts <= 0:
-        return True, "EMERGENCY EXIT skipped: no contracts tracked"
-    kalshi_task = asyncio.to_thread(
-        kalshi_exit_position,
-        str(position["ticker"]),
-        str(position["kalshi_side"]),
-        contracts,
-    )
-    poly_task = asyncio.to_thread(
-        polymarket_exit_position,
-        polymarket_market,
-        str(position["polymarket_contract"]),
-        contracts,
-    )
-    kalshi_result, poly_result = await asyncio.gather(kalshi_task, poly_task, return_exceptions=True)
-    kalshi_ok = not isinstance(kalshi_result, Exception) and fill_count(kalshi_result) > 0
-    poly_ok = not isinstance(poly_result, Exception)
-    message = (
-        f"EMERGENCY EXIT {'COMPLETE' if kalshi_ok and poly_ok else 'INCOMPLETE'} | "
-        f"K {str(position.get('kalshi_side')).upper()} "
-        f"{'ok' if kalshi_ok else type(kalshi_result).__name__ + ': ' + str(kalshi_result)} | "
-        f"P {position.get('polymarket_contract')} "
-        f"{'ok' if poly_ok else type(poly_result).__name__ + ': ' + str(poly_result)}"
-    )
-    return kalshi_ok and poly_ok, message
+    default_contracts = int(position.get("contracts") or 0)
+    kalshi_contracts = int(position.get("kalshi_contracts", default_contracts) or 0)
+    poly_contracts = int(position.get("polymarket_contracts", default_contracts) or 0)
+    if kalshi_contracts <= 0 and poly_contracts <= 0:
+        return True, f"{label} skipped: no contracts tracked"
+
+    exit_attempts: list[tuple[str, str, Any]] = []
+    if kalshi_contracts > 0:
+        kalshi_side = str(position["kalshi_side"])
+        exit_attempts.append(
+            (
+                f"Kalshi {kalshi_side.upper()} sell size {kalshi_contracts:g}",
+                kalshi_side,
+                asyncio.to_thread(
+                    kalshi_exit_position,
+                    str(position["ticker"]),
+                    kalshi_side,
+                    kalshi_contracts,
+                ),
+            )
+        )
+    if poly_contracts > 0:
+        poly_contract = str(position["polymarket_contract"])
+        exit_attempts.append(
+            (
+                f"Polymarket {poly_contract} sell size {poly_contracts:g}",
+                "",
+                asyncio.to_thread(
+                    polymarket_exit_position,
+                    polymarket_market,
+                    poly_contract,
+                    poly_contracts,
+                ),
+            )
+        )
+
+    results = list(await asyncio.gather(*(attempt[2] for attempt in exit_attempts), return_exceptions=True))
+    messages = [
+        cleanup_result_message(label_text, result, side)
+        for (label_text, side, _task), result in zip(exit_attempts, results, strict=False)
+    ]
+    ok = all(not isinstance(result, Exception) for result in results)
+    return ok, f"{label} {'COMPLETE' if ok else 'INCOMPLETE'} | " + " | ".join(messages)
 
 
 def status_line(
@@ -2912,7 +3080,7 @@ def status_line(
         f"NK+P raw {fmt_cents(nk_p.get('raw_cost'))} all-in {fmt_cents(nk_p.get('all_in_cost'))} "
         f"edge {fmt_money(nk_p.get('fee_adjusted_edge'))} | "
         f"BRTI {fmt_price(source_snapshot.get('kalshi_price'), 2)} target {fmt_price(source_snapshot.get('kalshi_target'), 2)} | "
-        f"RTDS {fmt_price(source_snapshot.get('polymarket_price'), 2)} | "
+        f"RTDS {fmt_price(source_snapshot.get('polymarket_price'), 2)} target {fmt_price(source_snapshot.get('polymarket_target'), 2)} | "
         f"tradable={runtime.tradable} model={last.get('horizon', '--')} "
         f"prob={fmt_price(last.get('diverge_prob'), 4)} threshold={fmt_price(last.get('threshold'), 4)} | "
         f"active_trade={bool(active_position)}"
@@ -2970,12 +3138,15 @@ async def run() -> None:
                     horizon.last_status = ""
                 append_log(
                     f"CONTRACT {ticker} | close {close_time} | Polymarket {polymarket_snapshot.get('ticker') or '--'} | "
-                    f"K target {fmt_price(source_snapshot.get('kalshi_target'), 2)}",
+                    f"K target {fmt_price(source_snapshot.get('kalshi_target'), 2)} | "
+                    f"P target {fmt_price(source_snapshot.get('polymarket_target'), 2)}",
                     concise=True,
                 )
+                balance_line = await asyncio.to_thread(combined_balance_line)
+                append_log(balance_line, concise=True)
 
             if remaining is not None and remaining <= -2:
-                append_log(f"CONTRACT ROLLOVER {ticker} expired; refreshing active market", concise=True)
+                append_log(f"CONTRACT ROLLOVER {ticker} expired; refreshing active market")
                 if active_position is not None:
                     append_log(f"POSITION CLEAR {active_position.get('ticker')} reached expiry", concise=True)
                     active_position = None
@@ -3031,14 +3202,20 @@ async def run() -> None:
                         f"(was {old_tradable})",
                         concise=True,
                     )
-                    if active_position is not None and runtime.tradable is False:
+                    if active_position is not None and (
+                        active_position.get("needs_exit") or runtime.tradable is False
+                    ):
                         active_position["last_emergency_exit_attempt_monotonic"] = time.monotonic()
                         ok, message = await execute_emergency_exit(active_position, polymarket_market)
                         append_log(message, concise=True)
                         if ok:
                             active_position = None
+                            runtime.entry_blocked_reason = ""
 
-            if active_position is not None and runtime.tradable is False and runtime.horizon_decisions:
+            exit_required = active_position is not None and (
+                active_position.get("needs_exit") or (runtime.tradable is False and runtime.horizon_decisions)
+            )
+            if exit_required:
                 last_exit_attempt = float(active_position.get("last_emergency_exit_attempt_monotonic") or 0.0)
                 if now - last_exit_attempt >= 2.0:
                     active_position["last_emergency_exit_attempt_monotonic"] = now
@@ -3046,6 +3223,7 @@ async def run() -> None:
                     append_log(message, concise=True)
                     if ok:
                         active_position = None
+                        runtime.entry_blocked_reason = ""
 
             if now - runtime.last_status_log_at >= STATUS_LOG_INTERVAL_SECONDS:
                 append_log(status_line(runtime, kalshi_snapshot, polymarket_snapshot, source_snapshot, profit_margin, active_position))
