@@ -56,8 +56,12 @@ CONCISE_LOG_PATH = ROOT / "concise_trader_log.txt"
 
 CONTRACT_SECONDS = 15 * 60
 WINDOW_SECONDS = 60
+MODEL_SAMPLE_INTERVAL_SECONDS = 2
+MODEL_WINDOW_SAMPLE_COUNT = WINDOW_SECONDS // MODEL_SAMPLE_INTERVAL_SECONDS
+MODEL_WARMUP_SAMPLE_COUNT = 30
 MIN_WINDOW_ROWS = 10
 MAX_ASOF_GAP_SECONDS = 10.0
+KALSHI_MIN_QUOTE_SPREAD = 0.001
 ORDERBOOK_DEPTH = int(os.getenv("ORDERBOOK_DEPTH", "10"))
 KALSHI_LOCAL_BOOK_RESYNC_SECONDS = 30.0
 WEBSOCKET_REPORT_INTERVAL = 0.5
@@ -1005,7 +1009,7 @@ def make_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) -> dict[str
         midpoint = yes_bid
     elif yes_ask is not None:
         midpoint = yes_ask
-    return {
+    return normalize_kalshi_snapshot_quotes({
         "timestamp_utc": iso_utc(),
         "ticker": market.get("ticker"),
         "title": market.get("title") or market.get("subtitle") or "",
@@ -1026,7 +1030,7 @@ def make_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) -> dict[str
         "best_no_ask_qty": best_yes_bid_qty,
         "yes_levels": yes_levels,
         "no_levels": no_levels,
-    }
+    })
 
 
 def make_polymarket_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) -> dict[str, Any]:
@@ -1213,6 +1217,35 @@ def snapshot_with_kalshi_book(
         updated["yes_mid"] = updated["yes_bid"]
     elif updated["yes_ask"] is not None:
         updated["yes_mid"] = updated["yes_ask"]
+    else:
+        updated["yes_mid"] = None
+    return normalize_kalshi_snapshot_quotes(updated)
+
+
+def non_crossed_ask(bid: Any, ask: Any, min_spread: float = KALSHI_MIN_QUOTE_SPREAD) -> float | None:
+    bid_value = finite_float(bid)
+    ask_value = finite_float(ask)
+    if ask_value is None:
+        return None
+    if bid_value is None:
+        return ask_value
+    if ask_value < bid_value + min_spread:
+        return min(1.0, bid_value + min_spread)
+    return ask_value
+
+
+def normalize_kalshi_snapshot_quotes(snapshot: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(snapshot)
+    updated["yes_ask"] = non_crossed_ask(updated.get("yes_bid"), updated.get("yes_ask"))
+    updated["no_ask"] = non_crossed_ask(updated.get("no_bid"), updated.get("no_ask"))
+    yes_bid = finite_float(updated.get("yes_bid"))
+    yes_ask = finite_float(updated.get("yes_ask"))
+    if yes_bid is not None and yes_ask is not None:
+        updated["yes_mid"] = (yes_bid + yes_ask) / 2.0
+    elif yes_bid is not None:
+        updated["yes_mid"] = yes_bid
+    elif yes_ask is not None:
+        updated["yes_mid"] = yes_ask
     else:
         updated["yes_mid"] = None
     return updated
@@ -1504,6 +1537,7 @@ class AsyncMarketContext:
                 updated["no_bid"] = round(1.0 - yes_ask, 10)
             if last_price is not None:
                 updated["last_price"] = last_price
+            updated = normalize_kalshi_snapshot_quotes(updated)
             old_signature = self._last_signature
             self._state = (kalshi_market, updated, polymarket_market, polymarket_snapshot, source_snapshot)
             self._last_signature = book_signature(updated, polymarket_snapshot)
@@ -1863,6 +1897,24 @@ def arbitrage_candidates(
     return [candidate for candidate in candidates if candidate is not None]
 
 
+def add_pair(a: Any, b: Any) -> float | None:
+    left = finite_float(a)
+    right = finite_float(b)
+    if left is None or right is None:
+        return None
+    return left + right
+
+
+def bid_sum_arbitrage_features(
+    kalshi_snapshot: dict[str, Any],
+    polymarket_snapshot: dict[str, Any],
+) -> dict[str, float | None]:
+    return {
+        "K+NP": add_pair(kalshi_snapshot.get("yes_bid"), polymarket_snapshot.get("no_bid")),
+        "NK+P": add_pair(kalshi_snapshot.get("no_bid"), polymarket_snapshot.get("yes_bid")),
+    }
+
+
 def best_arbitrage_candidate(
     kalshi_snapshot: dict[str, Any],
     polymarket_snapshot: dict[str, Any],
@@ -1905,6 +1957,7 @@ def build_csv_row(
     }
     k_plus_np = candidates.get("K+NP")
     nk_plus_p = candidates.get("NK+P")
+    bid_sum_features = bid_sum_arbitrage_features(kalshi_snapshot, polymarket_snapshot)
     best = best_arbitrage_candidate(kalshi_snapshot, polymarket_snapshot, profit_margin)
     last_decision = runtime.last_model_decision()
     row = {
@@ -1950,8 +2003,8 @@ def build_csv_row(
         "polymarket_btc_source": "Polymarket RTDS",
         "polymarket_btc_price": source_snapshot.get("polymarket_price", ""),
         "polymarket_btc_target": source_snapshot.get("polymarket_target", ""),
-        "k_plus_np": k_plus_np.get("raw_cost") if k_plus_np else "",
-        "nk_plus_p": nk_plus_p.get("raw_cost") if nk_plus_p else "",
+        "k_plus_np": bid_sum_features.get("K+NP") if bid_sum_features.get("K+NP") is not None else "",
+        "nk_plus_p": bid_sum_features.get("NK+P") if bid_sum_features.get("NK+P") is not None else "",
         "k_plus_np_kalshi_fee": k_plus_np.get("kalshi_fee") if k_plus_np else "",
         "k_plus_np_polymarket_fee": k_plus_np.get("polymarket_fee") if k_plus_np else "",
         "k_plus_np_total_fee": k_plus_np.get("total_fee") if k_plus_np else "",
@@ -2021,6 +2074,32 @@ def history_dataframe(rows: deque[dict[str, Any]]) -> pd.DataFrame:
     df = df.dropna(subset=["timestamp_utc", "kalshi_close_time"]).sort_values("timestamp_utc")
     df = df.drop_duplicates("timestamp_utc", keep="last").reset_index(drop=True)
     return df
+
+
+def model_sampled_history(raw: pd.DataFrame, asof_time: pd.Timestamp) -> pd.DataFrame:
+    eligible = raw[raw["timestamp_utc"] <= asof_time].sort_values("timestamp_utc").copy()
+    if eligible.empty:
+        return eligible
+
+    periods = MODEL_WINDOW_SAMPLE_COUNT + MODEL_WARMUP_SAMPLE_COUNT
+    sample_times = pd.date_range(
+        end=asof_time,
+        periods=periods,
+        freq=pd.Timedelta(seconds=MODEL_SAMPLE_INTERVAL_SECONDS),
+    )
+    grid = pd.DataFrame({"model_sample_timestamp_utc": sample_times})
+    source = eligible.rename(columns={"timestamp_utc": "model_sample_source_timestamp_utc"})
+    sampled = pd.merge_asof(
+        grid,
+        source,
+        left_on="model_sample_timestamp_utc",
+        right_on="model_sample_source_timestamp_utc",
+        direction="backward",
+    )
+    sampled = sampled.dropna(subset=["model_sample_source_timestamp_utc", "kalshi_close_time"]).copy()
+    sampled["timestamp_utc"] = sampled["model_sample_timestamp_utc"]
+    sampled = sampled.drop(columns=["model_sample_timestamp_utc"])
+    return sampled.reset_index(drop=True)
 
 
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -2134,9 +2213,12 @@ def aggregate_horizon_features(rows: deque[dict[str, Any]], horizon_name: str, h
     raw = history_dataframe(rows)
     if raw.empty:
         return {}, "missing_history"
-    features = add_features(raw)
-    close_time = features["kalshi_close_time"].dropna().iloc[-1]
+    close_time = raw["kalshi_close_time"].dropna().iloc[-1]
     asof_time = close_time - pd.Timedelta(seconds=horizon_seconds)
+    sampled_raw = model_sampled_history(raw, asof_time)
+    if sampled_raw.empty:
+        return {}, "missing_history"
+    features = add_features(sampled_raw)
     window_start = asof_time - pd.Timedelta(seconds=WINDOW_SECONDS)
     eligible_rows = features[features["timestamp_utc"] <= asof_time]
     window = eligible_rows[
@@ -2149,9 +2231,14 @@ def aggregate_horizon_features(rows: deque[dict[str, Any]], horizon_name: str, h
         asof_gap = float((asof_time - last_seen_ts).total_seconds()) if pd.notna(last_seen_ts) else math.nan
         status = "missing_window"
     else:
-        last_seen_ts = window["timestamp_utc"].max()
+        source_ts = (
+            window["model_sample_source_timestamp_utc"]
+            if "model_sample_source_timestamp_utc" in window
+            else window["timestamp_utc"]
+        )
+        last_seen_ts = source_ts.max()
         asof_gap = float((asof_time - last_seen_ts).total_seconds())
-        if len(window) < MIN_WINDOW_ROWS:
+        if len(window) < MODEL_WINDOW_SAMPLE_COUNT:
             status = "too_few_window_rows"
         elif asof_gap > MAX_ASOF_GAP_SECONDS:
             status = "stale_asof_snapshot"
@@ -2161,6 +2248,12 @@ def aggregate_horizon_features(rows: deque[dict[str, Any]], horizon_name: str, h
     window = add_entry_cost_features(window)
     row: dict[str, Any] = {
         "horizon_seconds": horizon_seconds,
+        "model_sampling_mode": "in_memory_previous_tick_2s_grid",
+        "model_sample_interval_seconds": MODEL_SAMPLE_INTERVAL_SECONDS,
+        "model_expected_window_rows": MODEL_WINDOW_SAMPLE_COUNT,
+        "model_warmup_sample_rows": MODEL_WARMUP_SAMPLE_COUNT,
+        "model_raw_history_rows": int(len(raw)),
+        "model_sampled_history_rows": int(len(features)),
         "window_rows": int(len(window)),
         "window_actual_seconds": float((window["timestamp_utc"].max() - window["timestamp_utc"].min()).total_seconds()) if len(window) > 1 else 0.0,
         "asof_gap_seconds": asof_gap,
@@ -2241,6 +2334,17 @@ def model_feature_debug_message(
         "horizon": horizon.name,
         "status": status,
         "threshold": horizon.threshold,
+        "sampling": {
+            "mode": feature_row.get("model_sampling_mode", "in_memory_previous_tick_2s_grid"),
+            "sample_interval_seconds": json_safe_value(feature_row.get("model_sample_interval_seconds")),
+            "expected_window_rows": json_safe_value(feature_row.get("model_expected_window_rows")),
+            "warmup_sample_rows": json_safe_value(feature_row.get("model_warmup_sample_rows")),
+            "raw_history_rows": json_safe_value(feature_row.get("model_raw_history_rows")),
+            "sampled_history_rows": json_safe_value(feature_row.get("model_sampled_history_rows")),
+            "actual_window_rows": json_safe_value(feature_row.get("window_rows")),
+            "window_actual_seconds": json_safe_value(feature_row.get("window_actual_seconds")),
+            "asof_gap_seconds": json_safe_value(feature_row.get("asof_gap_seconds")),
+        },
         "feature_count": len(horizon.feature_names),
         "null_feature_count": len(null_features),
         "null_features": null_features,
