@@ -12,6 +12,7 @@ BALANCE_CSV_PATH = APP_DIR / "kalshi_btc15m_data" / "cli_trader_v2_balances.csv"
 MAX_BYTES = 250_000
 MAX_LINES = 200
 MAX_PORTFOLIO_POINTS = 2_000
+MAX_REASONABLE_PORTFOLIO_VALUE = 1_000_000.0
 
 app = Flask(__name__)
 
@@ -74,6 +75,17 @@ PAGE = """<!doctype html>
     }
     .entry-skip {
       color: #8b949e;
+    }
+    .model-line {
+      color: #67e8f9;
+      font-weight: 700;
+    }
+    .entry-filled {
+      color: #4ade80;
+      font-weight: 700;
+    }
+    .balance-line {
+      color: #facc15;
     }
     .contract-start {
       font-weight: 700;
@@ -227,10 +239,19 @@ PAGE = """<!doctype html>
       if (line.includes("CONTRACT ")) {
         return "contract-start";
       }
+      if (line.startsWith("MODEL ") || line.includes(" | MODEL ")) {
+        return "model-line";
+      }
+      if (line.startsWith("ENTRY FILLED ") || line.includes(" | ENTRY FILLED ")) {
+        return "entry-filled";
+      }
+      if (line.startsWith("BALANCE ") || line.includes(" | BALANCE ")) {
+        return "balance-line";
+      }
       if (line.includes("ENTRY SKIP") || line.includes("CHECK SKIP") || line.includes("HOLD continue")) {
         return "entry-skip";
       }
-      if (line.includes("TRADED ") || line.includes("DRY RUN would place")) {
+      if (line.includes("TRADED ") || line.includes("DRY RUN would place") || line.includes("DRY ENTRY ")) {
         return "trade-executed";
       }
       if (line.includes("EXITED")) {
@@ -275,6 +296,13 @@ PAGE = """<!doctype html>
         fragment.appendChild(span);
       }
       logEl.appendChild(fragment);
+    }
+
+    function formatMoney(value) {
+      if (!Number.isFinite(value)) {
+        return "$--";
+      }
+      return `$${value.toFixed(4)}`;
     }
 
     function drawPortfolio(points) {
@@ -354,7 +382,7 @@ PAGE = """<!doctype html>
       for (let i = 0; i <= 4; i += 1) {
         const value = maxValue - (valueRange * i) / 4;
         const y = pad.top + (plotH * i) / 4;
-        ctx.fillText(`$${value.toFixed(2)}`, pad.left - 8, y);
+        ctx.fillText(formatMoney(value), pad.left - 8, y);
       }
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
@@ -374,7 +402,7 @@ PAGE = """<!doctype html>
         if (data.points.length) {
           const last = data.points[data.points.length - 1];
           chartMessage.textContent =
-            `latest ${new Date(last.timestamp_utc).toLocaleString()} total $${last.total_balance.toFixed(2)}`;
+            `latest ${new Date(last.timestamp_utc).toLocaleString()} total ${formatMoney(last.total_balance)}`;
         } else {
           chartMessage.textContent = `source ${data.path}`;
         }
@@ -448,6 +476,14 @@ def read_log_tail() -> str:
     return "\n".join(lines[-MAX_LINES:])
 
 
+def parse_float(value: str | None) -> float | None:
+    try:
+        number = float(value or "")
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
+
+
 def read_portfolio_points() -> list[dict[str, float | str]]:
     if not BALANCE_CSV_PATH.exists():
         return []
@@ -456,11 +492,12 @@ def read_portfolio_points() -> list[dict[str, float | str]]:
         reader = csv.DictReader(file_obj)
         for row in reader:
             timestamp = str(row.get("timestamp_utc") or "").strip()
-            try:
-                total_balance = float(row.get("total_balance") or "")
-            except ValueError:
-                continue
-            if not timestamp or not math.isfinite(total_balance):
+            total_balance = parse_float(row.get("total_balance"))
+            if total_balance is None or abs(total_balance) > MAX_REASONABLE_PORTFOLIO_VALUE:
+                kalshi_balance = parse_float(row.get("kalshi_balance")) or 0.0
+                polymarket_balance = parse_float(row.get("polymarket_balance")) or 0.0
+                total_balance = kalshi_balance + polymarket_balance
+            if not timestamp or abs(total_balance) > MAX_REASONABLE_PORTFOLIO_VALUE:
                 continue
             points.append(
                 {

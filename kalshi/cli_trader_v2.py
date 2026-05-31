@@ -3379,9 +3379,10 @@ async def execute_entry(
         retry_text = f" | retries {retry_messages[-3:]}" if retry_messages else ""
         return position, (
             f"ENTRY FILLED {candidate['name']} size {contracts:g} | "
-            f"K {kalshi_side.upper()} {fmt_cents(k_price)} order {position['kalshi_order_id']} + "
-            f"P {poly_contract} {fmt_cents(p_price)} order {position['polymarket_order_id']} | "
-            f"all-in {fmt_cents(position['entry_all_in_cost'])} edge {fmt_money(position['entry_fee_adjusted_edge'])}"
+            f"all-in {fmt_cents(position['entry_all_in_cost'])} "
+            f"edge {fmt_money(position['entry_fee_adjusted_edge'])} | "
+            f"K {kalshi_side.upper()} {fmt_cents(k_price)} + P {poly_contract} {fmt_cents(p_price)}\n"
+            f"{iso_utc()} | K {position['kalshi_order_id']} + P {position['polymarket_order_id']}"
             f"{retry_text}"
         ), False
 
@@ -3744,6 +3745,8 @@ async def run() -> None:
                     horizon.evaluated = False
                     horizon.last_prob = None
                     horizon.last_status = ""
+                append_log("", concise=True, prefix_timestamp=False)
+                append_log("", concise=True, prefix_timestamp=False)
                 append_log(
                     f"CONTRACT {ticker} | close {close_time} | Polymarket {polymarket_snapshot.get('ticker') or '--'} | "
                     f"K target {fmt_price(source_snapshot.get('kalshi_target'), 2)} | "
@@ -3888,7 +3891,7 @@ async def run() -> None:
                 )
             finally:
                 runtime.entry_in_progress = False
-            append_log(message, concise=True)
+            append_log(message, concise=True, prefix_timestamp=not message.startswith("ENTRY FILLED "))
             if block_reentry:
                 runtime.entry_blocked_reason = message
             if position is not None:
