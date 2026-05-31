@@ -224,8 +224,6 @@ CSV_FIELDS = [
 BALANCE_CSV_FILENAME = "cli_trader_v2_balances.csv"
 BALANCE_CSV_FIELDS = [
     "timestamp_utc",
-    "balance_event",
-    "seconds_to_expiry",
     "kalshi_ticker",
     "kalshi_close_time",
     "polymarket_ticker",
