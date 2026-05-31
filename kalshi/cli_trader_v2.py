@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import threading
 import time
 import traceback
 import uuid
@@ -67,6 +68,7 @@ LATCH_HOLD_ENTRY_HORIZONS = {"2m", "1m"}
 KALSHI_MIN_QUOTE_SPREAD = 0.001
 ORDERBOOK_DEPTH = int(os.getenv("ORDERBOOK_DEPTH", "10"))
 KALSHI_LOCAL_BOOK_RESYNC_SECONDS = 30.0
+ACTIVE_MARKET_REFRESH_MIN_INTERVAL_SECONDS = float(os.getenv("ACTIVE_MARKET_REFRESH_MIN_INTERVAL_SECONDS", "5"))
 WEBSOCKET_REPORT_INTERVAL = 0.5
 WEBSOCKET_STALE_SECONDS = 5.0
 STATUS_LOG_INTERVAL_SECONDS = 10.0
@@ -247,6 +249,8 @@ POLYMARKET_MARKET_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 POLYMARKET_TARGET_CACHE: dict[str, float] = {}
 SOURCE_PRICE_CACHE: dict[str, float] = {}
 SOURCE_HISTORY: deque[dict[str, Any]] = deque(maxlen=720)
+ACTIVE_MARKET_DISCOVERY_LOCK = threading.Lock()
+ACTIVE_MARKET_DISCOVERY_LAST_AT = 0.0
 
 
 def load_dotenv(path: Path = ROOT / ".env") -> None:
@@ -890,17 +894,26 @@ def interval_overlap_score(market: dict[str, Any], kalshi_market: dict[str, Any]
     return score
 
 
+def rate_limited_kalshi_markets(params: dict[str, Any]) -> dict[str, Any]:
+    global ACTIVE_MARKET_DISCOVERY_LAST_AT
+    with ACTIVE_MARKET_DISCOVERY_LOCK:
+        now = time.monotonic()
+        elapsed = now - ACTIVE_MARKET_DISCOVERY_LAST_AT
+        wait_seconds = ACTIVE_MARKET_REFRESH_MIN_INTERVAL_SECONDS - elapsed
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+        ACTIVE_MARKET_DISCOVERY_LAST_AT = time.monotonic()
+        return kalshi_get("/markets", params)
+
+
 def discover_active_market() -> dict[str, Any] | None:
-    data = kalshi_get(
-        "/markets",
-        {"series_ticker": SERIES_TICKER, "status": "open", "limit": 200},
-    )
+    data = rate_limited_kalshi_markets({"series_ticker": SERIES_TICKER, "status": "open", "limit": 200})
     markets = data.get("markets", [])
     if not markets:
-        data = kalshi_get("/markets", {"event_ticker": SERIES_TICKER, "status": "open", "limit": 200})
+        data = rate_limited_kalshi_markets({"event_ticker": SERIES_TICKER, "status": "open", "limit": 200})
         markets = data.get("markets", [])
     if not markets:
-        data = kalshi_get("/markets", {"status": "open", "limit": 1000})
+        data = rate_limited_kalshi_markets({"status": "open", "limit": 1000})
         markets = [
             market
             for market in data.get("markets", [])
@@ -1202,6 +1215,11 @@ def fetch_market_state() -> MarketState:
         make_polymarket_snapshot(polymarket_market, poly_orderbook),
         source_snapshot,
     )
+
+
+def is_active_market_rate_limit_error(exc: Exception) -> bool:
+    text = str(exc)
+    return "GET /markets failed: HTTP 429" in text or "too_many_requests" in text
 
 
 def level_price(level: Any) -> float | None:
@@ -3685,8 +3703,29 @@ async def run() -> None:
         f"debug_model_features={args.debug_model_features} models={','.join(models)}",
         concise=True,
     )
+
+    async def start_context_with_backoff(ctx: AsyncMarketContext, reason: str) -> None:
+        while True:
+            try:
+                await ctx.start()
+                return
+            except Exception as exc:
+                if not (
+                    is_active_market_rate_limit_error(exc)
+                    or "No open market found" in str(exc)
+                    or "No matching open Polymarket market found" in str(exc)
+                ):
+                    raise
+                await ctx.stop()
+                append_log(
+                    f"MARKET REFRESH WAIT {reason}: {type(exc).__name__}: {exc}; "
+                    f"retrying in {ACTIVE_MARKET_REFRESH_MIN_INTERVAL_SECONDS:g}s",
+                    concise=True,
+                )
+                await asyncio.sleep(ACTIVE_MARKET_REFRESH_MIN_INTERVAL_SECONDS)
+
     context = AsyncMarketContext(fetch_market_state, logger=lambda line: append_log(line))
-    await context.start()
+    await start_context_with_backoff(context, "startup")
     shared = TraderSharedState()
 
     def current_context() -> AsyncMarketContext:
@@ -3726,9 +3765,11 @@ async def run() -> None:
                     shared.active_position = None
                     shared.last_sample_bucket = None
                 KALSHI_MARKET_CACHE.pop(SERIES_TICKER, None)
-                await context.stop()
-                context = AsyncMarketContext(fetch_market_state, logger=lambda line: append_log(line))
-                await context.start()
+                old_context = context
+                new_context = AsyncMarketContext(fetch_market_state, logger=lambda line: append_log(line))
+                await start_context_with_backoff(new_context, "contract rollover")
+                await old_context.stop()
+                context = new_context
                 runtime = None
                 continue
 
