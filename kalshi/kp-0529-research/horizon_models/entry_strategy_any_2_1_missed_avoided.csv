@@ -1,0 +1,2 @@
+strategy,baseline,baseline_opportunities,baseline_good_trades,baseline_bad_trades,strategy_trades,strategy_good_trades,strategy_bad_trades,good_trades_missed,good_trades_missed_pct,bad_trades_avoided,bad_trades_avoided_pct
+any_2_1_latch_hold,profitable opportunity from 2m decision through expiry,206,188,18,168,164,4,24,0.1276595744680851,14,0.7777777777777778
