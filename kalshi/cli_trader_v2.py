@@ -289,8 +289,14 @@ def iso_utc(dt: datetime | None = None) -> str:
     return (dt or utc_now()).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def append_log(message: str, *, concise: bool = False, print_stdout: bool = True) -> None:
-    line = f"{iso_utc()} | {message}"
+def append_log(
+    message: str,
+    *,
+    concise: bool = False,
+    print_stdout: bool = True,
+    prefix_timestamp: bool = True,
+) -> None:
+    line = f"{iso_utc()} | {message}" if prefix_timestamp else message
     TRADER_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with TRADER_LOG_PATH.open("a") as file_obj:
         file_obj.write(line + "\n")
@@ -306,6 +312,16 @@ def fmt_price(value: Any, places: int = 4) -> str:
     if number is None:
         return "--"
     return f"{number:.{places}f}"
+
+
+def fmt_price_delta(value: Any, target: Any, places: int = 2) -> str:
+    number = finite_float(value)
+    target_number = finite_float(target)
+    if number is None or target_number is None:
+        return "--"
+    delta = number - target_number
+    sign = "+" if delta >= 0 else "-"
+    return f"{sign} {abs(delta):.{places}f}"
 
 
 def fmt_cents(value: Any) -> str:
@@ -2789,9 +2805,7 @@ def balance_snapshot_row(
 
 def balance_line_from_row(row: dict[str, Any]) -> str:
     parts = []
-    balance_event = str(row.get("balance_event") or "").strip()
     remaining = finite_float(row.get("seconds_to_expiry"))
-    event_text = f" {balance_event}" if balance_event else ""
     remaining_text = f" T={remaining:.1f}s" if remaining is not None else ""
     if row.get("kalshi_error"):
         parts.append(f"Kalshi ERROR {row['kalshi_error']}")
@@ -2803,8 +2817,8 @@ def balance_line_from_row(row: dict[str, Any]) -> str:
         parts.append(f"Polymarket ERROR {row['polymarket_error']}")
     else:
         parts.append(f"Polymarket {fmt_money(row.get('polymarket_balance'))}")
-    prefix = f"BALANCE{event_text}{remaining_text}"
-    separator = " | " if event_text or remaining_text else " "
+    prefix = f"BALANCE{remaining_text}"
+    separator = " | " if remaining_text else " "
     return f"{prefix}{separator}{' | '.join(parts)} | total {fmt_money(row.get('total_balance'))}"
 
 
@@ -3540,20 +3554,58 @@ def status_line(
     k_np = by_name.get("K+NP", {})
     nk_p = by_name.get("NK+P", {})
     last = runtime.last_model_decision()
-    return (
-        f"STATUS {runtime.ticker} T={remaining:.1f}s | "
+    remaining_text = f"{remaining:.1f}" if remaining is not None else "--"
+    status_label = f"STATUS T={remaining_text}s"
+    line1 = (
+        f"{status_label:<24} | "
         f"K+NP raw {fmt_cents(k_np.get('raw_cost'))} all-in {fmt_cents(k_np.get('all_in_cost'))} "
         f"edge {fmt_money(k_np.get('fee_adjusted_edge'))} | "
         f"NK+P raw {fmt_cents(nk_p.get('raw_cost'))} all-in {fmt_cents(nk_p.get('all_in_cost'))} "
-        f"edge {fmt_money(nk_p.get('fee_adjusted_edge'))} | "
-        f"BRTI {fmt_price(source_snapshot.get('kalshi_price'), 2)} target {fmt_price(source_snapshot.get('kalshi_target'), 2)} | "
-        f"RTDS {fmt_price(source_snapshot.get('polymarket_price'), 2)} target {fmt_price(source_snapshot.get('polymarket_target'), 2)} | "
+        f"edge {fmt_money(nk_p.get('fee_adjusted_edge'))}"
+    )
+    line2 = (
+        f"{iso_utc()} | "
+        f"BRTI {fmt_price(source_snapshot.get('kalshi_price'), 2)} "
+        f"{fmt_price_delta(source_snapshot.get('kalshi_price'), source_snapshot.get('kalshi_target'))} | "
+        f"RTDS {fmt_price(source_snapshot.get('polymarket_price'), 2)} "
+        f"{fmt_price_delta(source_snapshot.get('polymarket_price'), source_snapshot.get('polymarket_target'))} | "
         f"strategy={ENTRY_STRATEGY_NAME} latch_tradable={runtime.tradable} "
-        f"latch_horizon={runtime.latch_horizon or '--'} latch_action={runtime.latch_action or '--'} | "
+        f"latch_horizon={runtime.latch_horizon or '--'} latch_action={runtime.latch_action or '--'}"
+    )
+    line3 = (
+        f"{runtime.ticker:<24} | "
         f"model={last.get('horizon', '--')} prob={fmt_price(last.get('diverge_prob'), 4)} "
         f"threshold={fmt_price(last.get('threshold'), 4)} model_pass={last.get('model_pass', '--')} | "
         f"active_trade={bool(active_position)}"
     )
+    return "\n".join([line1, line2, line3])
+
+
+def model_decision_log_line(
+    ticker: str,
+    horizon: HorizonModel,
+    decision: dict[str, Any],
+    old_tradable: bool,
+    detail: str,
+) -> str:
+    model_label = f"MODEL {horizon.name} status={decision['status']}"
+    line1 = (
+        f"{model_label:<24} | "
+        f"diverge_prob={fmt_price(decision.get('diverge_prob'), 4)} "
+        f"threshold={horizon.threshold:.4f} model_pass={decision.get('model_pass')}"
+    )
+    line2 = (
+        f"{iso_utc()} | "
+        f"strategy={ENTRY_STRATEGY_NAME} role={decision.get('strategy_role')} "
+        f"latch_action={decision.get('latch_action')}"
+    )
+    line3 = (
+        f"{ticker:<24} | "
+        f"latch_tradable={decision.get('latch_tradable')} "
+        f"latch_horizon={decision.get('latch_horizon') or '--'} "
+        f"(was {old_tradable}){detail}"
+    )
+    return "\n".join([line1, line2, line3])
 
 
 async def feature_sampler_loop(
@@ -3664,6 +3716,23 @@ async def run() -> None:
             close_time = str(kalshi_snapshot.get("close_time") or kalshi_market.get("close_time") or "")
             remaining = seconds_to_expiry(kalshi_snapshot)
 
+            if remaining is not None and remaining <= -2:
+                if runtime is not None and ticker == runtime.ticker:
+                    append_log(f"CONTRACT ROLLOVER {ticker} expired; refreshing active market")
+                if active_position is not None:
+                    append_log(f"POSITION CLEAR {active_position.get('ticker')} reached expiry", concise=True)
+                    active_position = None
+                async with shared.lock:
+                    shared.runtime = None
+                    shared.active_position = None
+                    shared.last_sample_bucket = None
+                KALSHI_MARKET_CACHE.pop(SERIES_TICKER, None)
+                await context.stop()
+                context = AsyncMarketContext(fetch_market_state, logger=lambda line: append_log(line))
+                await context.start()
+                runtime = None
+                continue
+
             if runtime is None or ticker != runtime.ticker:
                 runtime = ContractRuntime(ticker=ticker, close_time=close_time)
                 async with shared.lock:
@@ -3693,22 +3762,6 @@ async def run() -> None:
                         source_snapshot=source_snapshot,
                     )
                     balance_recorded_events.add(balance_event_key)
-
-            if remaining is not None and remaining <= -2:
-                append_log(f"CONTRACT ROLLOVER {ticker} expired; refreshing active market")
-                if active_position is not None:
-                    append_log(f"POSITION CLEAR {active_position.get('ticker')} reached expiry", concise=True)
-                    active_position = None
-                async with shared.lock:
-                    shared.runtime = None
-                    shared.active_position = None
-                    shared.last_sample_bucket = None
-                KALSHI_MARKET_CACHE.pop(SERIES_TICKER, None)
-                await context.stop()
-                context = AsyncMarketContext(fetch_market_state, logger=lambda line: append_log(line))
-                await context.start()
-                runtime = None
-                continue
 
             now = time.monotonic()
 
@@ -3763,14 +3816,9 @@ async def run() -> None:
                             f" asof_gap={fmt_price(decision.get('asof_gap_seconds'), 1)}s"
                         )
                     append_log(
-                        f"MODEL {horizon.name} {ticker} | status={decision['status']} "
-                        f"diverge_prob={fmt_price(decision.get('diverge_prob'), 4)} "
-                        f"threshold={horizon.threshold:.4f} model_pass={decision.get('model_pass')} "
-                        f"strategy={ENTRY_STRATEGY_NAME} role={decision.get('strategy_role')} "
-                        f"latch_action={decision.get('latch_action')} "
-                        f"latch_tradable={runtime.tradable} latch_horizon={runtime.latch_horizon or '--'} "
-                        f"(was {old_tradable}){detail}",
+                        model_decision_log_line(ticker, horizon, decision, old_tradable, detail),
                         concise=True,
+                        prefix_timestamp=False,
                     )
                     if decision.get("partial_window"):
                         append_log(
@@ -3805,7 +3853,18 @@ async def run() -> None:
                             shared.active_position = None
 
             if now - runtime.last_status_log_at >= STATUS_LOG_INTERVAL_SECONDS:
-                append_log(status_line(runtime, kalshi_snapshot, polymarket_snapshot, source_snapshot, profit_margin, contracts, active_position))
+                append_log(
+                    status_line(
+                        runtime,
+                        kalshi_snapshot,
+                        polymarket_snapshot,
+                        source_snapshot,
+                        profit_margin,
+                        contracts,
+                        active_position,
+                    ),
+                    prefix_timestamp=False,
+                )
                 runtime.last_status_log_at = now
 
             if active_position is not None or runtime.entry_in_progress or runtime.entry_blocked_reason or not runtime.tradable:
