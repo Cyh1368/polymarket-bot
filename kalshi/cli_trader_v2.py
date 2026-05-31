@@ -62,6 +62,8 @@ MODEL_WINDOW_SAMPLE_COUNT = WINDOW_SECONDS // MODEL_SAMPLE_INTERVAL_SECONDS
 MODEL_WARMUP_SAMPLE_COUNT = 30
 MIN_WINDOW_ROWS = 10
 MAX_ASOF_GAP_SECONDS = 10.0
+ENTRY_STRATEGY_NAME = "any_2_1_latch_hold"
+LATCH_HOLD_ENTRY_HORIZONS = {"2m", "1m"}
 KALSHI_MIN_QUOTE_SPREAD = 0.001
 ORDERBOOK_DEPTH = int(os.getenv("ORDERBOOK_DEPTH", "10"))
 KALSHI_LOCAL_BOOK_RESYNC_SECONDS = 30.0
@@ -83,7 +85,6 @@ EMERGENCY_EXIT_MAX_CHUNK_CONTRACTS = max(1, int(os.getenv("EMERGENCY_EXIT_MAX_CH
 KALSHI_MIN_ORDER_CONTRACTS = max(1, int(os.getenv("KALSHI_MIN_ORDER_CONTRACTS", "1")))
 POLYMARKET_MIN_ORDER_CONTRACTS = max(1, int(os.getenv("POLYMARKET_MIN_ORDER_CONTRACTS", "1")))
 POLYMARKET_MIN_EXIT_CONTRACTS = max(1, int(os.getenv("POLYMARKET_MIN_EXIT_CONTRACTS", str(POLYMARKET_MIN_ORDER_CONTRACTS))))
-MODEL_EXIT_ON_NONTRADABLE = os.getenv("MODEL_EXIT_ON_NONTRADABLE", "1").lower() in {"1", "true", "yes", "on"}
 
 HORIZONS: dict[str, int] = {
     "5m": 5 * 60,
@@ -210,6 +211,9 @@ CSV_FIELDS = [
     "best_arb_profitable",
     "profit_margin",
     "tradable",
+    "strategy_name",
+    "latch_horizon",
+    "latch_action",
     "last_model_horizon",
     "last_diverge_prob",
     "last_diverge_threshold",
@@ -2105,6 +2109,9 @@ def build_csv_row(
         "best_arb_profitable": int(bool(best and best.get("profitable"))),
         "profit_margin": profit_margin,
         "tradable": int(runtime.tradable),
+        "strategy_name": ENTRY_STRATEGY_NAME,
+        "latch_horizon": runtime.latch_horizon,
+        "latch_action": runtime.latch_action,
         "last_model_horizon": last_decision.get("horizon", ""),
         "last_diverge_prob": last_decision.get("diverge_prob", ""),
         "last_diverge_threshold": last_decision.get("threshold", ""),
@@ -2370,6 +2377,8 @@ class ContractRuntime:
     close_time: str
     history: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=900))
     tradable: bool = False
+    latch_horizon: str = ""
+    latch_action: str = ""
     horizon_decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
     entry_in_progress: bool = False
     entry_blocked_reason: str = ""
@@ -2481,6 +2490,38 @@ def evaluate_horizon_model(
     prob = float(horizon.model.predict_proba(x)[0, 1])
     decision["diverge_prob"] = prob
     decision["tradable"] = bool(prob < horizon.threshold)
+    return decision
+
+
+def apply_latch_hold_decision(runtime: ContractRuntime, decision: dict[str, Any]) -> dict[str, Any]:
+    horizon_name = str(decision.get("horizon") or "")
+    model_pass = bool(decision.get("status") == "ok" and decision.get("tradable"))
+    old_tradable = runtime.tradable
+    role = "latch_candidate" if horizon_name in LATCH_HOLD_ENTRY_HORIZONS else "observe_only"
+
+    if role == "observe_only":
+        action = "observe_only"
+    elif model_pass:
+        runtime.tradable = True
+        if old_tradable:
+            action = "already_latched_true"
+        else:
+            runtime.latch_horizon = horizon_name
+            action = "latched_true"
+    elif old_tradable:
+        action = "hold_existing_true"
+    else:
+        action = "no_latch"
+
+    runtime.latch_action = action
+    decision["model_pass"] = model_pass
+    decision["strategy"] = ENTRY_STRATEGY_NAME
+    decision["strategy_role"] = role
+    decision["latch_action"] = action
+    decision["latch_tradable"] = runtime.tradable
+    decision["latch_horizon"] = runtime.latch_horizon
+    decision["old_tradable"] = old_tradable
+    decision["tradable"] = runtime.tradable
     return decision
 
 
@@ -3507,8 +3548,10 @@ def status_line(
         f"edge {fmt_money(nk_p.get('fee_adjusted_edge'))} | "
         f"BRTI {fmt_price(source_snapshot.get('kalshi_price'), 2)} target {fmt_price(source_snapshot.get('kalshi_target'), 2)} | "
         f"RTDS {fmt_price(source_snapshot.get('polymarket_price'), 2)} target {fmt_price(source_snapshot.get('polymarket_target'), 2)} | "
-        f"tradable={runtime.tradable} model={last.get('horizon', '--')} "
-        f"prob={fmt_price(last.get('diverge_prob'), 4)} threshold={fmt_price(last.get('threshold'), 4)} | "
+        f"strategy={ENTRY_STRATEGY_NAME} latch_tradable={runtime.tradable} "
+        f"latch_horizon={runtime.latch_horizon or '--'} latch_action={runtime.latch_action or '--'} | "
+        f"model={last.get('horizon', '--')} prob={fmt_price(last.get('diverge_prob'), 4)} "
+        f"threshold={fmt_price(last.get('threshold'), 4)} model_pass={last.get('model_pass', '--')} | "
         f"active_trade={bool(active_position)}"
     )
 
@@ -3706,11 +3749,8 @@ async def run() -> None:
                     horizon.evaluated = True
                     horizon.last_status = str(decision.get("status") or "")
                     horizon.last_prob = finite_float(decision.get("diverge_prob"))
-                    old_tradable = runtime.tradable
-                    if decision["status"] == "ok":
-                        runtime.tradable = bool(decision["tradable"])
-                    else:
-                        decision["tradable"] = runtime.tradable
+                    decision = apply_latch_hold_decision(runtime, decision)
+                    old_tradable = bool(decision.get("old_tradable"))
                     runtime.horizon_decisions[horizon.name] = decision
                     detail = ""
                     if decision["status"] != "ok":
@@ -3725,7 +3765,10 @@ async def run() -> None:
                     append_log(
                         f"MODEL {horizon.name} {ticker} | status={decision['status']} "
                         f"diverge_prob={fmt_price(decision.get('diverge_prob'), 4)} "
-                        f"threshold={horizon.threshold:.4f} tradable={runtime.tradable} "
+                        f"threshold={horizon.threshold:.4f} model_pass={decision.get('model_pass')} "
+                        f"strategy={ENTRY_STRATEGY_NAME} role={decision.get('strategy_role')} "
+                        f"latch_action={decision.get('latch_action')} "
+                        f"latch_tradable={runtime.tradable} latch_horizon={runtime.latch_horizon or '--'} "
                         f"(was {old_tradable}){detail}",
                         concise=True,
                     )
@@ -3748,14 +3791,7 @@ async def run() -> None:
                             async with shared.lock:
                                 shared.active_position = None
 
-            model_exit_required = (
-                MODEL_EXIT_ON_NONTRADABLE
-                and runtime.tradable is False
-                and bool(runtime.horizon_decisions)
-            )
-            exit_required = active_position is not None and (
-                active_position.get("needs_exit") or model_exit_required
-            )
+            exit_required = active_position is not None and active_position.get("needs_exit")
             if exit_required:
                 last_exit_attempt = float(active_position.get("last_emergency_exit_attempt_monotonic") or 0.0)
                 if now - last_exit_attempt >= 2.0:
