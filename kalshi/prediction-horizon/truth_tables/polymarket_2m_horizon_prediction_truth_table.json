@@ -1,0 +1,10 @@
+{
+  "model": "polymarket_2m_horizon_prediction",
+  "total": 1,
+  "tp": 0,
+  "tn": 1,
+  "fp": 0,
+  "fn": 0,
+  "no_prediction": 0,
+  "accuracy": 1.0
+}

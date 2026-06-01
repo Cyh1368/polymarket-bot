@@ -1,0 +1,2 @@
+timestamp_utc,contract_id,close_time,polymarket_ticker,model,horizon,status,predicted_label,predicted_side,prob_yes,actual_label,actual_side,correct,polymarket_price,polymarket_target,polymarket_target_source,selected_ask,contracts,dry_test,order_status,order_id
+2026-06-01T20:45:03.124Z,KXBTC15M-26JUN011645-45,2026-06-01T20:45:00Z,btc-updown-15m-1780345800,polymarket_10m_horizon_prediction,10m,missing_history,,,,0,NO,,71503.9584985103,71570.50312754713,inferred_from_opening_rtds,,2,1,skip,

@@ -1,0 +1,357 @@
+{
+  "model_name": "polymarket_5m_horizon_prediction",
+  "platform": "polymarket",
+  "target": "polymarket_settle_yes",
+  "horizon": "5m",
+  "horizon_seconds": 300,
+  "feature_policy": "single-platform features plus generic time/window features only",
+  "excluded_polymarket_feature_note": "polymarket_distance_to_target_* is excluded because it references the Kalshi target; polymarket_distance_to_own_target_* is retained.",
+  "validity_policy": "candidate feature is dropped if any eligible model row has NaN or infinity",
+  "split_policy": "stratified contract split, then majority-class downsampled inside core/validation/test",
+  "calibration_method": "sigmoid",
+  "window_seconds": 60,
+  "min_window_rows": 10,
+  "max_asof_gap_seconds": 10.0,
+  "created_utc": "2026-06-01T20:09:15+00:00",
+  "features": [
+    "window_rows",
+    "window_actual_seconds",
+    "asof_gap_seconds",
+    "polymarket_distance_to_own_target_last",
+    "polymarket_distance_to_own_target_mean",
+    "polymarket_distance_to_own_target_std",
+    "polymarket_distance_to_own_target_min",
+    "polymarket_distance_to_own_target_max",
+    "polymarket_distance_to_own_target_range",
+    "polymarket_distance_to_own_target_change",
+    "elapsed_fraction_last",
+    "elapsed_fraction_mean",
+    "elapsed_fraction_std",
+    "elapsed_fraction_min",
+    "elapsed_fraction_max",
+    "elapsed_fraction_range",
+    "elapsed_fraction_change",
+    "time_to_close_seconds_last",
+    "time_to_close_seconds_mean",
+    "time_to_close_seconds_std",
+    "time_to_close_seconds_min",
+    "time_to_close_seconds_max",
+    "time_to_close_seconds_range",
+    "time_to_close_seconds_change",
+    "polymarket_bid_ask_spread_yes_last",
+    "polymarket_bid_ask_spread_yes_mean",
+    "polymarket_bid_ask_spread_yes_std",
+    "polymarket_bid_ask_spread_yes_min",
+    "polymarket_bid_ask_spread_yes_max",
+    "polymarket_bid_ask_spread_yes_range",
+    "polymarket_bid_ask_spread_yes_change",
+    "polymarket_yes_mid_last",
+    "polymarket_yes_mid_mean",
+    "polymarket_yes_mid_std",
+    "polymarket_yes_mid_min",
+    "polymarket_yes_mid_max",
+    "polymarket_yes_mid_range",
+    "polymarket_yes_mid_change",
+    "polymarket_error_flag_mean",
+    "polymarket_error_flag_std",
+    "polymarket_error_flag_max",
+    "polymarket_error_flag_range",
+    "polymarket_error_rate_window"
+  ],
+  "metrics": [
+    {
+      "split": "core_train",
+      "contracts": 684,
+      "yes": 342,
+      "no": 342,
+      "correct_contracts": 558,
+      "incorrect_contracts": 126,
+      "accuracy": 0.8157894736842105,
+      "auc_roc": 0.9014568585205704,
+      "brier": 0.12730919584930742,
+      "log_loss": 0.4044058203567145,
+      "precision": 0.8,
+      "recall": 0.8421052631578947,
+      "f1": 0.8205128205128205,
+      "mean_predicted_prob": 0.5433796912858592,
+      "predicted_yes_rate": 0.5263157894736842,
+      "selected_yes_contracts": 360,
+      "selected_no_contracts": 324,
+      "mean_yes_ask": 0.5046812865497076,
+      "mean_no_ask": 0.48422076023391813,
+      "mean_selected_yes_price": 0.7900583333333333,
+      "mean_selected_no_price": 0.8066265432098765,
+      "selected_price_sum": 545.768,
+      "correct_profit_sum": 99.67100000000002,
+      "incorrect_loss_sum": -87.43900000000001,
+      "mean_trade_price": 0.797906432748538,
+      "expected_profit_per_contract": 0.017883040935672515,
+      "total_profit": 12.232000000000001,
+      "model": "polymarket_5m_horizon_prediction",
+      "platform": "polymarket",
+      "horizon": "5m"
+    },
+    {
+      "split": "validation",
+      "contracts": 228,
+      "yes": 114,
+      "no": 114,
+      "correct_contracts": 203,
+      "incorrect_contracts": 25,
+      "accuracy": 0.8903508771929824,
+      "auc_roc": 0.9275161588180979,
+      "brier": 0.10048696987500821,
+      "log_loss": 0.34587431471668495,
+      "precision": 0.9009009009009009,
+      "recall": 0.8771929824561403,
+      "f1": 0.8888888888888888,
+      "mean_predicted_prob": 0.4999999996408414,
+      "predicted_yes_rate": 0.4868421052631579,
+      "selected_yes_contracts": 111,
+      "selected_no_contracts": 117,
+      "mean_yes_ask": 0.48239473684210527,
+      "mean_no_ask": 0.5136359649122807,
+      "mean_selected_yes_price": 0.7900990990990989,
+      "mean_selected_no_price": 0.8047521367521367,
+      "selected_price_sum": 181.857,
+      "correct_profit_sum": 37.513,
+      "incorrect_loss_sum": -16.37,
+      "mean_trade_price": 0.7976184210526316,
+      "expected_profit_per_contract": 0.09273245614035086,
+      "total_profit": 21.142999999999997,
+      "model": "polymarket_5m_horizon_prediction",
+      "platform": "polymarket",
+      "horizon": "5m"
+    },
+    {
+      "split": "test",
+      "contracts": 228,
+      "yes": 114,
+      "no": 114,
+      "correct_contracts": 189,
+      "incorrect_contracts": 39,
+      "accuracy": 0.8289473684210527,
+      "auc_roc": 0.8917359187442289,
+      "brier": 0.13359781205292257,
+      "log_loss": 0.41718978932491724,
+      "precision": 0.8205128205128205,
+      "recall": 0.8421052631578947,
+      "f1": 0.8311688311688312,
+      "mean_predicted_prob": 0.5287272142198932,
+      "predicted_yes_rate": 0.5131578947368421,
+      "selected_yes_contracts": 117,
+      "selected_no_contracts": 111,
+      "mean_yes_ask": 0.5002192982456141,
+      "mean_no_ask": 0.49539912280701753,
+      "mean_selected_yes_price": 0.7860683760683761,
+      "mean_selected_no_price": 0.7902702702702701,
+      "selected_price_sum": 179.68999999999997,
+      "correct_profit_sum": 35.900000000000006,
+      "incorrect_loss_sum": -26.59,
+      "mean_trade_price": 0.7881140350877192,
+      "expected_profit_per_contract": 0.04083333333333333,
+      "total_profit": 9.31,
+      "model": "polymarket_5m_horizon_prediction",
+      "platform": "polymarket",
+      "horizon": "5m"
+    }
+  ],
+  "split_summary": [
+    {
+      "split": "core_train",
+      "contracts": 684,
+      "yes": 342,
+      "no": 342,
+      "yes_rate": 0.5,
+      "model": "polymarket_5m_horizon_prediction",
+      "platform": "polymarket",
+      "horizon": "5m"
+    },
+    {
+      "split": "validation",
+      "contracts": 228,
+      "yes": 114,
+      "no": 114,
+      "yes_rate": 0.5,
+      "model": "polymarket_5m_horizon_prediction",
+      "platform": "polymarket",
+      "horizon": "5m"
+    },
+    {
+      "split": "test",
+      "contracts": 228,
+      "yes": 114,
+      "no": 114,
+      "yes_rate": 0.5,
+      "model": "polymarket_5m_horizon_prediction",
+      "platform": "polymarket",
+      "horizon": "5m"
+    }
+  ],
+  "feature_validity_summary": {
+    "used": 43,
+    "dropped_invalid_value": 7,
+    "dropped_constant": 3
+  },
+  "top_feature_importances": [
+    {
+      "feature": "polymarket_yes_mid_last",
+      "importance": 0.5610768625748064,
+      "importance_normalized": 0.09369906196673965,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_yes_mid_range",
+      "importance": 0.41787880592015436,
+      "importance_normalized": 0.06978518406696789,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_yes_mid_min",
+      "importance": 0.33143108502635227,
+      "importance_normalized": 0.05534853394430877,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_yes_mid_mean",
+      "importance": 0.327991841301168,
+      "importance_normalized": 0.05477418498711612,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_yes_mid_std",
+      "importance": 0.31345287198054217,
+      "importance_normalized": 0.05234619716909374,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_distance_to_own_target_mean",
+      "importance": 0.21972520284698896,
+      "importance_normalized": 0.036693805734093206,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_yes_mid_max",
+      "importance": 0.21368850836202247,
+      "importance_normalized": 0.035685686083560056,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_distance_to_own_target_last",
+      "importance": 0.21355507670138937,
+      "importance_normalized": 0.03566340318032179,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "time_to_close_seconds_mean",
+      "importance": 0.21165040777841193,
+      "importance_normalized": 0.035345326097939174,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "elapsed_fraction_mean",
+      "importance": 0.21165040777796007,
+      "importance_normalized": 0.035345326097863713,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_bid_ask_spread_yes_std",
+      "importance": 0.20022445073462353,
+      "importance_normalized": 0.03343720703531699,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_distance_to_own_target_min",
+      "importance": 0.19944695246098587,
+      "importance_normalized": 0.033307365896286065,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_yes_mid_change",
+      "importance": 0.16571812792426113,
+      "importance_normalized": 0.027674698732238646,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_bid_ask_spread_yes_mean",
+      "importance": 0.1652162290475534,
+      "importance_normalized": 0.027590882312267476,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_distance_to_own_target_max",
+      "importance": 0.16165105731744717,
+      "importance_normalized": 0.02699550355198799,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_distance_to_own_target_range",
+      "importance": 0.14941193240192077,
+      "importance_normalized": 0.024951586576663284,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "elapsed_fraction_std",
+      "importance": 0.1475320942462981,
+      "importance_normalized": 0.02463765619817143,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "time_to_close_seconds_std",
+      "importance": 0.14753209424598848,
+      "importance_normalized": 0.024637656198119726,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_distance_to_own_target_std",
+      "importance": 0.11900723462767074,
+      "importance_normalized": 0.019874043995855805,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "elapsed_fraction_min",
+      "importance": 0.11009147323334428,
+      "importance_normalized": 0.018385124143531155,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "time_to_close_seconds_max",
+      "importance": 0.11009147323307657,
+      "importance_normalized": 0.018385124143486448,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_distance_to_own_target_change",
+      "importance": 0.10841532046906466,
+      "importance_normalized": 0.01810520894438138,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_bid_ask_spread_yes_max",
+      "importance": 0.08563244508059732,
+      "importance_normalized": 0.014300500186639845,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_bid_ask_spread_yes_last",
+      "importance": 0.0666216193597506,
+      "importance_normalized": 0.01112571851932593,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "polymarket_bid_ask_spread_yes_range",
+      "importance": 0.06519097654934461,
+      "importance_normalized": 0.01088680314375806,
+      "importance_type": "abs_scaled_logit_coefficient"
+    }
+  ],
+  "artifacts": {
+    "model": "polymarket_5m_horizon_prediction_model.pkl",
+    "feature_list": "polymarket_5m_horizon_prediction_feature_list.json",
+    "metrics": "polymarket_5m_horizon_prediction_metrics.csv",
+    "feature_importance": "polymarket_5m_horizon_prediction_feature_importance.csv",
+    "calibration": "polymarket_5m_horizon_prediction_calibration.csv",
+    "calibration_plot": "plots/polymarket_5m_horizon_prediction_calibration.png",
+    "feature_importance_plot": "plots/polymarket_5m_horizon_prediction_feature_importance.png"
+  }
+}
