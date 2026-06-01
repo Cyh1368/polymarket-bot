@@ -14,7 +14,7 @@
     "polymarket_fee_rate": 0.05,
     "tradable_rule": "min(raw_combo_cost + kalshi_fee + polymarket_fee) < 1.0"
   },
-  "created_utc": "2026-05-29T20:34:42+00:00",
+  "created_utc": "2026-06-01T00:56:24+00:00",
   "feature_names": [
     "window_rows",
     "window_actual_seconds",
@@ -47,6 +47,41 @@
     "polymarket_distance_to_target_max",
     "polymarket_distance_to_target_range",
     "polymarket_distance_to_target_change",
+    "polymarket_distance_to_own_target_last",
+    "polymarket_distance_to_own_target_mean",
+    "polymarket_distance_to_own_target_std",
+    "polymarket_distance_to_own_target_min",
+    "polymarket_distance_to_own_target_max",
+    "polymarket_distance_to_own_target_range",
+    "polymarket_distance_to_own_target_change",
+    "target_spread_last",
+    "target_spread_mean",
+    "target_spread_std",
+    "target_spread_min",
+    "target_spread_max",
+    "target_spread_range",
+    "target_spread_change",
+    "target_spread_abs_last",
+    "target_spread_abs_mean",
+    "target_spread_abs_std",
+    "target_spread_abs_min",
+    "target_spread_abs_max",
+    "target_spread_abs_range",
+    "target_spread_abs_change",
+    "feeds_on_same_side_own_targets_last",
+    "feeds_on_same_side_own_targets_mean",
+    "feeds_on_same_side_own_targets_std",
+    "feeds_on_same_side_own_targets_min",
+    "feeds_on_same_side_own_targets_max",
+    "feeds_on_same_side_own_targets_range",
+    "feeds_on_same_side_own_targets_change",
+    "price_between_targets_last",
+    "price_between_targets_mean",
+    "price_between_targets_std",
+    "price_between_targets_min",
+    "price_between_targets_max",
+    "price_between_targets_range",
+    "price_between_targets_change",
     "spread_vs_distance_ratio_last",
     "spread_vs_distance_ratio_mean",
     "spread_vs_distance_ratio_std",
@@ -369,14 +404,14 @@
     "contracts_test": 232,
     "test_divergences": 18,
     "test_base_rate": 0.07758620689655173,
-    "auc_roc": 0.7416926272066459,
-    "brier": 0.06961150895635454,
-    "log_loss": 0.2619246684256764,
+    "auc_roc": 0.716251298026999,
+    "brier": 0.06996126110495872,
+    "log_loss": 0.2640709997668718,
     "classification_threshold": 0.09,
-    "precision": 0.21311475409836064,
-    "recall": 0.7222222222222222,
-    "f1": 0.3291139240506329,
-    "mean_predicted_prob": 0.07392508400225896,
+    "precision": 0.19672131147540983,
+    "recall": 0.6666666666666666,
+    "f1": 0.3037974683544304,
+    "mean_predicted_prob": 0.07376201085991776,
     "contracts_total": 1157,
     "contracts_core_train": 693,
     "contracts_calibration": 232,
@@ -385,176 +420,176 @@
     "recommended_trade_threshold": 0.07881355932203389,
     "tradable_test_contracts": 167,
     "nontradable_test_contracts": 65,
-    "trade_threshold_pass_contracts": 98,
-    "trade_threshold_fail_contracts": 69,
+    "trade_threshold_pass_contracts": 97,
+    "trade_threshold_fail_contracts": 70,
     "trade_threshold_pass_divergences": 3,
     "trade_threshold_fail_divergences": 12,
-    "trade_threshold_pass_diverge_rate": 0.030612244897959183,
-    "trade_threshold_fail_diverge_rate": 0.17391304347826086,
-    "trade_threshold_pass_mean_fee_adjusted_edge": 0.1506199925510204,
-    "trade_threshold_fail_mean_fee_adjusted_edge": 0.07484914188405797,
-    "trade_threshold_pass_mean_raw_entry_cost": 0.8409285714285715,
-    "trade_threshold_fail_mean_raw_entry_cost": 0.9058695652173914,
-    "trade_threshold_pass_mean_total_fee": 0.008451436020408164,
-    "trade_threshold_fail_mean_total_fee": 0.01928129289855073,
-    "trade_threshold_pass_mean_all_in_cost": 0.8493800074489797,
-    "trade_threshold_fail_mean_all_in_cost": 0.925150858115942,
-    "trade_threshold_pass_mean_predicted_diverge_prob": 0.057075072433004304,
-    "trade_threshold_fail_mean_predicted_diverge_prob": 0.09719017628566005,
-    "trade_threshold_pass_expected_return": 0.09354492011801602,
-    "trade_threshold_fail_expected_return": -0.022341034401602053,
-    "trade_threshold_pass_test_return": 0.12000774765306113,
-    "trade_threshold_fail_test_return": -0.09906390159420286
+    "trade_threshold_pass_diverge_rate": 0.030927835051546393,
+    "trade_threshold_fail_diverge_rate": 0.17142857142857143,
+    "trade_threshold_pass_mean_fee_adjusted_edge": 0.1511297936082474,
+    "trade_threshold_fail_mean_fee_adjusted_edge": 0.075225144,
+    "trade_threshold_pass_mean_raw_entry_cost": 0.8400000000000001,
+    "trade_threshold_fail_mean_raw_entry_cost": 0.9062285714285714,
+    "trade_threshold_pass_mean_total_fee": 0.008870206391752579,
+    "trade_threshold_fail_mean_total_fee": 0.018546284571428578,
+    "trade_threshold_pass_mean_all_in_cost": 0.8488702063917527,
+    "trade_threshold_fail_mean_all_in_cost": 0.9247748559999999,
+    "trade_threshold_pass_mean_predicted_diverge_prob": 0.05573905884424247,
+    "trade_threshold_fail_mean_predicted_diverge_prob": 0.0979427990888108,
+    "trade_threshold_pass_expected_return": 0.09539073476400484,
+    "trade_threshold_fail_expected_return": -0.02271765508881067,
+    "trade_threshold_pass_test_return": 0.1202019585567009,
+    "trade_threshold_fail_test_return": -0.0962034274285713
   },
   "top_feature_importances": [
     {
       "feature": "implied_prob_spread_roll10_std_change",
-      "importance": 1.188124302027988,
-      "importance_normalized": 0.020614703136579614,
+      "importance": 1.078730054104062,
+      "importance_normalized": 0.017322865723390892,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
       "feature": "kalshi_btc_price_roll10_mean_std",
-      "importance": 0.8236395742630297,
-      "importance_normalized": 0.014290664104748874,
+      "importance": 0.9309814015659585,
+      "importance_normalized": 0.014950233145859495,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
       "feature": "kalshi_btc_price_momentum_5_mean",
-      "importance": 0.7807192756566264,
-      "importance_normalized": 0.013545969957180201,
+      "importance": 0.824414129415866,
+      "importance_normalized": 0.013238914786886598,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
       "feature": "price_spread_mean",
-      "importance": 0.7015252164076872,
-      "importance_normalized": 0.012171903271723985,
-      "importance_type": "abs_scaled_logit_coefficient"
-    },
-    {
-      "feature": "price_spread_abs_range",
-      "importance": 0.6773945013392899,
-      "importance_normalized": 0.011753220204001767,
-      "importance_type": "abs_scaled_logit_coefficient"
-    },
-    {
-      "feature": "price_spread_roll10_std_last",
-      "importance": 0.673593302524111,
-      "importance_normalized": 0.011687267016271931,
-      "importance_type": "abs_scaled_logit_coefficient"
-    },
-    {
-      "feature": "price_spread_abs_max",
-      "importance": 0.6634834407932756,
-      "importance_normalized": 0.011511854563233722,
-      "importance_type": "abs_scaled_logit_coefficient"
-    },
-    {
-      "feature": "kalshi_order_book_imbalance_max",
-      "importance": 0.6624220871293064,
-      "importance_normalized": 0.01149343941031723,
+      "importance": 0.7516291558159347,
+      "importance_normalized": 0.012070091947886944,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
       "feature": "kalshi_order_book_imbalance_last",
-      "importance": 0.65078669275723,
-      "importance_normalized": 0.011291558007464035,
-      "importance_type": "abs_scaled_logit_coefficient"
-    },
-    {
-      "feature": "implied_prob_spread_roll10_std_last",
-      "importance": 0.6493496376157898,
-      "importance_normalized": 0.011266624197860847,
+      "importance": 0.6985506560725493,
+      "importance_normalized": 0.011217726965233921,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
       "feature": "polymarket_order_book_imbalance_max",
-      "importance": 0.6256236582509126,
-      "importance_normalized": 0.010854963548889427,
+      "importance": 0.6511203931619411,
+      "importance_normalized": 0.010456064608187612,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "price_spread_roll10_std_last",
+      "importance": 0.6369119544925979,
+      "importance_normalized": 0.010227897353301502,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "price_spread_abs_range",
+      "importance": 0.624369771183918,
+      "importance_normalized": 0.010026487782382607,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "kalshi_order_book_imbalance_max",
+      "importance": 0.6128075464688509,
+      "importance_normalized": 0.009840814948441655,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "price_spread_abs_max",
+      "importance": 0.6098642654098855,
+      "importance_normalized": 0.009793550053599168,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
       "feature": "k_no_p_yes_polymarket_fee_change",
-      "importance": 0.6068607345151024,
-      "importance_normalized": 0.010529415033361378,
-      "importance_type": "abs_scaled_logit_coefficient"
-    },
-    {
-      "feature": "kalshi_bid_ask_spread_yes_std",
-      "importance": 0.6068599149145117,
-      "importance_normalized": 0.010529400812776177,
+      "importance": 0.6074395933039696,
+      "importance_normalized": 0.009754613278681074,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
       "feature": "k_yes_p_no_polymarket_fee_change",
-      "importance": 0.6066358953825836,
-      "importance_normalized": 0.010525513933146147,
+      "importance": 0.6022932352461018,
+      "importance_normalized": 0.00967197011020555,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
-      "feature": "price_spread_abs_x_elapsed_fraction_range",
-      "importance": 0.5611153614540814,
-      "importance_normalized": 0.009735704069015813,
-      "importance_type": "abs_scaled_logit_coefficient"
-    },
-    {
-      "feature": "price_spread_abs_x_elapsed_fraction_max",
-      "importance": 0.5559897490522359,
-      "importance_normalized": 0.009646771473430602,
-      "importance_type": "abs_scaled_logit_coefficient"
-    },
-    {
-      "feature": "polymarket_bid_ask_spread_yes_range",
-      "importance": 0.549394399708206,
-      "importance_normalized": 0.009532338018465376,
-      "importance_type": "abs_scaled_logit_coefficient"
-    },
-    {
-      "feature": "kalshi_order_book_imbalance_min",
-      "importance": 0.5418569848398813,
-      "importance_normalized": 0.009401559134755535,
-      "importance_type": "abs_scaled_logit_coefficient"
-    },
-    {
-      "feature": "k_yes_p_no_kalshi_fee_std",
-      "importance": 0.526944097820785,
-      "importance_normalized": 0.00914281117523372,
+      "feature": "kalshi_bid_ask_spread_yes_std",
+      "importance": 0.5981320511799891,
+      "importance_normalized": 0.009605147430561704,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
       "feature": "kalshi_distance_to_target_change",
-      "importance": 0.5212609836017816,
-      "importance_normalized": 0.009044205572843416,
+      "importance": 0.5967099903902074,
+      "importance_normalized": 0.009582311163028259,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
-      "feature": "polymarket_yes_mid_range",
-      "importance": 0.5111631896927028,
-      "importance_normalized": 0.008869002504094876,
+      "feature": "price_between_targets_mean",
+      "importance": 0.5883752623873859,
+      "importance_normalized": 0.009448467321851721,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
-      "feature": "kalshi_last_price_std",
-      "importance": 0.4920747390125279,
-      "importance_normalized": 0.008537805891554097,
+      "feature": "kalshi_order_book_imbalance_min",
+      "importance": 0.5860114895063697,
+      "importance_normalized": 0.009410508501605033,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
-      "feature": "k_no_p_yes_polymarket_fee_min",
-      "importance": 0.47103194422403355,
-      "importance_normalized": 0.008172700180823035,
+      "feature": "implied_prob_spread_roll10_std_last",
+      "importance": 0.5730225331707286,
+      "importance_normalized": 0.009201924393251643,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
-      "feature": "kalshi_distance_to_target_range",
-      "importance": 0.46382287095253455,
-      "importance_normalized": 0.008047618230114562,
+      "feature": "polymarket_bid_ask_spread_yes_range",
+      "importance": 0.5576041450916512,
+      "importance_normalized": 0.008954327076991814,
       "importance_type": "abs_scaled_logit_coefficient"
     },
     {
-      "feature": "polymarket_bid_ask_spread_yes_max",
-      "importance": 0.4548472240253454,
-      "importance_normalized": 0.007891885116544768,
+      "feature": "kalshi_btc_price_lag10_change",
+      "importance": 0.5470300481836353,
+      "importance_normalized": 0.008784522165942202,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "price_spread_abs_x_elapsed_fraction_range",
+      "importance": 0.5367690232044083,
+      "importance_normalized": 0.008619744743432045,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "k_yes_p_no_kalshi_fee_std",
+      "importance": 0.5367636278034789,
+      "importance_normalized": 0.008619658100990343,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "price_spread_abs_x_elapsed_fraction_max",
+      "importance": 0.5303244817441626,
+      "importance_normalized": 0.008516254601537942,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "price_between_targets_last",
+      "importance": 0.4930511046487207,
+      "importance_normalized": 0.007917697340594727,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "feeds_on_same_side_own_targets_range",
+      "importance": 0.48738167318873016,
+      "importance_normalized": 0.007826654359511798,
+      "importance_type": "abs_scaled_logit_coefficient"
+    },
+    {
+      "feature": "price_spread_abs_std",
+      "importance": 0.4848149571839312,
+      "importance_normalized": 0.007785436562221317,
       "importance_type": "abs_scaled_logit_coefficient"
     }
   ],

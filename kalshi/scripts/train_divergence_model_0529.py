@@ -291,6 +291,19 @@ def contract_label(df: pd.DataFrame, path: Path) -> dict[str, Any]:
 
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy().sort_values(["contract_id", "timestamp_utc"]).reset_index(drop=True)
+    for prefix in ("kalshi", "polymarket"):
+        bid_col = f"{prefix}_yes_bid"
+        ask_col = f"{prefix}_yes_ask"
+        mid_col = f"{prefix}_yes_mid"
+        if {bid_col, ask_col, mid_col}.issubset(out.columns):
+            bid = pd.to_numeric(out[bid_col], errors="coerce")
+            ask = pd.to_numeric(out[ask_col], errors="coerce")
+            mid = pd.to_numeric(out[mid_col], errors="coerce")
+            out[mid_col] = np.where(
+                bid.notna() & ask.notna(),
+                (bid + ask) / 2.0,
+                np.where(bid.notna(), bid, np.where(ask.notna(), ask, mid)),
+            )
     out["time_to_close_seconds"] = (out["kalshi_close_time"] - out["timestamp_utc"]).dt.total_seconds()
     out["contract_start_time"] = out["kalshi_close_time"] - pd.to_timedelta(CONTRACT_SECONDS, unit="s")
     out["elapsed_fraction"] = (

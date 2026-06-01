@@ -1,6 +1,6 @@
 # Contract-Level Horizon Divergence Models
 
-Generated: 2026-05-29T20:34:44+00:00
+Generated: 2026-06-01T00:56:25+00:00
 
 ## Setup
 
@@ -60,11 +60,11 @@ Generated: 2026-05-29T20:34:44+00:00
 
 | horizon | contracts_total | contracts_test | test_divergences | test_base_rate | auc_roc | brier | log_loss | classification_threshold | precision | recall | f1 | recommended_trade_threshold |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 10m | 1158 | 232 | 18 | 0.0776 | 0.5922 | 0.0713 | 0.2711 | 0.0800 | 0.0989 | 0.5000 | 0.1651 | 0.0739 |
-| 5m | 1157 | 232 | 18 | 0.0776 | 0.7072 | 0.0677 | 0.2527 | 0.1400 | 0.5000 | 0.3333 | 0.4000 | 0.0493 |
-| 3m | 1157 | 232 | 18 | 0.0776 | 0.7417 | 0.0696 | 0.2619 | 0.0900 | 0.2131 | 0.7222 | 0.3291 | 0.0788 |
-| 2m | 1158 | 232 | 18 | 0.0776 | 0.8126 | 0.0641 | 0.2418 | 0.2000 | 0.6667 | 0.3333 | 0.4444 | 0.0788 |
-| 1m | 1159 | 232 | 18 | 0.0776 | 0.8959 | 0.0538 | 0.2247 | 0.1500 | 0.4828 | 0.7778 | 0.5957 | 0.1378 |
+| 10m | 1158 | 232 | 18 | 0.0776 | 0.5776 | 0.0711 | 0.2699 | 0.0900 | 0.1765 | 0.3333 | 0.2308 | 0.0690 |
+| 5m | 1157 | 232 | 18 | 0.0776 | 0.7009 | 0.0690 | 0.2586 | 0.1200 | 0.2917 | 0.3889 | 0.3333 | 0.0788 |
+| 3m | 1157 | 232 | 18 | 0.0776 | 0.7163 | 0.0700 | 0.2641 | 0.0900 | 0.1967 | 0.6667 | 0.3038 | 0.0788 |
+| 2m | 1158 | 232 | 18 | 0.0776 | 0.7985 | 0.0648 | 0.2446 | 0.1900 | 0.7500 | 0.3333 | 0.4615 | 0.0788 |
+| 1m | 1159 | 232 | 18 | 0.0776 | 0.8863 | 0.0559 | 0.2291 | 0.2300 | 0.5556 | 0.5556 | 0.5556 | 0.1329 |
 
 Combined horizon performance plot: `plots/horizon_auc_brier_summary.png`
 
@@ -82,11 +82,11 @@ assuming a divergence pays 0 and non-divergence pays 1.00.
 
 | horizon | recommended_trade_threshold | tradable_test_contracts | trade_threshold_pass_contracts | trade_threshold_fail_contracts | trade_threshold_pass_divergences | trade_threshold_fail_divergences | trade_threshold_pass_diverge_rate | trade_threshold_fail_diverge_rate | trade_threshold_pass_mean_raw_entry_cost | trade_threshold_pass_mean_total_fee | trade_threshold_pass_mean_all_in_cost | trade_threshold_fail_mean_all_in_cost | trade_threshold_pass_mean_predicted_diverge_prob | trade_threshold_pass_expected_return | trade_threshold_pass_test_return | trade_threshold_pass_mean_fee_adjusted_edge | trade_threshold_fail_mean_fee_adjusted_edge |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 10m | 0.0739 | 122 | 26 | 96 | 1 | 11 | 0.0385 | 0.1146 | 0.9513 | 0.0201 | 0.9714 | 0.9649 | 0.0688 | -0.0402 | -0.0099 | 0.0286 | 0.0351 |
-| 5m | 0.0493 | 140 | 27 | 113 | 1 | 13 | 0.0370 | 0.1150 | 0.8767 | 0.0102 | 0.8869 | 0.9399 | 0.0308 | 0.0823 | 0.0761 | 0.1131 | 0.0601 |
-| 3m | 0.0788 | 167 | 98 | 69 | 3 | 12 | 0.0306 | 0.1739 | 0.8409 | 0.0085 | 0.8494 | 0.9252 | 0.0571 | 0.0935 | 0.1200 | 0.1506 | 0.0748 |
-| 2m | 0.0788 | 187 | 117 | 70 | 1 | 13 | 0.0085 | 0.1857 | 0.7910 | 0.0076 | 0.7985 | 0.8913 | 0.0372 | 0.1643 | 0.1929 | 0.2015 | 0.1087 |
-| 1m | 0.1378 | 211 | 178 | 33 | 3 | 14 | 0.0169 | 0.4242 | 0.7727 | 0.0082 | 0.7808 | 0.7326 | 0.0423 | 0.1769 | 0.2023 | 0.2192 | 0.2674 |
+| 10m | 0.0690 | 122 | 26 | 96 | 1 | 11 | 0.0385 | 0.1146 | 0.9513 | 0.0202 | 0.9716 | 0.9648 | 0.0609 | -0.0324 | -0.0100 | 0.0284 | 0.0352 |
+| 5m | 0.0788 | 140 | 76 | 64 | 4 | 10 | 0.0526 | 0.1562 | 0.9018 | 0.0129 | 0.9147 | 0.9474 | 0.0521 | 0.0332 | 0.0326 | 0.0853 | 0.0526 |
+| 3m | 0.0788 | 167 | 97 | 70 | 3 | 12 | 0.0309 | 0.1714 | 0.8400 | 0.0089 | 0.8489 | 0.9248 | 0.0557 | 0.0954 | 0.1202 | 0.1511 | 0.0752 |
+| 2m | 0.0788 | 187 | 112 | 75 | 1 | 13 | 0.0089 | 0.1733 | 0.7820 | 0.0078 | 0.7898 | 0.8981 | 0.0385 | 0.1716 | 0.2012 | 0.2102 | 0.1019 |
+| 1m | 0.1329 | 211 | 174 | 37 | 3 | 14 | 0.0172 | 0.3784 | 0.7672 | 0.0081 | 0.7754 | 0.7635 | 0.0416 | 0.1831 | 0.2074 | 0.2246 | 0.2365 |
 
 ## 10m Model Card
 
@@ -95,32 +95,32 @@ assuming a divergence pays 0 and non-divergence pays 1.00.
 - Metadata JSON: `divergence_horizon_10m_metadata.json`
 - Calibration plot: `plots/divergence_horizon_10m_calibration.png`
 - Feature-importance plot: `plots/divergence_horizon_10m_feature_importance.png`
-- Test AUC: `0.5922`; Brier: `0.0713`; F1: `0.1651`.
-- Recommended trading filter threshold: `diverge_prob < 0.0739`.
+- Test AUC: `0.5776`; Brier: `0.0711`; F1: `0.2308`.
+- Recommended trading filter threshold: `diverge_prob < 0.0690`.
 - Tradable final-test contracts: `122`; pass threshold: `26`; fail threshold: `96`.
 - Pass/fail observed divergence rates: `0.0385` / `0.1146`.
-- Filtered fee-adjusted expected return per executed trade: `-0.0402`.
-- Filtered fee-adjusted test return per executed trade: `-0.0099`.
+- Filtered fee-adjusted expected return per executed trade: `-0.0324`.
+- Filtered fee-adjusted test return per executed trade: `-0.0100`.
 
 Top features:
 
 | feature | importance_normalized | importance_type |
 | --- | --- | --- |
-| k_yes_p_no_polymarket_fee_std | 0.0150 | abs_scaled_logit_coefficient |
-| k_no_p_yes_polymarket_fee_std | 0.0146 | abs_scaled_logit_coefficient |
-| implied_prob_spread_roll10_std_change | 0.0142 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_roll10_std_last | 0.0126 | abs_scaled_logit_coefficient |
-| window_rows | 0.0124 | abs_scaled_logit_coefficient |
-| price_spread_roll10_std_range | 0.0123 | abs_scaled_logit_coefficient |
-| kalshi_order_book_imbalance_last | 0.0122 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_momentum_5_min | 0.0119 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_momentum_10_last | 0.0118 | abs_scaled_logit_coefficient |
-| implied_prob_spread_roll10_std_last | 0.0107 | abs_scaled_logit_coefficient |
-| best_raw_entry_cost_std | 0.0104 | abs_scaled_logit_coefficient |
-| kalshi_last_price_std | 0.0100 | abs_scaled_logit_coefficient |
-| spread_vs_distance_ratio_min | 0.0098 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_momentum_5_mean | 0.0097 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_roll10_std_std | 0.0095 | abs_scaled_logit_coefficient |
+| implied_prob_spread_roll10_std_change | 0.0162 | abs_scaled_logit_coefficient |
+| price_between_targets_mean | 0.0153 | abs_scaled_logit_coefficient |
+| price_between_targets_last | 0.0147 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_momentum_10_last | 0.0126 | abs_scaled_logit_coefficient |
+| k_no_p_yes_polymarket_fee_std | 0.0116 | abs_scaled_logit_coefficient |
+| k_yes_p_no_polymarket_fee_std | 0.0114 | abs_scaled_logit_coefficient |
+| spread_vs_distance_ratio_min | 0.0112 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_roll10_std_last | 0.0108 | abs_scaled_logit_coefficient |
+| price_between_targets_min | 0.0107 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_momentum_5_min | 0.0104 | abs_scaled_logit_coefficient |
+| implied_prob_spread_roll10_std_last | 0.0103 | abs_scaled_logit_coefficient |
+| kalshi_order_book_imbalance_last | 0.0101 | abs_scaled_logit_coefficient |
+| price_between_targets_change | 0.0101 | abs_scaled_logit_coefficient |
+| window_rows | 0.0099 | abs_scaled_logit_coefficient |
+| kalshi_last_price_std | 0.0096 | abs_scaled_logit_coefficient |
 
 ## 5m Model Card
 
@@ -129,32 +129,32 @@ Top features:
 - Metadata JSON: `divergence_horizon_5m_metadata.json`
 - Calibration plot: `plots/divergence_horizon_5m_calibration.png`
 - Feature-importance plot: `plots/divergence_horizon_5m_feature_importance.png`
-- Test AUC: `0.7072`; Brier: `0.0677`; F1: `0.4000`.
-- Recommended trading filter threshold: `diverge_prob < 0.0493`.
-- Tradable final-test contracts: `140`; pass threshold: `27`; fail threshold: `113`.
-- Pass/fail observed divergence rates: `0.0370` / `0.1150`.
-- Filtered fee-adjusted expected return per executed trade: `0.0823`.
-- Filtered fee-adjusted test return per executed trade: `0.0761`.
+- Test AUC: `0.7009`; Brier: `0.0690`; F1: `0.3333`.
+- Recommended trading filter threshold: `diverge_prob < 0.0788`.
+- Tradable final-test contracts: `140`; pass threshold: `76`; fail threshold: `64`.
+- Pass/fail observed divergence rates: `0.0526` / `0.1562`.
+- Filtered fee-adjusted expected return per executed trade: `0.0332`.
+- Filtered fee-adjusted test return per executed trade: `0.0326`.
 
 Top features:
 
 | feature | importance_normalized | importance_type |
 | --- | --- | --- |
-| implied_prob_spread_roll10_std_last | 0.0199 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_roll10_std_range | 0.0169 | abs_scaled_logit_coefficient |
-| price_spread_roll10_std_change | 0.0165 | abs_scaled_logit_coefficient |
-| price_spread_std | 0.0147 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_lag5_change | 0.0145 | abs_scaled_logit_coefficient |
-| window_rows | 0.0138 | abs_scaled_logit_coefficient |
+| implied_prob_spread_roll10_std_last | 0.0186 | abs_scaled_logit_coefficient |
+| price_spread_roll10_std_change | 0.0159 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_lag5_change | 0.0155 | abs_scaled_logit_coefficient |
+| window_rows | 0.0142 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_roll10_std_range | 0.0138 | abs_scaled_logit_coefficient |
 | kalshi_last_price_change | 0.0131 | abs_scaled_logit_coefficient |
-| feeds_on_same_side_x_elapsed_fraction_std | 0.0129 | abs_scaled_logit_coefficient |
-| spread_vs_distance_ratio_x_elapsed_fraction_mean | 0.0123 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_momentum_10_min | 0.0121 | abs_scaled_logit_coefficient |
-| spread_vs_distance_ratio_mean | 0.0120 | abs_scaled_logit_coefficient |
-| kalshi_distance_to_target_change | 0.0116 | abs_scaled_logit_coefficient |
-| price_spread_abs_x_elapsed_fraction_std | 0.0112 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_momentum_5_change | 0.0111 | abs_scaled_logit_coefficient |
-| price_spread_roll10_std_min | 0.0107 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_momentum_5_change | 0.0128 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_momentum_10_min | 0.0119 | abs_scaled_logit_coefficient |
+| feeds_on_same_side_x_elapsed_fraction_std | 0.0116 | abs_scaled_logit_coefficient |
+| spread_vs_distance_ratio_x_elapsed_fraction_mean | 0.0112 | abs_scaled_logit_coefficient |
+| spread_vs_distance_ratio_mean | 0.0111 | abs_scaled_logit_coefficient |
+| price_spread_std | 0.0110 | abs_scaled_logit_coefficient |
+| kalshi_distance_to_target_change | 0.0101 | abs_scaled_logit_coefficient |
+| kalshi_bid_ask_spread_yes_change | 0.0099 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_momentum_10_mean | 0.0096 | abs_scaled_logit_coefficient |
 
 ## 3m Model Card
 
@@ -163,32 +163,32 @@ Top features:
 - Metadata JSON: `divergence_horizon_3m_metadata.json`
 - Calibration plot: `plots/divergence_horizon_3m_calibration.png`
 - Feature-importance plot: `plots/divergence_horizon_3m_feature_importance.png`
-- Test AUC: `0.7417`; Brier: `0.0696`; F1: `0.3291`.
+- Test AUC: `0.7163`; Brier: `0.0700`; F1: `0.3038`.
 - Recommended trading filter threshold: `diverge_prob < 0.0788`.
-- Tradable final-test contracts: `167`; pass threshold: `98`; fail threshold: `69`.
-- Pass/fail observed divergence rates: `0.0306` / `0.1739`.
-- Filtered fee-adjusted expected return per executed trade: `0.0935`.
-- Filtered fee-adjusted test return per executed trade: `0.1200`.
+- Tradable final-test contracts: `167`; pass threshold: `97`; fail threshold: `70`.
+- Pass/fail observed divergence rates: `0.0309` / `0.1714`.
+- Filtered fee-adjusted expected return per executed trade: `0.0954`.
+- Filtered fee-adjusted test return per executed trade: `0.1202`.
 
 Top features:
 
 | feature | importance_normalized | importance_type |
 | --- | --- | --- |
-| implied_prob_spread_roll10_std_change | 0.0206 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_roll10_mean_std | 0.0143 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_momentum_5_mean | 0.0135 | abs_scaled_logit_coefficient |
-| price_spread_mean | 0.0122 | abs_scaled_logit_coefficient |
-| price_spread_abs_range | 0.0118 | abs_scaled_logit_coefficient |
-| price_spread_roll10_std_last | 0.0117 | abs_scaled_logit_coefficient |
-| price_spread_abs_max | 0.0115 | abs_scaled_logit_coefficient |
-| kalshi_order_book_imbalance_max | 0.0115 | abs_scaled_logit_coefficient |
-| kalshi_order_book_imbalance_last | 0.0113 | abs_scaled_logit_coefficient |
-| implied_prob_spread_roll10_std_last | 0.0113 | abs_scaled_logit_coefficient |
-| polymarket_order_book_imbalance_max | 0.0109 | abs_scaled_logit_coefficient |
-| k_no_p_yes_polymarket_fee_change | 0.0105 | abs_scaled_logit_coefficient |
-| kalshi_bid_ask_spread_yes_std | 0.0105 | abs_scaled_logit_coefficient |
-| k_yes_p_no_polymarket_fee_change | 0.0105 | abs_scaled_logit_coefficient |
-| price_spread_abs_x_elapsed_fraction_range | 0.0097 | abs_scaled_logit_coefficient |
+| implied_prob_spread_roll10_std_change | 0.0173 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_roll10_mean_std | 0.0150 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_momentum_5_mean | 0.0132 | abs_scaled_logit_coefficient |
+| price_spread_mean | 0.0121 | abs_scaled_logit_coefficient |
+| kalshi_order_book_imbalance_last | 0.0112 | abs_scaled_logit_coefficient |
+| polymarket_order_book_imbalance_max | 0.0105 | abs_scaled_logit_coefficient |
+| price_spread_roll10_std_last | 0.0102 | abs_scaled_logit_coefficient |
+| price_spread_abs_range | 0.0100 | abs_scaled_logit_coefficient |
+| kalshi_order_book_imbalance_max | 0.0098 | abs_scaled_logit_coefficient |
+| price_spread_abs_max | 0.0098 | abs_scaled_logit_coefficient |
+| k_no_p_yes_polymarket_fee_change | 0.0098 | abs_scaled_logit_coefficient |
+| k_yes_p_no_polymarket_fee_change | 0.0097 | abs_scaled_logit_coefficient |
+| kalshi_bid_ask_spread_yes_std | 0.0096 | abs_scaled_logit_coefficient |
+| kalshi_distance_to_target_change | 0.0096 | abs_scaled_logit_coefficient |
+| price_between_targets_mean | 0.0094 | abs_scaled_logit_coefficient |
 
 ## 2m Model Card
 
@@ -197,31 +197,31 @@ Top features:
 - Metadata JSON: `divergence_horizon_2m_metadata.json`
 - Calibration plot: `plots/divergence_horizon_2m_calibration.png`
 - Feature-importance plot: `plots/divergence_horizon_2m_feature_importance.png`
-- Test AUC: `0.8126`; Brier: `0.0641`; F1: `0.4444`.
+- Test AUC: `0.7985`; Brier: `0.0648`; F1: `0.4615`.
 - Recommended trading filter threshold: `diverge_prob < 0.0788`.
-- Tradable final-test contracts: `187`; pass threshold: `117`; fail threshold: `70`.
-- Pass/fail observed divergence rates: `0.0085` / `0.1857`.
-- Filtered fee-adjusted expected return per executed trade: `0.1643`.
-- Filtered fee-adjusted test return per executed trade: `0.1929`.
+- Tradable final-test contracts: `187`; pass threshold: `112`; fail threshold: `75`.
+- Pass/fail observed divergence rates: `0.0089` / `0.1733`.
+- Filtered fee-adjusted expected return per executed trade: `0.1716`.
+- Filtered fee-adjusted test return per executed trade: `0.2012`.
 
 Top features:
 
 | feature | importance_normalized | importance_type |
 | --- | --- | --- |
-| kalshi_distance_to_target_change | 0.0193 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_momentum_10_std | 0.0134 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_momentum_5_max | 0.0122 | abs_scaled_logit_coefficient |
-| price_spread_roll10_std_mean | 0.0116 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_lag5_change | 0.0116 | abs_scaled_logit_coefficient |
-| polymarket_order_book_imbalance_last | 0.0113 | abs_scaled_logit_coefficient |
-| polymarket_order_book_imbalance_std | 0.0111 | abs_scaled_logit_coefficient |
-| implied_prob_spread_roll10_std_min | 0.0108 | abs_scaled_logit_coefficient |
-| feeds_on_same_side_x_elapsed_fraction_last | 0.0100 | abs_scaled_logit_coefficient |
-| feeds_on_same_side_last | 0.0099 | abs_scaled_logit_coefficient |
-| kalshi_bid_ask_spread_yes_std | 0.0097 | abs_scaled_logit_coefficient |
+| kalshi_distance_to_target_change | 0.0194 | abs_scaled_logit_coefficient |
+| polymarket_order_book_imbalance_last | 0.0117 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_momentum_5_max | 0.0114 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_lag5_change | 0.0112 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_momentum_10_std | 0.0112 | abs_scaled_logit_coefficient |
+| polymarket_order_book_imbalance_std | 0.0104 | abs_scaled_logit_coefficient |
+| price_spread_roll10_std_mean | 0.0101 | abs_scaled_logit_coefficient |
+| implied_prob_spread_roll10_std_min | 0.0100 | abs_scaled_logit_coefficient |
+| kalshi_order_book_imbalance_change | 0.0092 | abs_scaled_logit_coefficient |
 | implied_prob_spread_roll10_std_mean | 0.0091 | abs_scaled_logit_coefficient |
-| kalshi_order_book_imbalance_change | 0.0087 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_roll10_std_mean | 0.0085 | abs_scaled_logit_coefficient |
+| kalshi_bid_ask_spread_yes_std | 0.0084 | abs_scaled_logit_coefficient |
+| feeds_on_same_side_x_elapsed_fraction_last | 0.0083 | abs_scaled_logit_coefficient |
+| feeds_on_same_side_last | 0.0082 | abs_scaled_logit_coefficient |
+| kalshi_order_book_imbalance_last | 0.0080 | abs_scaled_logit_coefficient |
 | kalshi_btc_price_lag10_change | 0.0078 | abs_scaled_logit_coefficient |
 
 ## 1m Model Card
@@ -231,32 +231,32 @@ Top features:
 - Metadata JSON: `divergence_horizon_1m_metadata.json`
 - Calibration plot: `plots/divergence_horizon_1m_calibration.png`
 - Feature-importance plot: `plots/divergence_horizon_1m_feature_importance.png`
-- Test AUC: `0.8959`; Brier: `0.0538`; F1: `0.5957`.
-- Recommended trading filter threshold: `diverge_prob < 0.1378`.
-- Tradable final-test contracts: `211`; pass threshold: `178`; fail threshold: `33`.
-- Pass/fail observed divergence rates: `0.0169` / `0.4242`.
-- Filtered fee-adjusted expected return per executed trade: `0.1769`.
-- Filtered fee-adjusted test return per executed trade: `0.2023`.
+- Test AUC: `0.8863`; Brier: `0.0559`; F1: `0.5556`.
+- Recommended trading filter threshold: `diverge_prob < 0.1329`.
+- Tradable final-test contracts: `211`; pass threshold: `174`; fail threshold: `37`.
+- Pass/fail observed divergence rates: `0.0172` / `0.3784`.
+- Filtered fee-adjusted expected return per executed trade: `0.1831`.
+- Filtered fee-adjusted test return per executed trade: `0.2074`.
 
 Top features:
 
 | feature | importance_normalized | importance_type |
 | --- | --- | --- |
-| polymarket_order_book_imbalance_std | 0.0275 | abs_scaled_logit_coefficient |
-| kalshi_bid_ask_spread_yes_mean | 0.0162 | abs_scaled_logit_coefficient |
-| kalshi_bid_ask_spread_yes_last | 0.0153 | abs_scaled_logit_coefficient |
-| kalshi_yes_mid_std | 0.0127 | abs_scaled_logit_coefficient |
-| polymarket_order_book_imbalance_change | 0.0127 | abs_scaled_logit_coefficient |
-| kalshi_bid_ask_spread_yes_std | 0.0113 | abs_scaled_logit_coefficient |
-| price_spread_roll10_std_std | 0.0112 | abs_scaled_logit_coefficient |
-| implied_prob_spread_roll10_std_range | 0.0105 | abs_scaled_logit_coefficient |
-| k_yes_p_no_kalshi_fee_last | 0.0101 | abs_scaled_logit_coefficient |
-| kalshi_order_book_imbalance_mean | 0.0100 | abs_scaled_logit_coefficient |
-| k_no_p_yes_kalshi_fee_last | 0.0096 | abs_scaled_logit_coefficient |
-| feeds_on_same_side_x_elapsed_fraction_last | 0.0095 | abs_scaled_logit_coefficient |
-| feeds_on_same_side_last | 0.0095 | abs_scaled_logit_coefficient |
-| kalshi_btc_price_momentum_5_max | 0.0094 | abs_scaled_logit_coefficient |
-| implied_prob_spread_roll10_std_max | 0.0094 | abs_scaled_logit_coefficient |
+| polymarket_order_book_imbalance_std | 0.0229 | abs_scaled_logit_coefficient |
+| kalshi_bid_ask_spread_yes_mean | 0.0168 | abs_scaled_logit_coefficient |
+| kalshi_bid_ask_spread_yes_last | 0.0151 | abs_scaled_logit_coefficient |
+| kalshi_yes_mid_std | 0.0124 | abs_scaled_logit_coefficient |
+| price_between_targets_mean | 0.0115 | abs_scaled_logit_coefficient |
+| implied_prob_spread_roll10_std_range | 0.0111 | abs_scaled_logit_coefficient |
+| polymarket_order_book_imbalance_change | 0.0104 | abs_scaled_logit_coefficient |
+| implied_prob_spread_roll10_std_max | 0.0100 | abs_scaled_logit_coefficient |
+| feeds_on_same_side_own_targets_change | 0.0098 | abs_scaled_logit_coefficient |
+| k_yes_p_no_kalshi_fee_last | 0.0098 | abs_scaled_logit_coefficient |
+| price_spread_roll10_std_std | 0.0095 | abs_scaled_logit_coefficient |
+| kalshi_bid_ask_spread_yes_std | 0.0091 | abs_scaled_logit_coefficient |
+| k_no_p_yes_kalshi_fee_last | 0.0089 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_roll10_mean_range | 0.0087 | abs_scaled_logit_coefficient |
+| kalshi_btc_price_lag10_range | 0.0085 | abs_scaled_logit_coefficient |
 
 ## Interpretation
 

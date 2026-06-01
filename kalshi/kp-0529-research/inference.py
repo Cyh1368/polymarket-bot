@@ -173,12 +173,20 @@ def _compute_features(snapshot: dict[str, Any]) -> dict[str, float]:
     kalshi_yes_bid = _to_float(snapshot.get("kalshi_yes_bid"))
     kalshi_yes_ask = _to_float(snapshot.get("kalshi_yes_ask"))
     kalshi_yes_mid = _to_float(snapshot.get("kalshi_yes_mid"))
+    if math.isfinite(kalshi_yes_bid) and math.isfinite(kalshi_yes_ask):
+        kalshi_yes_mid = (kalshi_yes_bid + kalshi_yes_ask) / 2.0
+    elif not math.isfinite(kalshi_yes_mid):
+        kalshi_yes_mid = kalshi_yes_bid if math.isfinite(kalshi_yes_bid) else kalshi_yes_ask
     kalshi_last_price = _to_float(snapshot.get("kalshi_last_price"))
     kalshi_yes_qty = _to_float(snapshot.get("kalshi_best_yes_bid_qty"))
     kalshi_no_qty = _to_float(snapshot.get("kalshi_best_no_bid_qty"))
     poly_yes_bid = _to_float(snapshot.get("polymarket_yes_bid"))
     poly_yes_ask = _to_float(snapshot.get("polymarket_yes_ask"))
     poly_yes_mid = _to_float(snapshot.get("polymarket_yes_mid"))
+    if math.isfinite(poly_yes_bid) and math.isfinite(poly_yes_ask):
+        poly_yes_mid = (poly_yes_bid + poly_yes_ask) / 2.0
+    elif not math.isfinite(poly_yes_mid):
+        poly_yes_mid = poly_yes_bid if math.isfinite(poly_yes_bid) else poly_yes_ask
     poly_yes_qty = _to_float(snapshot.get("polymarket_best_yes_bid_qty"))
     poly_no_qty = _to_float(snapshot.get("polymarket_best_no_bid_qty"))
     k_plus_np = _to_float(snapshot.get("k_plus_np"))
