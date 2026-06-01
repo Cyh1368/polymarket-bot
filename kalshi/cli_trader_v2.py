@@ -101,6 +101,11 @@ FEATURE_NAMES = [
     "price_spread_abs",
     "kalshi_distance_to_target",
     "polymarket_distance_to_target",
+    "polymarket_distance_to_own_target",
+    "target_spread",
+    "target_spread_abs",
+    "feeds_on_same_side_own_targets",
+    "price_between_targets",
     "spread_vs_distance_ratio",
     "feeds_on_same_side",
     "elapsed_fraction",
@@ -2243,7 +2248,21 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out["price_spread"] = out["kalshi_btc_price"] - out["polymarket_btc_price"]
     out["price_spread_abs"] = out["price_spread"].abs()
     out["kalshi_distance_to_target"] = out["kalshi_btc_sma_for_distance"] - out["kalshi_btc_target"]
+    group = out.groupby("contract_id", sort=False, group_keys=False)
+    observed_poly_target = group["polymarket_btc_target"].ffill()
+    first_poly_price = group["polymarket_btc_price"].transform(
+        lambda series: series.dropna().iloc[0] if series.notna().any() else np.nan
+    )
+    out["polymarket_btc_target_for_features"] = observed_poly_target.where(
+        observed_poly_target.notna(),
+        first_poly_price,
+    )
     out["polymarket_distance_to_target"] = out["polymarket_btc_price"] - out["kalshi_btc_target"]
+    out["polymarket_distance_to_own_target"] = (
+        out["polymarket_btc_price"] - out["polymarket_btc_target_for_features"]
+    )
+    out["target_spread"] = out["kalshi_btc_target"] - out["polymarket_btc_target_for_features"]
+    out["target_spread_abs"] = out["target_spread"].abs()
     out["spread_vs_distance_ratio"] = out["price_spread_abs"] / (out["kalshi_distance_to_target"].abs() + 1e-6)
     out["spread_vs_distance_ratio"] = out["spread_vs_distance_ratio"].clip(0, 1_000_000)
 
@@ -2251,6 +2270,20 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     same_negative = (out["kalshi_distance_to_target"] < 0) & (out["polymarket_distance_to_target"] < 0)
     known_sides = out["kalshi_distance_to_target"].notna() & out["polymarket_distance_to_target"].notna()
     out["feeds_on_same_side"] = np.where(known_sides, (same_positive | same_negative).astype(float), np.nan)
+    same_positive_own = (out["kalshi_distance_to_target"] > 0) & (out["polymarket_distance_to_own_target"] > 0)
+    same_negative_own = (out["kalshi_distance_to_target"] < 0) & (out["polymarket_distance_to_own_target"] < 0)
+    known_own_sides = out["kalshi_distance_to_target"].notna() & out["polymarket_distance_to_own_target"].notna()
+    out["feeds_on_same_side_own_targets"] = np.where(
+        known_own_sides,
+        (same_positive_own | same_negative_own).astype(float),
+        np.nan,
+    )
+    lower_target = np.minimum(out["kalshi_btc_target"], out["polymarket_btc_target_for_features"])
+    upper_target = np.maximum(out["kalshi_btc_target"], out["polymarket_btc_target_for_features"])
+    kalshi_between = out["kalshi_btc_price"].between(lower_target, upper_target, inclusive="both")
+    poly_between = out["polymarket_btc_price"].between(lower_target, upper_target, inclusive="both")
+    known_targets = out["kalshi_btc_target"].notna() & out["polymarket_btc_target_for_features"].notna()
+    out["price_between_targets"] = np.where(known_targets, (kalshi_between | poly_between).astype(float), np.nan)
 
     out["kalshi_bid_ask_spread_yes"] = out["kalshi_yes_ask"] - out["kalshi_yes_bid"]
     out["kalshi_order_book_imbalance"] = (
@@ -2268,7 +2301,6 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out["polymarket_error_flag"] = out["polymarket_error"].notna() & (out["polymarket_error"].astype(str) != "")
     out["polymarket_error_flag"] = out["polymarket_error_flag"].astype(float)
 
-    group = out.groupby("contract_id", sort=False, group_keys=False)
     out["price_spread_roll10_std"] = group["price_spread"].rolling(10, min_periods=2).std().reset_index(level=0, drop=True)
     out["kalshi_btc_price_roll10_mean"] = group["kalshi_btc_price"].rolling(10, min_periods=1).mean().reset_index(level=0, drop=True)
     out["kalshi_btc_price_roll10_std"] = group["kalshi_btc_price"].rolling(10, min_periods=2).std().reset_index(level=0, drop=True)

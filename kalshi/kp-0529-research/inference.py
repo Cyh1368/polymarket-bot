@@ -32,6 +32,11 @@ FRIENDLY_SIGNALS = {
     "price_spread_abs": "large BRTI vs RTDS price spread",
     "kalshi_distance_to_target": "Kalshi feed is close to the settlement boundary",
     "polymarket_distance_to_target": "Polymarket feed is close to the settlement boundary",
+    "polymarket_distance_to_own_target": "Polymarket feed is close to its own settlement boundary",
+    "target_spread": "Kalshi and Polymarket targets differ",
+    "target_spread_abs": "Kalshi and Polymarket targets differ",
+    "feeds_on_same_side_own_targets": "price feeds disagree against their own targets",
+    "price_between_targets": "price is between the two platform targets",
     "implied_prob_spread": "Kalshi and Polymarket implied probabilities disagree",
     "time_to_close_seconds": "late-contract timing",
     "elapsed_fraction": "late-contract timing",
@@ -164,6 +169,7 @@ def _compute_features(snapshot: dict[str, Any]) -> dict[str, float]:
     kalshi_price = _to_float(snapshot.get("kalshi_btc_price"))
     poly_price = _to_float(snapshot.get("polymarket_btc_price"))
     kalshi_target = _to_float(snapshot.get("kalshi_btc_target"))
+    poly_target = _to_float(snapshot.get("polymarket_btc_target"))
     kalshi_yes_bid = _to_float(snapshot.get("kalshi_yes_bid"))
     kalshi_yes_ask = _to_float(snapshot.get("kalshi_yes_ask"))
     kalshi_yes_mid = _to_float(snapshot.get("kalshi_yes_mid"))
@@ -211,12 +217,34 @@ def _compute_features(snapshot: dict[str, Any]) -> dict[str, float]:
     poly_distance = (
         poly_price - kalshi_target if math.isfinite(poly_price) and math.isfinite(kalshi_target) else math.nan
     )
+    poly_own_distance = (
+        poly_price - poly_target if math.isfinite(poly_price) and math.isfinite(poly_target) else math.nan
+    )
+    target_spread = (
+        kalshi_target - poly_target if math.isfinite(kalshi_target) and math.isfinite(poly_target) else math.nan
+    )
     if math.isfinite(kalshi_distance) and math.isfinite(poly_distance):
         feeds_on_same_side = float(
             (kalshi_distance > 0 and poly_distance > 0) or (kalshi_distance < 0 and poly_distance < 0)
         )
     else:
         feeds_on_same_side = math.nan
+    if math.isfinite(kalshi_distance) and math.isfinite(poly_own_distance):
+        feeds_on_same_side_own_targets = float(
+            (kalshi_distance > 0 and poly_own_distance > 0)
+            or (kalshi_distance < 0 and poly_own_distance < 0)
+        )
+    else:
+        feeds_on_same_side_own_targets = math.nan
+    if math.isfinite(kalshi_target) and math.isfinite(poly_target):
+        lower_target = min(kalshi_target, poly_target)
+        upper_target = max(kalshi_target, poly_target)
+        price_between_targets = float(
+            (math.isfinite(kalshi_price) and lower_target <= kalshi_price <= upper_target)
+            or (math.isfinite(poly_price) and lower_target <= poly_price <= upper_target)
+        )
+    else:
+        price_between_targets = math.nan
 
     price_spread_abs = abs(price_spread) if math.isfinite(price_spread) else math.nan
     ratio = (
@@ -230,6 +258,11 @@ def _compute_features(snapshot: dict[str, Any]) -> dict[str, float]:
         "price_spread_abs": price_spread_abs,
         "kalshi_distance_to_target": kalshi_distance,
         "polymarket_distance_to_target": poly_distance,
+        "polymarket_distance_to_own_target": poly_own_distance,
+        "target_spread": target_spread,
+        "target_spread_abs": abs(target_spread) if math.isfinite(target_spread) else math.nan,
+        "feeds_on_same_side_own_targets": feeds_on_same_side_own_targets,
+        "price_between_targets": price_between_targets,
         "spread_vs_distance_ratio": ratio,
         "feeds_on_same_side": feeds_on_same_side,
         "elapsed_fraction": elapsed_fraction,
