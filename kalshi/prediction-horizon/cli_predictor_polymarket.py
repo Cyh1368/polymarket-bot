@@ -38,6 +38,7 @@ HORIZONS = {
 }
 MODEL_PREFIX = "polymarket"
 DEFAULT_THRESHOLD = 0.5
+MAX_CONTRACT_SECONDS = float(getattr(trader, "CONTRACT_SECONDS", 15 * 60))
 
 PREDICTION_FIELDS = [
     "timestamp_utc",
@@ -170,6 +171,7 @@ class PredictionRecord:
     raw_history_rows: float | None = None
     asof_gap_seconds: float | None = None
     null_features: list[str] = field(default_factory=list)
+    invalid_features: list[str] = field(default_factory=list)
     timestamp_utc: str = field(default_factory=iso_utc)
     outcome_recorded: bool = False
 
@@ -276,12 +278,134 @@ def build_runtime_row(
     )
 
 
+def aggregate_stat_name(feature: str) -> tuple[str, str] | None:
+    for suffix in trader.AGG_STATS:
+        token = f"_{suffix}"
+        if feature.endswith(token):
+            return feature[: -len(token)], suffix
+    return None
+
+
+def invalid_feature_reason(feature: str, value: Any) -> str | None:
+    number = finite_float(value)
+    if number is None:
+        return "null_or_non_finite"
+
+    if feature == "window_rows":
+        if number < trader.MIN_WINDOW_ROWS or number > trader.MODEL_WINDOW_SAMPLE_COUNT:
+            return f"window_rows_out_of_range:{number:g}"
+        return None
+    if feature == "window_actual_seconds":
+        lower = max(0.0, trader.WINDOW_SECONDS - 15.0)
+        upper = trader.WINDOW_SECONDS + trader.MODEL_SAMPLE_INTERVAL_SECONDS
+        if not lower <= number <= upper:
+            return f"window_actual_seconds_out_of_range:{number:g}"
+        return None
+    if feature == "asof_gap_seconds":
+        if not 0.0 <= number <= trader.MAX_ASOF_GAP_SECONDS:
+            return f"asof_gap_seconds_out_of_range:{number:g}"
+        return None
+    if feature.endswith("_error_rate_window"):
+        if not 0.0 <= number <= 1.0:
+            return f"rate_out_of_range:{number:g}"
+        return None
+
+    parsed = aggregate_stat_name(feature)
+    if parsed is None:
+        if abs(number) > 1_000_000:
+            return f"magnitude_unreasonable:{number:g}"
+        return None
+
+    base, stat = parsed
+
+    if stat in {"std", "range"} and number < 0.0:
+        return f"{stat}_negative:{number:g}"
+
+    if base.endswith("_bid_ask_spread_yes"):
+        if stat in {"last", "mean", "min", "max"} and not 0.0 <= number <= 1.0:
+            return f"spread_out_of_range:{number:g}"
+        if stat in {"std", "range"} and not 0.0 <= number <= 1.0:
+            return f"{stat}_out_of_range:{number:g}"
+        if stat == "change" and not -1.0 <= number <= 1.0:
+            return f"change_out_of_range:{number:g}"
+        return None
+
+    if base.endswith("_yes_mid"):
+        if stat in {"last", "mean", "min", "max"} and not 0.0 <= number <= 1.0:
+            return f"probability_out_of_range:{number:g}"
+        if stat in {"std", "range"} and not 0.0 <= number <= 1.0:
+            return f"{stat}_out_of_range:{number:g}"
+        if stat == "change" and not -1.0 <= number <= 1.0:
+            return f"change_out_of_range:{number:g}"
+        return None
+
+    if base.endswith("_order_book_imbalance"):
+        if stat in {"last", "mean", "min", "max", "change"} and not -1.0 <= number <= 1.0:
+            return f"imbalance_out_of_range:{number:g}"
+        if stat in {"std", "range"} and not 0.0 <= number <= 2.0:
+            return f"{stat}_out_of_range:{number:g}"
+        return None
+
+    if base.endswith("_error_flag"):
+        if stat in {"last", "mean", "min", "max"} and not 0.0 <= number <= 1.0:
+            return f"flag_out_of_range:{number:g}"
+        if stat in {"std", "range"} and not 0.0 <= number <= 1.0:
+            return f"{stat}_out_of_range:{number:g}"
+        if stat == "change" and not -1.0 <= number <= 1.0:
+            return f"change_out_of_range:{number:g}"
+        return None
+
+    if base == "elapsed_fraction":
+        if stat in {"last", "mean", "min", "max"} and not 0.0 <= number <= 1.0:
+            return f"elapsed_fraction_out_of_range:{number:g}"
+        if stat in {"std", "range"} and not 0.0 <= number <= 1.0:
+            return f"{stat}_out_of_range:{number:g}"
+        if stat == "change" and not -1.0 <= number <= 1.0:
+            return f"change_out_of_range:{number:g}"
+        return None
+
+    if base == "time_to_close_seconds":
+        if stat in {"last", "mean", "min", "max"} and not 0.0 <= number <= MAX_CONTRACT_SECONDS:
+            return f"time_to_close_out_of_range:{number:g}"
+        if stat in {"std", "range"} and not 0.0 <= number <= MAX_CONTRACT_SECONDS:
+            return f"{stat}_out_of_range:{number:g}"
+        if stat == "change" and not -MAX_CONTRACT_SECONDS <= number <= MAX_CONTRACT_SECONDS:
+            return f"change_out_of_range:{number:g}"
+        return None
+
+    if base.endswith("_distance_to_own_target"):
+        if stat in {"std", "range"} and number < 0.0:
+            return f"{stat}_negative:{number:g}"
+        if abs(number) > 1_000_000:
+            return f"distance_unreasonable:{number:g}"
+        return None
+
+    if abs(number) > 1_000_000:
+        return f"magnitude_unreasonable:{number:g}"
+    return None
+
+
+def validate_model_features(feature_row: dict[str, Any], feature_names: list[str]) -> tuple[list[str], list[str]]:
+    null_features: list[str] = []
+    invalid_features: list[str] = []
+    for feature in feature_names:
+        value = feature_row.get(feature, math.nan)
+        reason = invalid_feature_reason(feature, value)
+        if reason is not None:
+            invalid_features.append(f"{feature}:{reason}")
+            if reason == "null_or_non_finite":
+                null_features.append(feature)
+        feature_row.setdefault(feature, math.nan)
+    return null_features, invalid_features
+
+
 def model_feature_debug_message(
     runtime: ContractRuntime,
     model: PredictionModel,
     feature_row: dict[str, Any],
     status: str,
     null_features: list[str],
+    invalid_features: list[str],
 ) -> str:
     features = {name: json_safe(feature_row.get(name, math.nan)) for name in model.feature_names}
     payload = {
@@ -305,6 +429,8 @@ def model_feature_debug_message(
         "feature_count": len(model.feature_names),
         "null_feature_count": len(null_features),
         "null_features": null_features,
+        "invalid_feature_count": len(invalid_features),
+        "invalid_features": invalid_features,
         "features": features,
     }
     return f"MODEL_FEATURES {model.horizon} {runtime.ticker} | {json.dumps(payload, separators=(',', ':'), sort_keys=False)}"
@@ -372,16 +498,19 @@ async def evaluate_model(
     args: argparse.Namespace,
 ) -> PredictionRecord:
     feature_row, status = trader.aggregate_horizon_features(runtime.history, model.horizon, model.seconds)
-    null_features: list[str] = []
-    for feature in model.feature_names:
-        value = feature_row.get(feature, math.nan)
-        number = finite_float(value)
-        if number is None:
-            null_features.append(feature)
-        feature_row.setdefault(feature, math.nan)
+    null_features, invalid_features = validate_model_features(feature_row, model.feature_names)
 
     if args.debug_model_features:
-        append_log(model_feature_debug_message(runtime, model, feature_row, status, null_features))
+        append_log(
+            model_feature_debug_message(
+                runtime,
+                model,
+                feature_row,
+                status,
+                null_features,
+                invalid_features,
+            )
+        )
 
     base = {
         "contract_id": runtime.ticker,
@@ -397,6 +526,7 @@ async def evaluate_model(
         "raw_history_rows": finite_float(feature_row.get("model_raw_history_rows")),
         "asof_gap_seconds": finite_float(feature_row.get("asof_gap_seconds")),
         "null_features": null_features,
+        "invalid_features": invalid_features,
     }
     if status != "ok":
         record = PredictionRecord(**base)
@@ -404,10 +534,12 @@ async def evaluate_model(
         record.order_error = status
         return record
 
-    if null_features and not args.allow_imputed_features:
+    if invalid_features:
         record = PredictionRecord(**{**base, "status": "invalid_model_features"})
         record.order_status = "skip"
-        record.order_error = f"{len(null_features)} null model features"
+        preview = ", ".join(invalid_features[:5])
+        extra = "" if len(invalid_features) <= 5 else f", +{len(invalid_features) - 5} more"
+        record.order_error = f"{len(invalid_features)} invalid model features: {preview}{extra}"
         return record
 
     x = pd.DataFrame([{feature: feature_row.get(feature, math.nan) for feature in model.feature_names}])
@@ -441,9 +573,7 @@ def prediction_line(record: PredictionRecord) -> str:
     prob = trader.fmt_price(record.prob_yes, 4)
     price = trader.fmt_cents(record.selected_ask)
     feature_note = (
-        f" null_features={len(record.null_features)}"
-        if record.null_features
-        else " null_features=0"
+        f" null_features={len(record.null_features)} invalid_features={len(record.invalid_features)}"
     )
     return (
         f"PREDICT {record.horizon:<3} {record.contract_id} | "
@@ -663,6 +793,18 @@ def status_line(runtime: ContractRuntime, source_snapshot: dict[str, Any], remai
     )
 
 
+def contract_key(ticker: str, close_time: str) -> tuple[str, str]:
+    return ticker, close_time
+
+
+def should_start_collection(model: PredictionModel, remaining: float) -> bool:
+    return model.seconds < remaining <= model.seconds + trader.WINDOW_SECONDS
+
+
+def should_evaluate_model(model: PredictionModel, remaining: float) -> bool:
+    return model.collection_started and 0.0 <= remaining <= model.seconds
+
+
 async def run() -> None:
     args = parse_args()
     APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -677,6 +819,8 @@ async def run() -> None:
 
     context = None if args.poll_only else await start_context_with_backoff(lambda line: append_log(line), args.startup_timeout)
     runtime: ContractRuntime | None = None
+    completed_contracts_seen: set[tuple[str, str]] = set()
+    skipped_expired_contracts: set[tuple[str, str]] = set()
     completed_contracts = 0
     started_at = time.monotonic()
 
@@ -700,6 +844,19 @@ async def run() -> None:
             close_time = str(kalshi_snapshot.get("close_time") or kalshi_market.get("close_time") or "")
             polymarket_ticker = str(polymarket_snapshot.get("ticker") or polymarket_market.get("slug") or "")
             remaining = trader.seconds_to_expiry(kalshi_snapshot)
+            key = contract_key(ticker, close_time)
+
+            if key in completed_contracts_seen:
+                continue
+
+            if (runtime is None or runtime.ticker != ticker) and remaining is not None and remaining < 0.0:
+                if key not in skipped_expired_contracts:
+                    skipped_expired_contracts.add(key)
+                    append_log(
+                        f"SKIP expired contract {ticker} close={close_time} T={remaining:.1f}s; waiting for next market"
+                    )
+                trader.KALSHI_MARKET_CACHE.pop(trader.SERIES_TICKER, None)
+                continue
 
             if runtime is None or runtime.ticker != ticker:
                 runtime = ContractRuntime(ticker=ticker, close_time=close_time, polymarket_ticker=polymarket_ticker)
@@ -724,13 +881,13 @@ async def run() -> None:
 
             if remaining is not None:
                 for model in models.values():
-                    if not model.collection_started and remaining <= model.seconds + trader.WINDOW_SECONDS:
+                    if not model.collection_started and should_start_collection(model, remaining):
                         model.collection_started = True
                         append_log(
                             f"COLLECT {model.horizon} window started for {ticker}; "
                             f"evaluation at T={model.seconds}s"
                         )
-                    if model.evaluated or remaining > model.seconds:
+                    if model.evaluated or not should_evaluate_model(model, remaining):
                         continue
                     record = await evaluate_model(runtime, model, polymarket_market, polymarket_snapshot, args)
                     runtime.predictions[model.horizon] = record
@@ -745,6 +902,7 @@ async def run() -> None:
 
             if remaining is not None and remaining <= args.outcome_delay_seconds and not runtime.outcome_logged:
                 record_outcome(runtime, source_snapshot, models)
+                completed_contracts_seen.add(key)
                 completed_contracts += 1
                 if args.max_contracts and completed_contracts >= args.max_contracts:
                     append_log(f"STOP max_contracts={args.max_contracts:g} reached")
@@ -767,7 +925,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-dir", type=Path, default=APP_DIR, help=f"Directory containing copied model artifacts. Default: {APP_DIR}.")
     parser.add_argument("--dry-test", "--dry-run", action="store_true", dest="dry_test", help="Record would-be orders without placing real Polymarket orders.")
     parser.add_argument("--debug-model-features", action="store_true", help="Log the full feature payload sent to each model.")
-    parser.add_argument("--allow-imputed-features", action="store_true", help="Allow model prediction when live features contain NaN; the model imputer will fill them.")
+    parser.add_argument("--allow-imputed-features", action="store_true", help="Deprecated compatibility flag; live predictions are always skipped if any model feature is null or invalid.")
     parser.add_argument("--order-type", default="FOK", help="Polymarket order type for live orders. Default: FOK.")
     parser.add_argument("--poll-only", action="store_true", help="Use HTTP polling instead of websocket market context.")
     parser.add_argument("--poll-interval", type=float, default=2.0, help="Seconds between HTTP polls in --poll-only mode. Default: 2.")
