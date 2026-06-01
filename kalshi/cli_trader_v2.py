@@ -63,8 +63,12 @@ MODEL_WINDOW_SAMPLE_COUNT = WINDOW_SECONDS // MODEL_SAMPLE_INTERVAL_SECONDS
 MODEL_WARMUP_SAMPLE_COUNT = 30
 MIN_WINDOW_ROWS = 10
 MAX_ASOF_GAP_SECONDS = 10.0
-ENTRY_STRATEGY_NAME = "any_2_1_latch_hold"
+ENTRY_STRATEGY_NAME = "latch_2m_1m"
 LATCH_HOLD_ENTRY_HORIZONS = {"2m", "1m"}
+LIVE_LATCH_THRESHOLDS = {
+    "2m": 0.07881355932203389,
+    "1m": 0.13288135593220338,
+}
 KALSHI_MIN_QUOTE_SPREAD = 0.001
 ORDERBOOK_DEPTH = int(os.getenv("ORDERBOOK_DEPTH", "10"))
 KALSHI_LOCAL_BOOK_RESYNC_SECONDS = 30.0
@@ -1803,6 +1807,16 @@ class AsyncMarketContext:
                         changed = True
             if not changed:
                 return False
+            yes_bid = finite_float(updated.get("yes_bid"))
+            yes_ask = finite_float(updated.get("yes_ask"))
+            if yes_bid is not None and yes_ask is not None:
+                updated["yes_mid"] = (yes_bid + yes_ask) / 2.0
+            elif yes_bid is not None:
+                updated["yes_mid"] = yes_bid
+            elif yes_ask is not None:
+                updated["yes_mid"] = yes_ask
+            else:
+                updated["yes_mid"] = None
             old_signature = self._last_signature
             self._state = (kalshi_market, kalshi_snapshot, polymarket_market, updated, source_snapshot)
             self._last_signature = book_signature(kalshi_snapshot, updated)
@@ -2230,6 +2244,19 @@ def model_sampled_history(raw: pd.DataFrame, asof_time: pd.Timestamp) -> pd.Data
 
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy().sort_values(["contract_id", "timestamp_utc"]).reset_index(drop=True)
+    for prefix in ("kalshi", "polymarket"):
+        bid_col = f"{prefix}_yes_bid"
+        ask_col = f"{prefix}_yes_ask"
+        mid_col = f"{prefix}_yes_mid"
+        if {bid_col, ask_col, mid_col}.issubset(out.columns):
+            bid = pd.to_numeric(out[bid_col], errors="coerce")
+            ask = pd.to_numeric(out[ask_col], errors="coerce")
+            mid = pd.to_numeric(out[mid_col], errors="coerce")
+            out[mid_col] = np.where(
+                bid.notna() & ask.notna(),
+                (bid + ask) / 2.0,
+                np.where(bid.notna(), bid, np.where(ask.notna(), ask, mid)),
+            )
     out["time_to_close_seconds"] = (out["kalshi_close_time"] - out["timestamp_utc"]).dt.total_seconds()
     out["contract_start_time"] = out["kalshi_close_time"] - pd.to_timedelta(CONTRACT_SECONDS, unit="s")
     out["elapsed_fraction"] = (
@@ -2475,6 +2502,8 @@ def load_horizon_models(model_dir: Path) -> dict[str, HorizonModel]:
             raise RuntimeError(f"Missing horizon artifacts for {name}: {model_path} / {metadata_path}")
         metadata = json.loads(metadata_path.read_text())
         threshold = float(metadata["metrics"]["recommended_trade_threshold"])
+        if name in LIVE_LATCH_THRESHOLDS:
+            threshold = LIVE_LATCH_THRESHOLDS[name]
         feature_names = list(metadata["feature_names"])
         loaded[name] = HorizonModel(
             name=name,
