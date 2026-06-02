@@ -1121,10 +1121,34 @@ def make_polymarket_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) 
     best_no_ask, best_no_ask_qty = best_level(no_ask_levels, reverse=False)
     stats = (orderbook.get("marketData") or orderbook).get("stats") or {}
 
-    yes_bid = best_yes_bid or nested_price(market.get("bestBidQuote")) or market_price(market, "bestBid", "best_bid")
-    yes_ask = best_yes_ask or nested_price(market.get("bestAskQuote")) or market_price(market, "bestAsk", "best_ask")
+    implied_yes_bid = invert_price(best_no_ask) if best_no_ask is not None else None
+    implied_yes_ask = invert_price(best_no_bid) if best_no_bid is not None else None
+    yes_bid = (
+        best_yes_bid
+        if best_yes_bid is not None
+        else implied_yes_bid
+        if implied_yes_bid is not None
+        else nested_price(market.get("bestBidQuote"))
+        or market_price(market, "bestBid", "best_bid")
+    )
+    yes_ask = (
+        best_yes_ask
+        if best_yes_ask is not None
+        else implied_yes_ask
+        if implied_yes_ask is not None
+        else nested_price(market.get("bestAskQuote"))
+        or market_price(market, "bestAsk", "best_ask")
+    )
     no_bid = best_no_bid if best_no_bid is not None else invert_price(yes_ask)
     no_ask = best_no_ask if best_no_ask is not None else invert_price(yes_bid)
+    if best_yes_bid is None and implied_yes_bid is not None:
+        best_yes_bid_qty = best_no_ask_qty
+    if best_yes_ask is None and implied_yes_ask is not None:
+        best_yes_ask_qty = best_no_bid_qty
+    if best_no_bid is None and yes_ask is not None:
+        best_no_bid_qty = best_yes_ask_qty
+    if best_no_ask is None and yes_bid is not None:
+        best_no_ask_qty = best_yes_bid_qty
     midpoint = None
     if yes_bid is not None and yes_ask is not None:
         midpoint = (yes_bid + yes_ask) / 2.0

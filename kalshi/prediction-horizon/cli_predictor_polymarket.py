@@ -505,8 +505,24 @@ def model_feature_debug_message(
     return f"MODEL_FEATURES {model.horizon} {runtime.ticker} | {json.dumps(payload, separators=(',', ':'), sort_keys=False)}"
 
 
-def live_orderbook_invalid_reasons(polymarket_snapshot: dict[str, Any]) -> list[str]:
-    return crossed_book_reasons("polymarket", polymarket_snapshot)
+def live_orderbook_invalid_reasons(polymarket_snapshot: dict[str, Any], side: str) -> list[str]:
+    side_key = side.lower()
+    ask_key = f"{side_key}_ask"
+    bid_key = f"{side_key}_bid"
+    qty_key = f"best_{side_key}_ask_qty"
+    ask = finite_float(polymarket_snapshot.get(ask_key))
+    bid = finite_float(polymarket_snapshot.get(bid_key))
+    qty = finite_float(polymarket_snapshot.get(qty_key))
+    reasons: list[str] = []
+    if price_out_of_range(ask) or ask == 0.0:
+        reasons.append(f"{ask_key}:price_missing_or_out_of_range")
+    if bid is not None and not 0.0 <= bid <= 1.0:
+        reasons.append(f"{bid_key}:price_out_of_range")
+    if bid is not None and ask is not None and ask < bid:
+        reasons.append(f"{side_key}_book_crossed:{bid:g}>{ask:g}")
+    if qty is not None and qty < 0.0:
+        reasons.append(f"{qty_key}:quantity_negative")
+    return reasons
 
 
 def selected_side_snapshot(polymarket_snapshot: dict[str, Any], predicted_label: int) -> tuple[str, float | None, float | None]:
@@ -623,7 +639,7 @@ async def evaluate_model(
     prob_yes = float(model.model.predict_proba(x)[0, 1])
     predicted_label = int(prob_yes >= model.threshold)
     predicted_side, selected_ask, selected_qty = selected_side_snapshot(polymarket_snapshot, predicted_label)
-    live_orderbook_errors = live_orderbook_invalid_reasons(polymarket_snapshot)
+    live_orderbook_errors = live_orderbook_invalid_reasons(polymarket_snapshot, predicted_side)
     if live_orderbook_errors:
         order_status = "skip"
         order_id = ""
