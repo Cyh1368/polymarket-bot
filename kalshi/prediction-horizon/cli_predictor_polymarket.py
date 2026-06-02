@@ -9,7 +9,7 @@ import math
 import sys
 import time
 import traceback
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -286,6 +286,70 @@ def aggregate_stat_name(feature: str) -> tuple[str, str] | None:
     return None
 
 
+def price_out_of_range(value: float | None) -> bool:
+    return value is None or not 0.0 <= value <= 1.0
+
+
+def quantity_out_of_range(value: float | None) -> bool:
+    return value is None or value < 0.0
+
+
+def crossed_book_reasons(prefix: str, row: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    bid = finite_float(row.get(f"{prefix}_yes_bid"))
+    ask = finite_float(row.get(f"{prefix}_yes_ask"))
+    no_bid = finite_float(row.get(f"{prefix}_no_bid"))
+    no_ask = finite_float(row.get(f"{prefix}_no_ask"))
+
+    for name, value in (
+        (f"{prefix}_yes_bid", bid),
+        (f"{prefix}_yes_ask", ask),
+        (f"{prefix}_no_bid", no_bid),
+        (f"{prefix}_no_ask", no_ask),
+    ):
+        if price_out_of_range(value):
+            reasons.append(f"{name}:price_missing_or_out_of_range")
+
+    if bid is not None and ask is not None and ask < bid:
+        reasons.append(f"{prefix}_yes_book_crossed:{bid:g}>{ask:g}")
+    if no_bid is not None and no_ask is not None and no_ask < no_bid:
+        reasons.append(f"{prefix}_no_book_crossed:{no_bid:g}>{no_ask:g}")
+    return reasons
+
+
+def model_history_row_invalid_reasons(row: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    bid = finite_float(row.get("polymarket_yes_bid"))
+    ask = finite_float(row.get("polymarket_yes_ask"))
+    if price_out_of_range(bid):
+        reasons.append("polymarket_yes_bid:price_missing_or_out_of_range")
+    if price_out_of_range(ask):
+        reasons.append("polymarket_yes_ask:price_missing_or_out_of_range")
+    if bid is not None and ask is not None and ask < bid:
+        reasons.append(f"polymarket_yes_book_crossed:{bid:g}>{ask:g}")
+    for name in ("polymarket_best_yes_bid_qty", "polymarket_best_no_bid_qty"):
+        if quantity_out_of_range(finite_float(row.get(name))):
+            reasons.append(f"{name}:quantity_missing_or_negative")
+    if finite_float(row.get("polymarket_btc_price")) is None:
+        reasons.append("polymarket_btc_price:missing_or_non_finite")
+    return reasons
+
+
+def filtered_model_history(rows: deque[dict[str, Any]]) -> tuple[deque[dict[str, Any]], int, list[str]]:
+    filtered: deque[dict[str, Any]] = deque(maxlen=rows.maxlen)
+    dropped_reasons: Counter[str] = Counter()
+    dropped = 0
+    for row in rows:
+        reasons = model_history_row_invalid_reasons(row)
+        if reasons:
+            dropped += 1
+            dropped_reasons.update(reasons)
+            continue
+        filtered.append(row)
+    top_reasons = [f"{reason}:{count}" for reason, count in dropped_reasons.most_common(8)]
+    return filtered, dropped, top_reasons
+
+
 def invalid_feature_reason(feature: str, value: Any) -> str | None:
     number = finite_float(value)
     if number is None:
@@ -340,8 +404,10 @@ def invalid_feature_reason(feature: str, value: Any) -> str | None:
         return None
 
     if base.endswith("_order_book_imbalance"):
-        if stat in {"last", "mean", "min", "max", "change"} and not -1.0 <= number <= 1.0:
+        if stat in {"last", "mean", "min", "max"} and not -1.0 <= number <= 1.0:
             return f"imbalance_out_of_range:{number:g}"
+        if stat == "change" and not -2.0 <= number <= 2.0:
+            return f"change_out_of_range:{number:g}"
         if stat in {"std", "range"} and not 0.0 <= number <= 2.0:
             return f"{stat}_out_of_range:{number:g}"
         return None
@@ -420,6 +486,9 @@ def model_feature_debug_message(
             "sample_interval_seconds": json_safe(feature_row.get("model_sample_interval_seconds")),
             "expected_window_rows": json_safe(feature_row.get("model_expected_window_rows")),
             "warmup_sample_rows": json_safe(feature_row.get("model_warmup_sample_rows")),
+            "source_history_rows": json_safe(feature_row.get("model_source_history_rows")),
+            "dropped_source_rows": json_safe(feature_row.get("model_dropped_source_rows")),
+            "dropped_source_reasons": feature_row.get("model_dropped_source_reasons", []),
             "raw_history_rows": json_safe(feature_row.get("model_raw_history_rows")),
             "sampled_history_rows": json_safe(feature_row.get("model_sampled_history_rows")),
             "actual_window_rows": json_safe(feature_row.get("window_rows")),
@@ -434,6 +503,10 @@ def model_feature_debug_message(
         "features": features,
     }
     return f"MODEL_FEATURES {model.horizon} {runtime.ticker} | {json.dumps(payload, separators=(',', ':'), sort_keys=False)}"
+
+
+def live_orderbook_invalid_reasons(polymarket_snapshot: dict[str, Any]) -> list[str]:
+    return crossed_book_reasons("polymarket", polymarket_snapshot)
 
 
 def selected_side_snapshot(polymarket_snapshot: dict[str, Any], predicted_label: int) -> tuple[str, float | None, float | None]:
@@ -497,7 +570,11 @@ async def evaluate_model(
     polymarket_snapshot: dict[str, Any],
     args: argparse.Namespace,
 ) -> PredictionRecord:
-    feature_row, status = trader.aggregate_horizon_features(runtime.history, model.horizon, model.seconds)
+    model_history, dropped_rows, dropped_reasons = filtered_model_history(runtime.history)
+    feature_row, status = trader.aggregate_horizon_features(model_history, model.horizon, model.seconds)
+    feature_row["model_source_history_rows"] = len(runtime.history)
+    feature_row["model_dropped_source_rows"] = dropped_rows
+    feature_row["model_dropped_source_reasons"] = dropped_reasons
     null_features, invalid_features = validate_model_features(feature_row, model.feature_names)
 
     if args.debug_model_features:
@@ -546,15 +623,23 @@ async def evaluate_model(
     prob_yes = float(model.model.predict_proba(x)[0, 1])
     predicted_label = int(prob_yes >= model.threshold)
     predicted_side, selected_ask, selected_qty = selected_side_snapshot(polymarket_snapshot, predicted_label)
-    order_status, order_id, order_error = await place_prediction_order(
-        polymarket_market,
-        predicted_side,
-        selected_ask,
-        selected_qty,
-        args.contracts,
-        args.dry_test,
-        args.order_type,
-    )
+    live_orderbook_errors = live_orderbook_invalid_reasons(polymarket_snapshot)
+    if live_orderbook_errors:
+        order_status = "skip"
+        order_id = ""
+        preview = ", ".join(live_orderbook_errors[:4])
+        extra = "" if len(live_orderbook_errors) <= 4 else f", +{len(live_orderbook_errors) - 4} more"
+        order_error = f"invalid live Polymarket orderbook: {preview}{extra}"
+    else:
+        order_status, order_id, order_error = await place_prediction_order(
+            polymarket_market,
+            predicted_side,
+            selected_ask,
+            selected_qty,
+            args.contracts,
+            args.dry_test,
+            args.order_type,
+        )
     record = PredictionRecord(
         **base,
         prob_yes=prob_yes,
