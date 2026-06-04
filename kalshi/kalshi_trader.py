@@ -137,6 +137,7 @@ class ContractRuntime:
     decision: TradeDecision | None = None
     decision_logged: bool = False
     outcome_logged: bool = False
+    last_status_log_at: float = 0.0
 
 
 class StopLossTriggered(RuntimeError):
@@ -851,7 +852,16 @@ async def run() -> None:
                 }
             )
 
-            if remaining is not None:
+            now_monotonic = time.monotonic()
+            should_log_status = (
+                remaining is not None
+                and (
+                    args.log_interval <= 0
+                    or runtime.last_status_log_at <= 0
+                    or now_monotonic - runtime.last_status_log_at >= args.log_interval
+                )
+            )
+            if remaining is not None and should_log_status:
                 book_reasons = orderbook_invalid_reasons(orderbook)
                 status_suffix = ""
                 if book_reasons:
@@ -863,6 +873,7 @@ async def run() -> None:
                     f"trade={runtime.decision.status if runtime.decision else '--'}{status_suffix}",
                     prefix_timestamp=False,
                 )
+                runtime.last_status_log_at = now_monotonic
 
             if (
                 remaining is not None
@@ -890,6 +901,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--time-in-force", default="fill_or_kill", help="Kalshi order time_in_force. Default: fill_or_kill.")
     parser.add_argument("--stop-loss", type=float, default=10.0, help="Stop if Kalshi balance drops this many dollars below initial balance. Default: 10.")
     parser.add_argument("--poll-interval", type=float, default=2.0, help="Seconds between HTTP polls. Default: 2.")
+    parser.add_argument("--log-interval", type=float, default=60.0, help="Seconds between recurring STATUS log lines. Use 0 to log every poll. Default: 60.")
     parser.add_argument("--outcome-delay-seconds", type=float, default=DEFAULT_OUTCOME_DELAY_SECONDS, help="Evaluate outcome this many seconds relative to close. Default: -2.")
     parser.add_argument("--max-contracts", type=int, default=0, help="Stop after this many contract outcomes. 0 means run forever.")
     parser.add_argument("--max-seconds", type=float, default=0.0, help="Stop after this many wall-clock seconds. 0 means no limit.")
@@ -897,6 +909,7 @@ def parse_args() -> argparse.Namespace:
     args.contracts = max(1, args.contracts)
     args.retry_attempts = max(1, args.retry_attempts)
     args.poll_interval = max(0.1, args.poll_interval)
+    args.log_interval = max(0.0, args.log_interval)
     if args.band_high <= args.band_low:
         parser.error("--band-high must be greater than --band-low")
     return args
