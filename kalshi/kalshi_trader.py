@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import csv
 import math
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -13,16 +14,20 @@ from pathlib import Path
 from typing import Any
 
 import cli_trader_v2 as trader
+import kalshi_trader_stats
 
 
 APP_DIR = Path(__file__).resolve().parent
-LOG_PATH = APP_DIR / "kalshi_trader.log"
-TRADES_CSV_PATH = APP_DIR / "kalshi_trader_trades.csv"
+LOG_PATH = Path(os.getenv("KALSHI_TRADER_LOG_PATH", str(APP_DIR / "kalshi_trader.log"))).expanduser()
+TRADES_CSV_PATH = Path(os.getenv("KALSHI_TRADER_TRADES_CSV", str(APP_DIR / "kalshi_trader_trades.csv"))).expanduser()
+STATS_CSV_PATH = Path(
+    os.getenv("KALSHI_TRADER_STATS_CSV", str(LOG_PATH.with_name("kalshi_trader_stats.csv")))
+).expanduser()
 
-DEFAULT_BAND_LOW = 0.60
-DEFAULT_BAND_HIGH = 0.80
+DEFAULT_BAND_LOW = 0.50
+DEFAULT_BAND_HIGH = 0.78
 DEFAULT_CONTRACTS = 2
-DEFAULT_ENTRY_SECONDS = 10 * 60
+DEFAULT_ENTRY_SECONDS = 630
 DEFAULT_RETRY_ATTEMPTS = 10
 DEFAULT_RETRY_DELAY_SECONDS = 0.5
 DEFAULT_OUTCOME_DELAY_SECONDS = -2.0
@@ -95,6 +100,14 @@ def append_trade_row(row: dict[str, Any]) -> None:
         if not exists:
             writer.writeheader()
         writer.writerow({field: row.get(field, "") for field in TRADE_FIELDS})
+    refresh_stats_csv()
+
+
+def refresh_stats_csv() -> None:
+    try:
+        kalshi_trader_stats.refresh_stats_csv(LOG_PATH, TRADES_CSV_PATH, STATS_CSV_PATH)
+    except Exception as exc:
+        append_log(f"STATS_CSV ERROR {type(exc).__name__}: {exc}", prefix_timestamp=True)
 
 
 @dataclass
@@ -126,6 +139,24 @@ class TradeDecision:
     @property
     def outcome_eligible(self) -> bool:
         return self.status in {"filled", "dry_run"} and self.predicted_label is not None
+
+
+@dataclass
+class EntryCandidate:
+    side: str | None = None
+    predicted_label: int | None = None
+    selected_probability: float | None = None
+    selected_ask: float | None = None
+    selected_ask_qty: float | None = None
+    spot_agrees: bool | None = None
+    entry_spot: float | None = None
+    entry_target: float | None = None
+    entry_delta: float | None = None
+    reason: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.side is not None and self.predicted_label is not None and not self.reason
 
 
 @dataclass
@@ -285,11 +316,7 @@ def orderbook_invalid_reasons(
     return reasons
 
 
-def selected_side_from_mid(
-    kalshi_snapshot: dict[str, Any],
-    band_low: float,
-    band_high: float,
-) -> tuple[str | None, int | None, float | None, str]:
+def selected_side_from_mid(kalshi_snapshot: dict[str, Any]) -> tuple[str | None, int | None, float | None, str]:
     yes_mid = finite_float(kalshi_snapshot.get("yes_mid"))
     if yes_mid is None:
         return None, None, None, "missing yes_mid"
@@ -302,14 +329,63 @@ def selected_side_from_mid(
         side = "no"
         label = 0
         probability = no_mid
-    if band_low <= probability < band_high:
-        return side, label, probability, ""
+    return side, label, probability, ""
+
+
+def spot_agreement(source_snapshot: dict[str, Any], side: str) -> tuple[bool | None, float | None, float | None, float | None, str]:
+    spot = finite_float(source_snapshot.get("kalshi_price"))
+    target = finite_float(source_snapshot.get("kalshi_target"))
+    if spot is None or target is None:
+        return None, spot, target, None, "missing spot or target for spot-agreement filter"
+    delta = spot - target
+    agrees = delta > 0 if side == "yes" else delta < 0
+    if agrees:
+        return True, spot, target, delta, ""
     return (
-        None,
-        None,
-        probability,
-        f"more likely side {trader.fmt_price(probability, 4)} outside band {band_low:.2f}-{band_high:.2f}",
+        False,
+        spot,
+        target,
+        delta,
+        f"spot disagrees with {side_display(side)}: K {trader.fmt_price(spot, 2)} "
+        f"{trader.fmt_price_delta(spot, target, 2)}",
     )
+
+
+def entry_candidate(
+    kalshi_snapshot: dict[str, Any],
+    orderbook: dict[str, Any],
+    source_snapshot: dict[str, Any],
+    band_low: float,
+    band_high: float,
+) -> EntryCandidate:
+    side, label, probability, side_reason = selected_side_from_mid(kalshi_snapshot)
+    if side is None or label is None:
+        return EntryCandidate(selected_probability=probability, reason=side_reason)
+
+    selected_ask, selected_ask_qty = side_ask_from_orderbook(orderbook, side)
+    agrees, spot, target, delta, spot_reason = spot_agreement(source_snapshot, side)
+    candidate = EntryCandidate(
+        side=side,
+        predicted_label=label,
+        selected_probability=probability,
+        selected_ask=selected_ask,
+        selected_ask_qty=selected_ask_qty,
+        spot_agrees=agrees,
+        entry_spot=spot,
+        entry_target=target,
+        entry_delta=delta,
+    )
+
+    if selected_ask is None or not 0.0 < selected_ask < 1.0:
+        candidate.reason = f"{side}_ask missing or out of range: {selected_ask}"
+    elif not (band_low < selected_ask < band_high):
+        candidate.reason = (
+            f"selected ask {trader.fmt_price(selected_ask, 4)} outside ask band "
+            f"{band_low:.2f}<p<{band_high:.2f}"
+        )
+    elif agrees is not True:
+        candidate.reason = spot_reason
+    return candidate
 
 
 def current_outcome(
@@ -389,6 +465,7 @@ async def log_balance(
     available_text = "" if available is None else f" available={trader.fmt_money(available)}"
     drawdown = "" if initial_balance is None else f" drawdown={initial_balance - balance:.4f}"
     append_log(f"BALANCE{remaining_text} {event} | Kalshi {trader.fmt_money(balance)}{available_text}{drawdown}")
+    refresh_stats_csv()
     if initial_balance is not None and stop_loss > 0 and balance < initial_balance - stop_loss:
         raise StopLossTriggered(
             f"Kalshi balance {trader.fmt_money(balance)} is below initial "
@@ -431,7 +508,7 @@ async def place_order_with_retries(
         if state is None:
             await asyncio.sleep(max(0.0, retry_delay))
             continue
-        kalshi_market, kalshi_snapshot, _source, orderbook = state
+        kalshi_market, kalshi_snapshot, source_snapshot, orderbook = state
         ticker = str(kalshi_snapshot.get("ticker") or kalshi_market.get("ticker") or "")
         if ticker != expected_ticker:
             reason = f"contract changed during retry: {ticker or '--'} != {expected_ticker}"
@@ -441,11 +518,16 @@ async def place_order_with_retries(
             continue
 
         last_snapshot = kalshi_snapshot
-        current_side, label, probability, band_reason = selected_side_from_mid(kalshi_snapshot, band_low, band_high)
-        if current_side != side or label is None:
-            reason = band_reason or f"current side changed to {side_display(current_side)}"
+        candidate = entry_candidate(kalshi_snapshot, orderbook, source_snapshot, band_low, band_high)
+        if candidate.side != side or candidate.predicted_label is None:
+            reason = candidate.reason or f"current side changed to {side_display(candidate.side)}"
             append_log(f"ORDER RETRY {attempt}/{attempts} {side_display(side)} {reason}")
             last_failure_reason = reason
+            await asyncio.sleep(max(0.0, retry_delay))
+            continue
+        if not candidate.ok:
+            append_log(f"ORDER RETRY {attempt}/{attempts} {side_display(side)} {candidate.reason}")
+            last_failure_reason = candidate.reason
             await asyncio.sleep(max(0.0, retry_delay))
             continue
 
@@ -460,14 +542,15 @@ async def place_order_with_retries(
             await asyncio.sleep(max(0.0, retry_delay))
             continue
 
-        price, qty = side_ask_from_orderbook(orderbook, side)
+        price = candidate.selected_ask
+        qty = candidate.selected_ask_qty
         if dry_run:
             return (
                 TradeDecision(
                     status="dry_run",
                     side=side,
-                    predicted_label=label,
-                    selected_probability=probability,
+                    predicted_label=candidate.predicted_label,
+                    selected_probability=candidate.selected_probability,
                     selected_ask=price,
                     selected_ask_qty=qty,
                     contracts=contracts,
@@ -505,8 +588,8 @@ async def place_order_with_retries(
                 TradeDecision(
                     status="filled",
                     side=side,
-                    predicted_label=label,
-                    selected_probability=probability,
+                    predicted_label=candidate.predicted_label,
+                    selected_probability=candidate.selected_probability,
                     selected_ask=price,
                     selected_ask_qty=qty,
                     contracts=contracts,
@@ -569,7 +652,7 @@ async def evaluate_entry(
         )
         return
 
-    _market, kalshi_snapshot, _source, orderbook = state
+    _market, kalshi_snapshot, source_snapshot, orderbook = state
     await log_balance_with_stop_loss_baseline(entry_label(args.entry_seconds).replace("=", ""), remaining, args)
     base_reasons = orderbook_invalid_reasons(orderbook)
     row = trade_row_base("decision", runtime, remaining, args, kalshi_snapshot, counts, base_reasons)
@@ -603,30 +686,37 @@ async def evaluate_entry(
         append_trade_row(row)
         return
 
-    side, label, probability, reason = selected_side_from_mid(kalshi_snapshot, args.band_low, args.band_high)
-    if side is None or label is None:
+    candidate = entry_candidate(kalshi_snapshot, orderbook, source_snapshot, args.band_low, args.band_high)
+    if not candidate.ok:
         counts.skipped += 1
         decision = TradeDecision(
             status="skip",
-            selected_probability=probability,
+            side=candidate.side or "",
+            predicted_label=candidate.predicted_label,
+            selected_probability=candidate.selected_probability,
+            selected_ask=candidate.selected_ask,
+            selected_ask_qty=candidate.selected_ask_qty,
             contracts=args.contracts,
             dry_run=not args.live,
-            reason=reason,
+            reason=candidate.reason,
         )
         runtime.decision = decision
         append_log(
             f"STATUS {entry_label(args.entry_seconds)} {runtime.ticker} | "
             f"yes_mid={trader.fmt_price(kalshi_snapshot.get('yes_mid'), 4)} decision=SKIP "
-            f"reason={reason} | counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
+            f"reason={candidate.reason} | counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
             prefix_timestamp=False,
         )
         row.update(
             {
-                "selected_probability": probability,
+                "selected_side": side_display(candidate.side),
+                "selected_probability": candidate.selected_probability,
+                "selected_ask": candidate.selected_ask,
+                "selected_ask_qty": candidate.selected_ask_qty,
                 "contracts": args.contracts,
                 "dry_run": int(not args.live),
                 "order_status": "skip",
-                "reason": reason,
+                "reason": candidate.reason,
                 "skipped_count": counts.skipped,
             }
         )
@@ -635,14 +725,16 @@ async def evaluate_entry(
 
     append_log(
         f"STATUS {entry_label(args.entry_seconds)} {runtime.ticker} | "
-        f"yes_mid={trader.fmt_price(kalshi_snapshot.get('yes_mid'), 4)} selected={side_display(side)} "
-        f"selected_prob={trader.fmt_price(probability, 4)} band={args.band_low:.2f}-{args.band_high:.2f} "
+        f"yes_mid={trader.fmt_price(kalshi_snapshot.get('yes_mid'), 4)} selected={side_display(candidate.side)} "
+        f"selected_prob={trader.fmt_price(candidate.selected_probability, 4)} "
+        f"ask={trader.fmt_cents(candidate.selected_ask)} ask_band={args.band_low:.2f}<p<{args.band_high:.2f} "
+        f"spot_agrees=1 "
         f"contracts={args.contracts}",
         prefix_timestamp=False,
     )
     decision, latest_snapshot, latest_reasons = await place_order_with_retries(
         expected_ticker=runtime.ticker,
-        side=side,
+        side=str(candidate.side),
         contracts=args.contracts,
         dry_run=not args.live,
         time_in_force=args.time_in_force,
@@ -652,9 +744,13 @@ async def evaluate_entry(
         retry_delay=args.retry_delay,
     )
     if decision.predicted_label is None:
-        decision.predicted_label = label
+        decision.predicted_label = candidate.predicted_label
     if decision.selected_probability is None:
-        decision.selected_probability = probability
+        decision.selected_probability = candidate.selected_probability
+    if decision.selected_ask is None:
+        decision.selected_ask = candidate.selected_ask
+    if decision.selected_ask_qty is None:
+        decision.selected_ask_qty = candidate.selected_ask_qty
     runtime.decision = decision
 
     if latest_snapshot is not None:
@@ -662,7 +758,7 @@ async def evaluate_entry(
     if decision.status == "skip":
         counts.skipped += 1
     append_log(
-        f"ORDER {decision.status.upper()} {runtime.ticker} {side_display(side)} | "
+        f"ORDER {decision.status.upper()} {runtime.ticker} {side_display(candidate.side)} | "
         f"ask={trader.fmt_cents(decision.selected_ask)} "
         f"qty={decision.selected_ask_qty if decision.selected_ask_qty is not None else '--'} "
         f"order_id={decision.order_id or '--'} {decision.reason} | "
@@ -671,7 +767,7 @@ async def evaluate_entry(
     )
     row.update(
         {
-            "selected_side": side_display(side),
+            "selected_side": side_display(candidate.side),
             "selected_probability": decision.selected_probability,
             "selected_ask": decision.selected_ask,
             "selected_ask_qty": decision.selected_ask_qty,
@@ -789,7 +885,8 @@ async def run() -> None:
 
     append_log(
         f"START kalshi_trader live={args.live} contracts={args.contracts} "
-        f"band={args.band_low:.2f}-{args.band_high:.2f} entry_seconds={args.entry_seconds:g} "
+        f"ask_band={args.band_low:.2f}<p<{args.band_high:.2f} spot_agreement=required "
+        f"entry_seconds={args.entry_seconds:g} "
         f"retry_attempts={args.retry_attempts} stop_loss={trader.fmt_money(args.stop_loss)}"
     )
     if await log_balance_with_stop_loss_baseline("START", None, args) is None and args.stop_loss > 0:
@@ -890,12 +987,12 @@ async def run() -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Kalshi BTC 15m more-likely-side band trader.")
+    parser = argparse.ArgumentParser(description="Kalshi BTC 15m ask-band trader with spot-agreement filter.")
     parser.add_argument("--live", action="store_true", help="Submit real Kalshi orders. Omit for dry-run logging.")
     parser.add_argument("--contracts", type=int, default=DEFAULT_CONTRACTS, help="Contracts to buy. Default: 2.")
-    parser.add_argument("--band-low", type=float, default=DEFAULT_BAND_LOW, help="Inclusive more-likely price lower bound. Default: 0.60.")
-    parser.add_argument("--band-high", type=float, default=DEFAULT_BAND_HIGH, help="Exclusive more-likely price upper bound. Default: 0.80.")
-    parser.add_argument("--entry-seconds", type=float, default=DEFAULT_ENTRY_SECONDS, help="Evaluate once when T <= this many seconds. Default: 600.")
+    parser.add_argument("--band-low", type=float, default=DEFAULT_BAND_LOW, help="Exclusive selected-ask lower bound. Default: 0.50.")
+    parser.add_argument("--band-high", type=float, default=DEFAULT_BAND_HIGH, help="Exclusive selected-ask upper bound. Default: 0.78.")
+    parser.add_argument("--entry-seconds", type=float, default=DEFAULT_ENTRY_SECONDS, help="Evaluate once when T <= this many seconds. Default: 630.")
     parser.add_argument("--retry-attempts", type=int, default=DEFAULT_RETRY_ATTEMPTS, help="Max best-price liquidity/order retries. Default: 10.")
     parser.add_argument("--retry-delay", type=float, default=DEFAULT_RETRY_DELAY_SECONDS, help="Seconds between retries. Default: 0.5.")
     parser.add_argument("--time-in-force", default="fill_or_kill", help="Kalshi order time_in_force. Default: fill_or_kill.")

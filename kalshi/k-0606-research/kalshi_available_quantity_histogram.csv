@@ -1,0 +1,15 @@
+quantity_bin,rule,occurrences
+0-100,logged_current_rule,8
+100-250,logged_current_rule,11
+250-500,logged_current_rule,24
+500-1k,logged_current_rule,16
+1k-2k,logged_current_rule,25
+2k-4k,logged_current_rule,14
+4k+,logged_current_rule,4
+0-100,recommended_known_quantity,6
+100-250,recommended_known_quantity,9
+250-500,recommended_known_quantity,12
+500-1k,recommended_known_quantity,6
+1k-2k,recommended_known_quantity,11
+2k-4k,recommended_known_quantity,8
+4k+,recommended_known_quantity,3
