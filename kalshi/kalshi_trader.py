@@ -24,8 +24,8 @@ STATS_CSV_PATH = Path(
     os.getenv("KALSHI_TRADER_STATS_CSV", str(LOG_PATH.with_name("kalshi_trader_stats.csv")))
 ).expanduser()
 
-DEFAULT_BAND_LOW = 0.50
-DEFAULT_BAND_HIGH = 0.78
+DEFAULT_BAND_LOW = 0.55
+DEFAULT_BAND_HIGH = 0.80
 DEFAULT_CONTRACTS = 2
 DEFAULT_ENTRY_SECONDS = 630
 DEFAULT_RETRY_ATTEMPTS = 10
@@ -378,10 +378,10 @@ def entry_candidate(
 
     if selected_ask is None or not 0.0 < selected_ask < 1.0:
         candidate.reason = f"{side}_ask missing or out of range: {selected_ask}"
-    elif not (band_low < selected_ask < band_high):
+    elif probability is None or not (band_low <= probability < band_high):
         candidate.reason = (
-            f"selected ask {trader.fmt_price(selected_ask, 4)} outside ask band "
-            f"{band_low:.2f}<p<{band_high:.2f}"
+            f"selected probability {trader.fmt_price(probability, 4)} outside probability band "
+            f"{band_low:.2f}<=p<{band_high:.2f}"
         )
     elif agrees is not True:
         candidate.reason = spot_reason
@@ -727,7 +727,7 @@ async def evaluate_entry(
         f"STATUS {entry_label(args.entry_seconds)} {runtime.ticker} | "
         f"yes_mid={trader.fmt_price(kalshi_snapshot.get('yes_mid'), 4)} selected={side_display(candidate.side)} "
         f"selected_prob={trader.fmt_price(candidate.selected_probability, 4)} "
-        f"ask={trader.fmt_cents(candidate.selected_ask)} ask_band={args.band_low:.2f}<p<{args.band_high:.2f} "
+        f"ask={trader.fmt_cents(candidate.selected_ask)} prob_band={args.band_low:.2f}<=p<{args.band_high:.2f} "
         f"spot_agrees=1 "
         f"contracts={args.contracts}",
         prefix_timestamp=False,
@@ -885,7 +885,7 @@ async def run() -> None:
 
     append_log(
         f"START kalshi_trader live={args.live} contracts={args.contracts} "
-        f"ask_band={args.band_low:.2f}<p<{args.band_high:.2f} spot_agreement=required "
+        f"prob_band={args.band_low:.2f}<=p<{args.band_high:.2f} spot_agreement=required "
         f"entry_seconds={args.entry_seconds:g} "
         f"retry_attempts={args.retry_attempts} stop_loss={trader.fmt_money(args.stop_loss)}"
     )
@@ -987,11 +987,11 @@ async def run() -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Kalshi BTC 15m ask-band trader with spot-agreement filter.")
+    parser = argparse.ArgumentParser(description="Kalshi BTC 15m midpoint-band trader with spot-agreement filter.")
     parser.add_argument("--live", action="store_true", help="Submit real Kalshi orders. Omit for dry-run logging.")
     parser.add_argument("--contracts", type=int, default=DEFAULT_CONTRACTS, help="Contracts to buy. Default: 2.")
-    parser.add_argument("--band-low", type=float, default=DEFAULT_BAND_LOW, help="Exclusive selected-ask lower bound. Default: 0.50.")
-    parser.add_argument("--band-high", type=float, default=DEFAULT_BAND_HIGH, help="Exclusive selected-ask upper bound. Default: 0.78.")
+    parser.add_argument("--band-low", type=float, default=DEFAULT_BAND_LOW, help="Inclusive selected-midpoint probability lower bound. Default: 0.55.")
+    parser.add_argument("--band-high", type=float, default=DEFAULT_BAND_HIGH, help="Exclusive selected-midpoint probability upper bound. Default: 0.80.")
     parser.add_argument("--entry-seconds", type=float, default=DEFAULT_ENTRY_SECONDS, help="Evaluate once when T <= this many seconds. Default: 630.")
     parser.add_argument("--retry-attempts", type=int, default=DEFAULT_RETRY_ATTEMPTS, help="Max best-price liquidity/order retries. Default: 10.")
     parser.add_argument("--retry-delay", type=float, default=DEFAULT_RETRY_DELAY_SECONDS, help="Seconds between retries. Default: 0.5.")
@@ -1009,6 +1009,8 @@ def parse_args() -> argparse.Namespace:
     args.log_interval = max(0.0, args.log_interval)
     if args.band_high <= args.band_low:
         parser.error("--band-high must be greater than --band-low")
+    if args.band_low < 0.0 or args.band_high > 1.0:
+        parser.error("--band-low/--band-high must be within [0, 1]")
     return args
 
 
