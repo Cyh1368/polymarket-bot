@@ -28,6 +28,7 @@ DEFAULT_BAND_LOW = 0.55
 DEFAULT_BAND_HIGH = 0.80
 DEFAULT_CONTRACTS = 2
 DEFAULT_ENTRY_SECONDS = 630
+DEFAULT_ENTRY_TOLERANCE_SECONDS = 5.0
 DEFAULT_RETRY_ATTEMPTS = 10
 DEFAULT_RETRY_DELAY_SECONDS = 0.5
 DEFAULT_OUTCOME_DELAY_SECONDS = -2.0
@@ -179,6 +180,21 @@ def entry_label(entry_seconds: float) -> str:
     if entry_seconds % 60 == 0:
         return f"T={entry_seconds / 60:g}m"
     return f"T={entry_seconds:g}s"
+
+
+def entry_window_bounds(entry_seconds: float, tolerance_seconds: float) -> tuple[float, float]:
+    return max(0.0, entry_seconds - max(0.0, tolerance_seconds)), entry_seconds
+
+
+def entry_timing_status(remaining: float | None, entry_seconds: float, tolerance_seconds: float) -> str:
+    if remaining is None:
+        return "unknown"
+    lower, upper = entry_window_bounds(entry_seconds, tolerance_seconds)
+    if lower <= remaining <= upper:
+        return "ready"
+    if remaining > upper:
+        return "waiting"
+    return "missed"
 
 
 def side_display(side: str | None) -> str:
@@ -908,6 +924,7 @@ async def run() -> None:
         f"START kalshi_trader live={args.live} contracts={args.contracts} "
         f"prob_band={args.band_low:.2f}<=p<{args.band_high:.2f} spot_agreement=required "
         f"entry_seconds={args.entry_seconds:g} "
+        f"entry_tolerance_seconds={args.entry_tolerance_seconds:g} "
         f"retry_attempts={args.retry_attempts} stop_loss={trader.fmt_money(args.stop_loss)}"
     )
     if await log_balance_with_stop_loss_baseline("START", None, args) is None and args.stop_loss > 0:
@@ -995,13 +1012,29 @@ async def run() -> None:
                 )
                 runtime.last_status_log_at = now_monotonic
 
-            if (
-                remaining is not None
-                and 0 <= remaining <= args.entry_seconds
-                and not runtime.decision_logged
-            ):
-                runtime.decision_logged = True
-                await evaluate_entry(runtime, counts, args, remaining)
+            if remaining is not None and remaining >= 0 and not runtime.decision_logged:
+                entry_timing = entry_timing_status(remaining, args.entry_seconds, args.entry_tolerance_seconds)
+                if entry_timing == "ready":
+                    runtime.decision_logged = True
+                    await evaluate_entry(runtime, counts, args, remaining)
+                elif entry_timing == "missed":
+                    runtime.decision_logged = True
+                    lower, upper = entry_window_bounds(args.entry_seconds, args.entry_tolerance_seconds)
+                    reason = (
+                        f"missed {entry_label(args.entry_seconds)} entry window "
+                        f"({lower:.1f}s<=T<={upper:.1f}s); current T={remaining:.1f}s"
+                    )
+                    runtime.decision = TradeDecision(
+                        status="skip",
+                        contracts=args.contracts,
+                        dry_run=not args.live,
+                        reason=reason,
+                    )
+                    append_log(
+                        f"ENTRY MISS {runtime.ticker} | {reason}; waiting for next contract | "
+                        f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
+                        prefix_timestamp=False,
+                    )
 
             await asyncio.sleep(max(0.1, args.poll_interval))
     except StopLossTriggered as exc:
@@ -1015,7 +1048,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--contracts", type=int, default=DEFAULT_CONTRACTS, help="Contracts to buy. Default: 2.")
     parser.add_argument("--band-low", type=float, default=DEFAULT_BAND_LOW, help="Inclusive selected-midpoint probability lower bound. Default: 0.55.")
     parser.add_argument("--band-high", type=float, default=DEFAULT_BAND_HIGH, help="Exclusive selected-midpoint probability upper bound. Default: 0.80.")
-    parser.add_argument("--entry-seconds", type=float, default=DEFAULT_ENTRY_SECONDS, help="Evaluate once when T <= this many seconds. Default: 630.")
+    parser.add_argument("--entry-seconds", type=float, default=DEFAULT_ENTRY_SECONDS, help="Target entry time in seconds before close. Default: 630.")
+    parser.add_argument(
+        "--entry-tolerance-seconds",
+        type=float,
+        default=DEFAULT_ENTRY_TOLERANCE_SECONDS,
+        help="Allow entry only when entry_seconds - tolerance <= T <= entry_seconds. Default: 5.",
+    )
     parser.add_argument("--retry-attempts", type=int, default=DEFAULT_RETRY_ATTEMPTS, help="Max best-price liquidity/order retries. Default: 10.")
     parser.add_argument("--retry-delay", type=float, default=DEFAULT_RETRY_DELAY_SECONDS, help="Seconds between retries. Default: 0.5.")
     parser.add_argument("--time-in-force", default="fill_or_kill", help="Kalshi order time_in_force. Default: fill_or_kill.")
@@ -1028,6 +1067,7 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     args.contracts = max(1, args.contracts)
     args.retry_attempts = max(1, args.retry_attempts)
+    args.entry_tolerance_seconds = max(0.0, args.entry_tolerance_seconds)
     args.poll_interval = max(0.1, args.poll_interval)
     args.log_interval = max(0.0, args.log_interval)
     if args.band_high <= args.band_low:
