@@ -823,9 +823,14 @@ def polymarket_start_timestamp(market: dict[str, Any] | None) -> float | None:
         return None
 
 
-def kalshi_brti_60_sma(kalshi_price: float | None) -> tuple[float | None, int]:
+def kalshi_brti_60_sma(kalshi_price: float | None, timestamp_utc: str | None = None) -> tuple[float | None, int]:
+    now_ts = parse_ts(timestamp_utc) if timestamp_utc else time.time()
+    cutoff_ts = now_ts - WINDOW_SECONDS
     samples: list[float] = []
-    for item in list(SOURCE_HISTORY)[-59:]:
+    for item in SOURCE_HISTORY:
+        item_ts = parse_ts(item.get("timestamp_utc"))
+        if item_ts <= 0 or item_ts < cutoff_ts or item_ts > now_ts:
+            continue
         sample = plausible_btc_price(numeric_value(item.get("kalshi_price")))
         if sample is not None:
             samples.append(sample)
@@ -865,7 +870,7 @@ def source_price_snapshot(
         if polymarket_target is not None and target_key:
             POLYMARKET_TARGET_CACHE[target_key] = polymarket_target
 
-    kalshi_60_sma, kalshi_60_sma_count = kalshi_brti_60_sma(kalshi_current)
+    kalshi_60_sma, kalshi_60_sma_count = kalshi_brti_60_sma(kalshi_current, timestamp_utc)
     out = {
         "timestamp_utc": timestamp_utc,
         "kalshi_price": kalshi_current,

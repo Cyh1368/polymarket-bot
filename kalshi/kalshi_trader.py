@@ -186,14 +186,15 @@ def side_display(side: str | None) -> str:
 
 
 def kalshi_source_price_snapshot(kalshi_market: dict[str, Any]) -> dict[str, Any]:
+    timestamp_utc = trader.iso_utc()
     kalshi_current = trader.fetch_brti_price() or trader.plausible_btc_price(
         trader.numeric_value(kalshi_market.get("expiration_value"))
     )
     if kalshi_current is not None:
         trader.cached_source_price("brti", kalshi_current)
-    kalshi_60_sma, kalshi_60_sma_count = trader.kalshi_brti_60_sma(kalshi_current)
+    kalshi_60_sma, kalshi_60_sma_count = trader.kalshi_brti_60_sma(kalshi_current, timestamp_utc)
     out = {
-        "timestamp_utc": trader.iso_utc(),
+        "timestamp_utc": timestamp_utc,
         "kalshi_price": kalshi_current,
         "kalshi_target": trader.numeric_value(kalshi_market.get("floor_strike")),
         "kalshi_60_sma": kalshi_60_sma,
@@ -391,8 +392,9 @@ def entry_candidate(
 def current_outcome(
     runtime: ContractRuntime,
     source_snapshot: dict[str, Any],
-) -> tuple[int | None, str, float | None, float | None, str]:
-    price = finite_float(source_snapshot.get("kalshi_price"))
+) -> tuple[int | None, str, float | None, float | None, str, str]:
+    price = finite_float(source_snapshot.get("kalshi_60_sma"))
+    price_source = "kalshi_60_sma_source_snapshot"
     target = finite_float(source_snapshot.get("kalshi_target"))
     target_source = "observed_source_snapshot"
     if target is None:
@@ -403,13 +405,31 @@ def current_outcome(
                 break
     if price is None:
         for row in reversed(runtime.history):
+            price = finite_float(row.get("kalshi_60_sma"))
+            if price is not None:
+                price_source = "kalshi_60_sma_history"
+                break
+    if price is None:
+        price = finite_float(source_snapshot.get("kalshi_price"))
+        if price is not None:
+            price_source = "kalshi_spot_source_snapshot_fallback"
+    if price is None:
+        for row in reversed(runtime.history):
             price = finite_float(row.get("kalshi_price"))
             if price is not None:
+                price_source = "kalshi_spot_history_fallback"
                 break
     if price is None or target is None:
-        return None, "MISSING", price, target, "missing"
+        return (
+            None,
+            "MISSING",
+            price,
+            target,
+            price_source if price is not None else "missing",
+            target_source if target is not None else "missing",
+        )
     actual_label = int(price > target)
-    return actual_label, "YES" if actual_label else "NO", price, target, target_source
+    return actual_label, "YES" if actual_label else "NO", price, target, price_source, target_source
 
 
 def trade_row_base(
@@ -794,7 +814,7 @@ def outcome_event(
     args: argparse.Namespace,
     remaining: float | None,
 ) -> None:
-    actual_label, actual_side, price, target, target_source = current_outcome(runtime, source_snapshot)
+    actual_label, actual_side, price, target, price_source, target_source = current_outcome(runtime, source_snapshot)
     decision = runtime.decision
     latest = "skipped"
     correct: int | str = ""
@@ -809,8 +829,9 @@ def outcome_event(
         decision.outcome_recorded = True
 
     append_log(
-        f"OUTCOME {runtime.ticker} | K price={trader.fmt_price(price, 2)} "
-        f"target={trader.fmt_price(target, 2)} target_source={target_source} actual={actual_side} "
+        f"OUTCOME {runtime.ticker} | K outcome_price={trader.fmt_price(price, 2)} "
+        f"outcome_source={price_source} target={trader.fmt_price(target, 2)} "
+        f"target_source={target_source} actual={actual_side} "
         f"trade={side_display(decision.side) if decision else '--'} status={decision.status if decision else 'none'} "
         f"result={latest} correct={correct if correct != '' else '--'} | "
         f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
@@ -834,7 +855,7 @@ def outcome_event(
             "correct": correct,
             "kalshi_price": price if price is not None else "",
             "kalshi_target": target if target is not None else "",
-            "kalshi_target_source": target_source,
+            "kalshi_target_source": f"{target_source}; outcome_source={price_source}",
             "reason": latest,
         }
     )
@@ -945,6 +966,8 @@ async def run() -> None:
                 {
                     "timestamp_utc": trader.iso_utc(),
                     "kalshi_price": source_snapshot.get("kalshi_price"),
+                    "kalshi_60_sma": source_snapshot.get("kalshi_60_sma"),
+                    "kalshi_60_sma_sample_count": source_snapshot.get("kalshi_60_sma_sample_count"),
                     "kalshi_target": source_snapshot.get("kalshi_target"),
                 }
             )
