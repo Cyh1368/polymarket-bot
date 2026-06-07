@@ -200,6 +200,34 @@ PAGE = """<!doctype html>
     .stat-value.small {
       font-size: clamp(18px, 1.7vw, 28px);
     }
+    .latest-contract {
+      margin-top: 18px;
+      padding: 11px 12px;
+      border: 1px solid #2c3136;
+      background: #15191d;
+    }
+    .latest-contract-title {
+      color: #7f8a93;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .latest-contract-main {
+      margin-top: 5px;
+      color: #eef2f5;
+      font-size: clamp(15px, 1.45vw, 22px);
+      font-weight: 720;
+      line-height: 1.15;
+      overflow-wrap: anywhere;
+    }
+    .latest-contract-sub {
+      margin-top: 4px;
+      color: #9ba7b0;
+      font-size: 12px;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
     .positive { color: #4ade80; }
     .negative { color: #f87171; }
     .log-panel {
@@ -309,6 +337,16 @@ PAGE = """<!doctype html>
       .stat-value.small {
         font-size: clamp(15px, 4.8vw, 20px);
       }
+      .latest-contract {
+        margin-top: 12px;
+        padding: 9px 10px;
+      }
+      .latest-contract-main {
+        font-size: clamp(14px, 4.2vw, 18px);
+      }
+      .latest-contract-sub {
+        font-size: 11px;
+      }
       .range-button {
         width: 36px;
         height: 26px;
@@ -388,6 +426,11 @@ PAGE = """<!doctype html>
             <div class="stat-label">PnL Today</div>
             <div class="stat-value small" id="pnlToday">--</div>
           </div>
+        </div>
+        <div class="latest-contract">
+          <div class="latest-contract-title">Latest Contract</div>
+          <div class="latest-contract-main" id="latestContractMain">--</div>
+          <div class="latest-contract-sub" id="latestContractSub">waiting for trade data</div>
         </div>
       </section>
     </section>
@@ -523,6 +566,26 @@ PAGE = """<!doctype html>
       });
     }
 
+    function fmtShortTime(value) {
+      if (!value) return "--";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    function fmtShortDateTime(value) {
+      if (!value) return "--";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    }
+
     function latestRow(rows) {
       for (let i = rows.length - 1; i >= 0; i -= 1) {
         if (rows[i]) return rows[i];
@@ -545,6 +608,25 @@ PAGE = """<!doctype html>
       const pnlEl = document.getElementById("pnlToday");
       pnlEl.textContent = pnlDollars === null ? "--" : `${fmtMoney(pnlDollars)} / ${fmtPct(pnlPct, 1)}`;
       pnlEl.className = `stat-value small ${pnlDollars > 0 ? "positive" : pnlDollars < 0 ? "negative" : ""}`.trim();
+    }
+
+    function renderLatestContract(contract) {
+      const mainEl = document.getElementById("latestContractMain");
+      const subEl = document.getElementById("latestContractSub");
+      if (!contract || !contract.contract_id) {
+        mainEl.textContent = "--";
+        subEl.textContent = "waiting for trade data";
+        return;
+      }
+      const closeTime = fmtShortTime(contract.close_time);
+      const actual = contract.actual_side || "pending";
+      const prediction = contract.prediction_side || "none";
+      const resultText = contract.correct === "1" ? "correct" : contract.correct === "0" ? "wrong" : "open";
+      mainEl.textContent = `${closeTime} · actual ${actual} · pred ${prediction}`;
+      const probability = contract.prediction_probability ? ` @ ${fmtPct(contract.prediction_probability, 1)}` : "";
+      const status = contract.order_status || "unknown";
+      const updated = contract.outcome_timestamp_utc || contract.prediction_timestamp_utc || contract.timestamp_utc || "";
+      subEl.textContent = `${contract.contract_id} · ${status}${probability} · ${resultText} · updated ${fmtShortDateTime(updated)}`;
     }
 
     function visiblePoints() {
@@ -711,6 +793,7 @@ PAGE = """<!doctype html>
         const data = await response.json();
         statsRows = data.rows || [];
         renderStats(data.latest || latestRow(statsRows));
+        renderLatestContract(data.latest_contract || null);
         drawChart();
       } catch (error) {
         console.error(error);
@@ -774,6 +857,64 @@ def read_stats_rows() -> list[dict[str, str]]:
         return list(csv.DictReader(file_obj))
 
 
+def read_trade_rows() -> list[dict[str, str]]:
+    if not TRADES_CSV_PATH.exists():
+        return []
+    with TRADES_CSV_PATH.open(newline="", encoding="utf-8") as file_obj:
+        return list(csv.DictReader(file_obj))
+
+
+def latest_contract_status() -> dict[str, str]:
+    rows = [row for row in read_trade_rows() if row.get("contract_id")]
+    if not rows:
+        return {}
+
+    latest_row = max(
+        rows,
+        key=lambda row: (
+            row.get("close_time", ""),
+            row.get("timestamp_utc", ""),
+            row.get("contract_id", ""),
+        ),
+    )
+    key = (latest_row.get("contract_id", ""), latest_row.get("close_time", ""))
+    contract_rows = [
+        row
+        for row in rows
+        if (row.get("contract_id", ""), row.get("close_time", "")) == key
+    ]
+    prediction_row = next(
+        (
+            row
+            for row in reversed(contract_rows)
+            if row.get("selected_side") or row.get("order_status")
+        ),
+        {},
+    )
+    outcome_row = next((row for row in reversed(contract_rows) if row.get("event") == "outcome"), {})
+    actual_side = (
+        outcome_row.get("actual_side")
+        or outcome_row.get("official_result", "").upper()
+        or ""
+    )
+    return {
+        "contract_id": key[0],
+        "close_time": key[1],
+        "timestamp_utc": latest_row.get("timestamp_utc", ""),
+        "prediction_timestamp_utc": prediction_row.get("timestamp_utc", ""),
+        "outcome_timestamp_utc": outcome_row.get("timestamp_utc", ""),
+        "prediction_side": prediction_row.get("selected_side", ""),
+        "prediction_probability": prediction_row.get("selected_probability", ""),
+        "order_status": prediction_row.get("order_status", ""),
+        "actual_side": actual_side,
+        "actual_label": outcome_row.get("actual_label", ""),
+        "correct": outcome_row.get("correct", ""),
+        "official_result": outcome_row.get("official_result", ""),
+        "official_status": outcome_row.get("official_status", ""),
+        "official_outcome_source": outcome_row.get("official_outcome_source", ""),
+    }
+
+
 @app.get("/")
 def index() -> str:
     return render_template_string(PAGE)
@@ -796,6 +937,7 @@ def log() -> Response:
 def stats() -> Response:
     rows = read_stats_rows()
     latest = rows[-1] if rows else {}
+    latest_contract = latest_contract_status()
     return jsonify(
         {
             "log_path": str(LOG_PATH),
@@ -803,6 +945,7 @@ def stats() -> Response:
             "stats_path": str(STATS_CSV_PATH),
             "rows": rows,
             "latest": latest,
+            "latest_contract": latest_contract,
         }
     )
 

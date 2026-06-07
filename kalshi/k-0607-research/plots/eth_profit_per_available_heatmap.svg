@@ -1,0 +1,489 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="972" height="510" viewBox="0 0 972 510">
+<style>
+text{font-family:Verdana,Arial,sans-serif;fill:#263238}
+.small{font-size:10px}.label{font-size:11px}.title{font-size:18px;font-weight:700}.subtitle{font-size:12px;fill:#52616b}
+</style>
+<rect width="100%" height="100%" fill="#fbfaf4"/>
+<text x="24" y="32" class="title">ETH Profit Per Available Contract</text>
+<text x="24" y="52" class="subtitle">Rows are contiguous more-likely price ranges; columns are seconds before expiry. Black outline marks selected stable parameter.</text>
+<text x="159.0" y="66" text-anchor="middle" class="label">60</text>
+<text x="213.0" y="66" text-anchor="middle" class="label">120</text>
+<text x="267.0" y="66" text-anchor="middle" class="label">180</text>
+<text x="321.0" y="66" text-anchor="middle" class="label">240</text>
+<text x="375.0" y="66" text-anchor="middle" class="label">300</text>
+<text x="429.0" y="66" text-anchor="middle" class="label">360</text>
+<text x="483.0" y="66" text-anchor="middle" class="label">420</text>
+<text x="537.0" y="66" text-anchor="middle" class="label">480</text>
+<text x="591.0" y="66" text-anchor="middle" class="label">540</text>
+<text x="645.0" y="66" text-anchor="middle" class="label">600</text>
+<text x="699.0" y="66" text-anchor="middle" class="label">660</text>
+<text x="753.0" y="66" text-anchor="middle" class="label">720</text>
+<text x="807.0" y="66" text-anchor="middle" class="label">780</text>
+<text x="861.0" y="66" text-anchor="middle" class="label">840</text>
+<text x="915.0" y="66" text-anchor="middle" class="label">900</text>
+<text x="122" y="94" text-anchor="end" class="label">0.50-0.60</text>
+<rect x="132" y="78" width="54" height="24" fill="#e6eee6" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.50-0.60: profit_per_available_contract=0.004539</title></rect>
+<rect x="186" y="78" width="54" height="24" fill="#efe0dc" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.50-0.60: profit_per_available_contract=-0.006949</title></rect>
+<rect x="240" y="78" width="54" height="24" fill="#e0ebe2" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.50-0.60: profit_per_available_contract=0.006207</title></rect>
+<rect x="294" y="78" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.50-0.60: profit_per_available_contract=-0.000110</title></rect>
+<rect x="348" y="78" width="54" height="24" fill="#ecf1eb" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.50-0.60: profit_per_available_contract=0.002889</title></rect>
+<rect x="402" y="78" width="54" height="24" fill="#ecf1eb" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.50-0.60: profit_per_available_contract=0.002803</title></rect>
+<rect x="456" y="78" width="54" height="24" fill="#edf2eb" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.50-0.60: profit_per_available_contract=0.002651</title></rect>
+<rect x="510" y="78" width="54" height="24" fill="#e4c3bf" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.50-0.60: profit_per_available_contract=-0.015915</title></rect>
+<text x="537.0" y="94" text-anchor="middle" class="small" fill="#401d1d">-0.016</text>
+<rect x="564" y="78" width="54" height="24" fill="#f1e8e3" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.50-0.60: profit_per_available_contract=-0.004672</title></rect>
+<rect x="618" y="78" width="54" height="24" fill="#e8cfcb" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.50-0.60: profit_per_available_contract=-0.012231</title></rect>
+<text x="645.0" y="94" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<rect x="672" y="78" width="54" height="24" fill="#dbaaa7" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.50-0.60: profit_per_available_contract=-0.023594</title></rect>
+<text x="699.0" y="94" text-anchor="middle" class="small" fill="#401d1d">-0.024</text>
+<rect x="726" y="78" width="54" height="24" fill="#eeded9" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.50-0.60: profit_per_available_contract=-0.007727</title></rect>
+<rect x="780" y="78" width="54" height="24" fill="#d9a5a2" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.50-0.60: profit_per_available_contract=-0.025064</title></rect>
+<text x="807.0" y="94" text-anchor="middle" class="small" fill="#401d1d">-0.025</text>
+<rect x="834" y="78" width="54" height="24" fill="#eededa" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.50-0.60: profit_per_available_contract=-0.007606</title></rect>
+<rect x="888" y="78" width="54" height="24" fill="#bf5d5c" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.50-0.60: profit_per_available_contract=-0.046911</title></rect>
+<text x="915.0" y="94" text-anchor="middle" class="small" fill="#401d1d">-0.047</text>
+<text x="122" y="118" text-anchor="end" class="label">0.50-0.70</text>
+<rect x="132" y="102" width="54" height="24" fill="#e6eee6" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.50-0.70: profit_per_available_contract=0.004592</title></rect>
+<rect x="186" y="102" width="54" height="24" fill="#ead4d0" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.50-0.70: profit_per_available_contract=-0.010806</title></rect>
+<text x="213.0" y="118" text-anchor="middle" class="small" fill="#401d1d">-0.011</text>
+<rect x="240" y="102" width="54" height="24" fill="#dfeae2" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.50-0.70: profit_per_available_contract=0.006299</title></rect>
+<rect x="294" y="102" width="54" height="24" fill="#efe2de" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.50-0.70: profit_per_available_contract=-0.006357</title></rect>
+<rect x="348" y="102" width="54" height="24" fill="#f0f3ed" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.50-0.70: profit_per_available_contract=0.001780</title></rect>
+<rect x="402" y="102" width="54" height="24" fill="#f6f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.50-0.70: profit_per_available_contract=0.000346</title></rect>
+<rect x="456" y="102" width="54" height="24" fill="#d4e5da" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.50-0.70: profit_per_available_contract=0.009212</title></rect>
+<rect x="510" y="102" width="54" height="24" fill="#e3c1be" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.50-0.70: profit_per_available_contract=-0.016356</title></rect>
+<text x="537.0" y="118" text-anchor="middle" class="small" fill="#401d1d">-0.016</text>
+<rect x="564" y="102" width="54" height="24" fill="#f0e3de" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.50-0.70: profit_per_available_contract=-0.006240</title></rect>
+<rect x="618" y="102" width="54" height="24" fill="#ecdad6" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.50-0.70: profit_per_available_contract=-0.008823</title></rect>
+<rect x="672" y="102" width="54" height="24" fill="#cd8482" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.50-0.70: profit_per_available_contract=-0.035245</title></rect>
+<text x="699.0" y="118" text-anchor="middle" class="small" fill="#401d1d">-0.035</text>
+<rect x="726" y="102" width="54" height="24" fill="#f4eeea" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.50-0.70: profit_per_available_contract=-0.002663</title></rect>
+<rect x="780" y="102" width="54" height="24" fill="#ca7c7a" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.50-0.70: profit_per_available_contract=-0.037716</title></rect>
+<text x="807.0" y="118" text-anchor="middle" class="small" fill="#401d1d">-0.038</text>
+<rect x="834" y="102" width="54" height="24" fill="#dba9a6" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.50-0.70: profit_per_available_contract=-0.023688</title></rect>
+<text x="861.0" y="118" text-anchor="middle" class="small" fill="#401d1d">-0.024</text>
+<rect x="888" y="102" width="54" height="24" fill="#b13939" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.50-0.70: profit_per_available_contract=-0.058063</title></rect>
+<text x="915.0" y="118" text-anchor="middle" class="small" fill="#401d1d">-0.058</text>
+<text x="122" y="142" text-anchor="end" class="label">0.50-0.80</text>
+<rect x="132" y="126" width="54" height="24" fill="#e0ebe3" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.50-0.80: profit_per_available_contract=0.005989</title></rect>
+<rect x="186" y="126" width="54" height="24" fill="#e5c5c1" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.50-0.80: profit_per_available_contract=-0.015323</title></rect>
+<text x="213.0" y="142" text-anchor="middle" class="small" fill="#401d1d">-0.015</text>
+<rect x="240" y="126" width="54" height="24" fill="#eaf0e9" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.50-0.80: profit_per_available_contract=0.003544</title></rect>
+<rect x="294" y="126" width="54" height="24" fill="#f5f1ec" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.50-0.80: profit_per_available_contract=-0.001974</title></rect>
+<rect x="348" y="126" width="54" height="24" fill="#f4eee9" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.50-0.80: profit_per_available_contract=-0.002852</title></rect>
+<rect x="402" y="126" width="54" height="24" fill="#f2eae5" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.50-0.80: profit_per_available_contract=-0.004066</title></rect>
+<rect x="456" y="126" width="54" height="24" fill="#ebf1ea" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.50-0.80: profit_per_available_contract=0.003054</title></rect>
+<rect x="510" y="126" width="54" height="24" fill="#d9a5a2" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.50-0.80: profit_per_available_contract=-0.025012</title></rect>
+<text x="537.0" y="142" text-anchor="middle" class="small" fill="#401d1d">-0.025</text>
+<rect x="564" y="126" width="54" height="24" fill="#e8cfcb" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.50-0.80: profit_per_available_contract=-0.012319</title></rect>
+<text x="591.0" y="142" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<rect x="618" y="126" width="54" height="24" fill="#e3c1be" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.50-0.80: profit_per_available_contract=-0.016414</title></rect>
+<text x="645.0" y="142" text-anchor="middle" class="small" fill="#401d1d">-0.016</text>
+<rect x="672" y="126" width="54" height="24" fill="#c87574" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.50-0.80: profit_per_available_contract=-0.039625</title></rect>
+<text x="699.0" y="142" text-anchor="middle" class="small" fill="#401d1d">-0.040</text>
+<rect x="726" y="126" width="54" height="24" fill="#f0e5e0" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.50-0.80: profit_per_available_contract=-0.005621</title></rect>
+<rect x="780" y="126" width="54" height="24" fill="#cb7e7c" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.50-0.80: profit_per_available_contract=-0.036969</title></rect>
+<text x="807.0" y="142" text-anchor="middle" class="small" fill="#401d1d">-0.037</text>
+<rect x="834" y="126" width="54" height="24" fill="#d8a4a1" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.50-0.80: profit_per_available_contract=-0.025486</title></rect>
+<text x="861.0" y="142" text-anchor="middle" class="small" fill="#401d1d">-0.025</text>
+<rect x="888" y="126" width="54" height="24" fill="#b03535" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.50-0.80: profit_per_available_contract=-0.059267</title></rect>
+<text x="915.0" y="142" text-anchor="middle" class="small" fill="#401d1d">-0.059</text>
+<text x="122" y="166" text-anchor="end" class="label">0.50-0.90</text>
+<rect x="132" y="150" width="54" height="24" fill="#e5ede5" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.50-0.90: profit_per_available_contract=0.004849</title></rect>
+<rect x="186" y="150" width="54" height="24" fill="#e8ceca" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.50-0.90: profit_per_available_contract=-0.012415</title></rect>
+<text x="213.0" y="166" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<rect x="240" y="150" width="54" height="24" fill="#f3ede8" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.50-0.90: profit_per_available_contract=-0.003205</title></rect>
+<rect x="294" y="150" width="54" height="24" fill="#ebd5d1" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.50-0.90: profit_per_available_contract=-0.010397</title></rect>
+<text x="321.0" y="166" text-anchor="middle" class="small" fill="#401d1d">-0.010</text>
+<rect x="348" y="150" width="54" height="24" fill="#f0e5e0" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.50-0.90: profit_per_available_contract=-0.005533</title></rect>
+<rect x="402" y="150" width="54" height="24" fill="#f2f4ee" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.50-0.90: profit_per_available_contract=0.001369</title></rect>
+<rect x="456" y="150" width="54" height="24" fill="#ecf1eb" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.50-0.90: profit_per_available_contract=0.002877</title></rect>
+<rect x="510" y="150" width="54" height="24" fill="#e9cfcb" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.50-0.90: profit_per_available_contract=-0.012101</title></rect>
+<text x="537.0" y="166" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<rect x="564" y="150" width="54" height="24" fill="#efe1dd" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.50-0.90: profit_per_available_contract=-0.006615</title></rect>
+<rect x="618" y="150" width="54" height="24" fill="#deb4b1" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.50-0.90: profit_per_available_contract=-0.020503</title></rect>
+<text x="645.0" y="166" text-anchor="middle" class="small" fill="#401d1d">-0.021</text>
+<rect x="672" y="150" width="54" height="24" fill="#ca7c7a" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.50-0.90: profit_per_available_contract=-0.037693</title></rect>
+<text x="699.0" y="166" text-anchor="middle" class="small" fill="#401d1d">-0.038</text>
+<rect x="726" y="150" width="54" height="24" fill="#f2e9e5" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.50-0.90: profit_per_available_contract=-0.004160</title></rect>
+<rect x="780" y="150" width="54" height="24" fill="#d9a4a1" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.50-0.90: profit_per_available_contract=-0.025294</title></rect>
+<text x="807.0" y="166" text-anchor="middle" class="small" fill="#401d1d">-0.025</text>
+<rect x="834" y="150" width="54" height="24" fill="#daa9a6" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.50-0.90: profit_per_available_contract=-0.023819</title></rect>
+<text x="861.0" y="166" text-anchor="middle" class="small" fill="#401d1d">-0.024</text>
+<rect x="888" y="150" width="54" height="24" fill="#b03636" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.50-0.90: profit_per_available_contract=-0.059023</title></rect>
+<text x="915.0" y="166" text-anchor="middle" class="small" fill="#401d1d">-0.059</text>
+<text x="122" y="190" text-anchor="end" class="label">0.50-1.00</text>
+<rect x="132" y="174" width="54" height="24" fill="#ebf1ea" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.50-1.00: profit_per_available_contract=0.003176</title></rect>
+<rect x="186" y="174" width="54" height="24" fill="#e1bcb9" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.50-1.00: profit_per_available_contract=-0.018007</title></rect>
+<text x="213.0" y="190" text-anchor="middle" class="small" fill="#401d1d">-0.018</text>
+<rect x="240" y="174" width="54" height="24" fill="#eedfdb" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.50-1.00: profit_per_available_contract=-0.007367</title></rect>
+<rect x="294" y="174" width="54" height="24" fill="#e9d1cd" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.50-1.00: profit_per_available_contract=-0.011570</title></rect>
+<text x="321.0" y="190" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<rect x="348" y="174" width="54" height="24" fill="#f0e4e0" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.50-1.00: profit_per_available_contract=-0.005703</title></rect>
+<rect x="402" y="174" width="54" height="24" fill="#e3ece4" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.50-1.00: profit_per_available_contract=0.005325</title></rect>
+<rect x="456" y="174" width="54" height="24" fill="#dfeae2" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.50-1.00: profit_per_available_contract=0.006363</title></rect>
+<rect x="510" y="174" width="54" height="24" fill="#ebd7d3" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.50-1.00: profit_per_available_contract=-0.009701</title></rect>
+<rect x="564" y="174" width="54" height="24" fill="#f1e6e2" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.50-1.00: profit_per_available_contract=-0.005075</title></rect>
+<rect x="618" y="174" width="54" height="24" fill="#e2bfbb" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.50-1.00: profit_per_available_contract=-0.017250</title></rect>
+<text x="645.0" y="190" text-anchor="middle" class="small" fill="#401d1d">-0.017</text>
+<rect x="672" y="174" width="54" height="24" fill="#cd8381" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.50-1.00: profit_per_available_contract=-0.035352</title></rect>
+<text x="699.0" y="190" text-anchor="middle" class="small" fill="#401d1d">-0.035</text>
+<rect x="726" y="174" width="54" height="24" fill="#f1e7e2" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.50-1.00: profit_per_available_contract=-0.004937</title></rect>
+<rect x="780" y="174" width="54" height="24" fill="#d8a19e" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.50-1.00: profit_per_available_contract=-0.026267</title></rect>
+<text x="807.0" y="190" text-anchor="middle" class="small" fill="#401d1d">-0.026</text>
+<rect x="834" y="174" width="54" height="24" fill="#dbaaa7" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.50-1.00: profit_per_available_contract=-0.023554</title></rect>
+<text x="861.0" y="190" text-anchor="middle" class="small" fill="#401d1d">-0.024</text>
+<rect x="888" y="174" width="54" height="24" fill="#b03636" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.50-1.00: profit_per_available_contract=-0.059023</title></rect>
+<text x="915.0" y="190" text-anchor="middle" class="small" fill="#401d1d">-0.059</text>
+<text x="122" y="214" text-anchor="end" class="label">0.60-0.70</text>
+<rect x="132" y="198" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.60-0.70: profit_per_available_contract=0.000053</title></rect>
+<rect x="186" y="198" width="54" height="24" fill="#f2eae6" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.60-0.70: profit_per_available_contract=-0.003857</title></rect>
+<rect x="240" y="198" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.60-0.70: profit_per_available_contract=0.000092</title></rect>
+<rect x="294" y="198" width="54" height="24" fill="#f0e3de" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.60-0.70: profit_per_available_contract=-0.006247</title></rect>
+<rect x="348" y="198" width="54" height="24" fill="#f6f3ee" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.60-0.70: profit_per_available_contract=-0.001109</title></rect>
+<rect x="402" y="198" width="54" height="24" fill="#f4efea" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.60-0.70: profit_per_available_contract=-0.002457</title></rect>
+<rect x="456" y="198" width="54" height="24" fill="#deeae1" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.60-0.70: profit_per_available_contract=0.006561</title></rect>
+<rect x="510" y="198" width="54" height="24" fill="#f6f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.60-0.70: profit_per_available_contract=-0.000441</title></rect>
+<rect x="564" y="198" width="54" height="24" fill="#f5f2ed" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.60-0.70: profit_per_available_contract=-0.001568</title></rect>
+<rect x="618" y="198" width="54" height="24" fill="#eaf0e9" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.60-0.70: profit_per_available_contract=0.003409</title></rect>
+<rect x="672" y="198" width="54" height="24" fill="#e9d1cd" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.60-0.70: profit_per_available_contract=-0.011651</title></rect>
+<text x="699.0" y="214" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<rect x="726" y="198" width="54" height="24" fill="#e4ede5" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.60-0.70: profit_per_available_contract=0.005064</title></rect>
+<rect x="780" y="198" width="54" height="24" fill="#e8ceca" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.60-0.70: profit_per_available_contract=-0.012652</title></rect>
+<text x="807.0" y="214" text-anchor="middle" class="small" fill="#401d1d">-0.013</text>
+<rect x="834" y="198" width="54" height="24" fill="#e4c2bf" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.60-0.70: profit_per_available_contract=-0.016082</title></rect>
+<text x="861.0" y="214" text-anchor="middle" class="small" fill="#401d1d">-0.016</text>
+<rect x="888" y="198" width="54" height="24" fill="#ead2ce" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.60-0.70: profit_per_available_contract=-0.011152</title></rect>
+<text x="915.0" y="214" text-anchor="middle" class="small" fill="#401d1d">-0.011</text>
+<text x="122" y="238" text-anchor="end" class="label">0.60-0.80</text>
+<rect x="132" y="222" width="54" height="24" fill="#f2f4ee" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.60-0.80: profit_per_available_contract=0.001450</title></rect>
+<rect x="186" y="222" width="54" height="24" fill="#eddcd7" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.60-0.80: profit_per_available_contract=-0.008373</title></rect>
+<rect x="240" y="222" width="54" height="24" fill="#f4eeea" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.60-0.80: profit_per_available_contract=-0.002663</title></rect>
+<rect x="294" y="222" width="54" height="24" fill="#f5f1ec" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.60-0.80: profit_per_available_contract=-0.001864</title></rect>
+<rect x="348" y="222" width="54" height="24" fill="#f0e4e0" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.60-0.80: profit_per_available_contract=-0.005741</title></rect>
+<rect x="402" y="222" width="54" height="24" fill="#efe1dc" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.60-0.80: profit_per_available_contract=-0.006870</title></rect>
+<rect x="456" y="222" width="54" height="24" fill="#f5f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.60-0.80: profit_per_available_contract=0.000403</title></rect>
+<rect x="510" y="222" width="54" height="24" fill="#ecd9d5" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.60-0.80: profit_per_available_contract=-0.009097</title></rect>
+<rect x="564" y="222" width="54" height="24" fill="#eededa" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.60-0.80: profit_per_available_contract=-0.007646</title></rect>
+<rect x="618" y="222" width="54" height="24" fill="#f2e9e5" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.60-0.80: profit_per_available_contract=-0.004183</title></rect>
+<rect x="672" y="222" width="54" height="24" fill="#e4c3bf" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.60-0.80: profit_per_available_contract=-0.016031</title></rect>
+<text x="699.0" y="238" text-anchor="middle" class="small" fill="#401d1d">-0.016</text>
+<rect x="726" y="222" width="54" height="24" fill="#eff3ed" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.60-0.80: profit_per_available_contract=0.002106</title></rect>
+<rect x="780" y="222" width="54" height="24" fill="#e9d0cc" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.60-0.80: profit_per_available_contract=-0.011904</title></rect>
+<text x="807.0" y="238" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<rect x="834" y="222" width="54" height="24" fill="#e2bcb9" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.60-0.80: profit_per_available_contract=-0.017880</title></rect>
+<text x="861.0" y="238" text-anchor="middle" class="small" fill="#401d1d">-0.018</text>
+<rect x="888" y="222" width="54" height="24" fill="#e8cfcb" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.60-0.80: profit_per_available_contract=-0.012356</title></rect>
+<text x="915.0" y="238" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<text x="122" y="262" text-anchor="end" class="label">0.60-0.90</text>
+<rect x="132" y="246" width="54" height="24" fill="#f6f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.60-0.90: profit_per_available_contract=0.000310</title></rect>
+<rect x="186" y="246" width="54" height="24" fill="#f0e5e1" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.60-0.90: profit_per_available_contract=-0.005466</title></rect>
+<rect x="240" y="246" width="54" height="24" fill="#ecd8d4" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.60-0.90: profit_per_available_contract=-0.009412</title></rect>
+<rect x="294" y="246" width="54" height="24" fill="#ebd5d1" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.60-0.90: profit_per_available_contract=-0.010287</title></rect>
+<text x="321.0" y="262" text-anchor="middle" class="small" fill="#401d1d">-0.010</text>
+<rect x="348" y="246" width="54" height="24" fill="#eddbd7" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.60-0.90: profit_per_available_contract=-0.008422</title></rect>
+<rect x="402" y="246" width="54" height="24" fill="#f5f2ed" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.60-0.90: profit_per_available_contract=-0.001435</title></rect>
+<rect x="456" y="246" width="54" height="24" fill="#f6f7f1" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.60-0.90: profit_per_available_contract=0.000226</title></rect>
+<rect x="510" y="246" width="54" height="24" fill="#e9efe8" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.60-0.90: profit_per_available_contract=0.003814</title></rect>
+<rect x="564" y="246" width="54" height="24" fill="#f5f1ec" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.60-0.90: profit_per_available_contract=-0.001943</title></rect>
+<rect x="618" y="246" width="54" height="24" fill="#eddcd8" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.60-0.90: profit_per_available_contract=-0.008271</title></rect>
+<rect x="672" y="246" width="54" height="24" fill="#e6c9c5" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.60-0.90: profit_per_available_contract=-0.014099</title></rect>
+<text x="699.0" y="262" text-anchor="middle" class="small" fill="#401d1d">-0.014</text>
+<rect x="726" y="246" width="54" height="24" fill="#eaf0e9" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.60-0.90: profit_per_available_contract=0.003567</title></rect>
+<rect x="780" y="246" width="54" height="24" fill="#f7f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.60-0.90: profit_per_available_contract=-0.000230</title></rect>
+<rect x="834" y="246" width="54" height="24" fill="#e4c2be" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.60-0.90: profit_per_available_contract=-0.016213</title></rect>
+<text x="861.0" y="262" text-anchor="middle" class="small" fill="#401d1d">-0.016</text>
+<rect x="888" y="246" width="54" height="24" fill="#e8cfcb" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.60-0.90: profit_per_available_contract=-0.012112</title></rect>
+<text x="915.0" y="262" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<text x="122" y="286" text-anchor="end" class="label">0.60-1.00</text>
+<rect x="132" y="270" width="54" height="24" fill="#f5f3ee" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.60-1.00: profit_per_available_contract=-0.001363</title></rect>
+<rect x="186" y="270" width="54" height="24" fill="#ead3cf" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.60-1.00: profit_per_available_contract=-0.011058</title></rect>
+<text x="213.0" y="286" text-anchor="middle" class="small" fill="#401d1d">-0.011</text>
+<rect x="240" y="270" width="54" height="24" fill="#e7cbc7" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.60-1.00: profit_per_available_contract=-0.013574</title></rect>
+<text x="267.0" y="286" text-anchor="middle" class="small" fill="#401d1d">-0.014</text>
+<rect x="294" y="270" width="54" height="24" fill="#e9d1cd" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.60-1.00: profit_per_available_contract=-0.011461</title></rect>
+<text x="321.0" y="286" text-anchor="middle" class="small" fill="#401d1d">-0.011</text>
+<rect x="348" y="270" width="54" height="24" fill="#eddbd7" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.60-1.00: profit_per_available_contract=-0.008592</title></rect>
+<rect x="402" y="270" width="54" height="24" fill="#edf2eb" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.60-1.00: profit_per_available_contract=0.002522</title></rect>
+<rect x="456" y="270" width="54" height="24" fill="#e9f0e8" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.60-1.00: profit_per_available_contract=0.003712</title></rect>
+<rect x="510" y="270" width="54" height="24" fill="#e0ebe2" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.60-1.00: profit_per_available_contract=0.006214</title></rect>
+<rect x="564" y="270" width="54" height="24" fill="#f7f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.60-1.00: profit_per_available_contract=-0.000402</title></rect>
+<rect x="618" y="270" width="54" height="24" fill="#f1e7e2" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.60-1.00: profit_per_available_contract=-0.005019</title></rect>
+<rect x="672" y="270" width="54" height="24" fill="#e9d1cd" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.60-1.00: profit_per_available_contract=-0.011759</title></rect>
+<text x="699.0" y="286" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<rect x="726" y="270" width="54" height="24" fill="#ecf1eb" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.60-1.00: profit_per_available_contract=0.002790</title></rect>
+<rect x="780" y="270" width="54" height="24" fill="#f6f3ee" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.60-1.00: profit_per_available_contract=-0.001202</title></rect>
+<rect x="834" y="270" width="54" height="24" fill="#e4c3bf" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.60-1.00: profit_per_available_contract=-0.015948</title></rect>
+<text x="861.0" y="286" text-anchor="middle" class="small" fill="#401d1d">-0.016</text>
+<rect x="888" y="270" width="54" height="24" fill="#e8cfcb" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.60-1.00: profit_per_available_contract=-0.012112</title></rect>
+<text x="915.0" y="286" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<text x="122" y="310" text-anchor="end" class="label">0.70-0.80</text>
+<rect x="132" y="294" width="54" height="24" fill="#f2f4ee" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.70-0.80: profit_per_available_contract=0.001397</title></rect>
+<rect x="186" y="294" width="54" height="24" fill="#f2e8e4" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.70-0.80: profit_per_available_contract=-0.004517</title></rect>
+<rect x="240" y="294" width="54" height="24" fill="#f4eee9" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.70-0.80: profit_per_available_contract=-0.002755</title></rect>
+<rect x="294" y="294" width="54" height="24" fill="#e6eee7" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.70-0.80: profit_per_available_contract=0.004383</title></rect>
+<rect x="348" y="294" width="54" height="24" fill="#f1e8e3" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.70-0.80: profit_per_available_contract=-0.004632</title></rect>
+<rect x="402" y="294" width="54" height="24" fill="#f2e9e4" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.70-0.80: profit_per_available_contract=-0.004412</title></rect>
+<rect x="456" y="294" width="54" height="24" fill="#f0e3de" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.70-0.80: profit_per_available_contract=-0.006158</title></rect>
+<rect x="510" y="294" width="54" height="24" fill="#eddbd6" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.70-0.80: profit_per_available_contract=-0.008656</title></rect>
+<rect x="564" y="294" width="54" height="24" fill="#f0e3df" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.70-0.80: profit_per_available_contract=-0.006078</title></rect>
+<rect x="618" y="294" width="54" height="24" fill="#eededa" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.70-0.80: profit_per_available_contract=-0.007591</title></rect>
+<rect x="672" y="294" width="54" height="24" fill="#f2e9e4" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.70-0.80: profit_per_available_contract=-0.004380</title></rect>
+<rect x="726" y="294" width="54" height="24" fill="#f3ede9" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.70-0.80: profit_per_available_contract=-0.002958</title></rect>
+<rect x="780" y="294" width="54" height="24" fill="#f4f6f0" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.70-0.80: profit_per_available_contract=0.000747</title></rect>
+<rect x="834" y="294" width="54" height="24" fill="#f5f1ec" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.70-0.80: profit_per_available_contract=-0.001798</title></rect>
+<rect x="888" y="294" width="54" height="24" fill="#f6f3ee" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.70-0.80: profit_per_available_contract=-0.001204</title></rect>
+<text x="122" y="334" text-anchor="end" class="label">0.70-0.90</text>
+<rect x="132" y="318" width="54" height="24" fill="#f6f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.70-0.90: profit_per_available_contract=0.000257</title></rect>
+<rect x="186" y="318" width="54" height="24" fill="#f5f2ed" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.70-0.90: profit_per_available_contract=-0.001609</title></rect>
+<rect x="240" y="318" width="54" height="24" fill="#ecd8d4" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.70-0.90: profit_per_available_contract=-0.009504</title></rect>
+<rect x="294" y="318" width="54" height="24" fill="#f2eae5" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.70-0.90: profit_per_available_contract=-0.004040</title></rect>
+<rect x="348" y="318" width="54" height="24" fill="#eedfdb" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.70-0.90: profit_per_available_contract=-0.007312</title></rect>
+<rect x="402" y="318" width="54" height="24" fill="#f3f5ef" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.70-0.90: profit_per_available_contract=0.001023</title></rect>
+<rect x="456" y="318" width="54" height="24" fill="#efe2de" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.70-0.90: profit_per_available_contract=-0.006335</title></rect>
+<rect x="510" y="318" width="54" height="24" fill="#e7eee7" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.70-0.90: profit_per_available_contract=0.004255</title></rect>
+<rect x="564" y="318" width="54" height="24" fill="#f7f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.70-0.90: profit_per_available_contract=-0.000375</title></rect>
+<rect x="618" y="318" width="54" height="24" fill="#e9d1cd" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.70-0.90: profit_per_available_contract=-0.011680</title></rect>
+<text x="645.0" y="334" text-anchor="middle" class="small" fill="#401d1d">-0.012</text>
+<rect x="672" y="318" width="54" height="24" fill="#f4efea" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.70-0.90: profit_per_available_contract=-0.002448</title></rect>
+<rect x="726" y="318" width="54" height="24" fill="#f5f2ed" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.70-0.90: profit_per_available_contract=-0.001497</title></rect>
+<rect x="780" y="318" width="54" height="24" fill="#c8ded2" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.70-0.90: profit_per_available_contract=0.012422</title></rect>
+<text x="807.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.012</text>
+<rect x="834" y="318" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.70-0.90: profit_per_available_contract=-0.000131</title></rect>
+<rect x="888" y="318" width="54" height="24" fill="#f6f4ef" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.70-0.90: profit_per_available_contract=-0.000960</title></rect>
+<text x="122" y="358" text-anchor="end" class="label">0.70-1.00</text>
+<rect x="132" y="342" width="54" height="24" fill="#f5f2ed" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.70-1.00: profit_per_available_contract=-0.001417</title></rect>
+<rect x="186" y="342" width="54" height="24" fill="#eedfdb" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.70-1.00: profit_per_available_contract=-0.007201</title></rect>
+<rect x="240" y="342" width="54" height="24" fill="#e7cac6" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.70-1.00: profit_per_available_contract=-0.013666</title></rect>
+<text x="267.0" y="358" text-anchor="middle" class="small" fill="#401d1d">-0.014</text>
+<rect x="294" y="342" width="54" height="24" fill="#f1e6e1" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.70-1.00: profit_per_available_contract=-0.005214</title></rect>
+<rect x="348" y="342" width="54" height="24" fill="#eedfda" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.70-1.00: profit_per_available_contract=-0.007483</title></rect>
+<rect x="402" y="342" width="54" height="24" fill="#e4ede5" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.70-1.00: profit_per_available_contract=0.004979</title></rect>
+<rect x="456" y="342" width="54" height="24" fill="#f4eee9" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.70-1.00: profit_per_available_contract=-0.002849</title></rect>
+<rect x="510" y="342" width="54" height="24" fill="#deeae1" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.70-1.00: profit_per_available_contract=0.006655</title></rect>
+<rect x="564" y="342" width="54" height="24" fill="#f3f5ef" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.70-1.00: profit_per_available_contract=0.001166</title></rect>
+<rect x="618" y="342" width="54" height="24" fill="#eddbd7" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.70-1.00: profit_per_available_contract=-0.008428</title></rect>
+<rect x="672" y="342" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.70-1.00: profit_per_available_contract=-0.000108</title></rect>
+<rect x="726" y="342" width="54" height="24" fill="#f4f0eb" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.70-1.00: profit_per_available_contract=-0.002275</title></rect>
+<rect x="780" y="342" width="54" height="24" fill="#cce0d4" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.70-1.00: profit_per_available_contract=0.011449</title></rect>
+<text x="807.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.011</text>
+<rect x="834" y="342" width="54" height="24" fill="#f6f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.70-1.00: profit_per_available_contract=0.000134</title></rect>
+<rect x="888" y="342" width="54" height="24" fill="#f6f4ef" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.70-1.00: profit_per_available_contract=-0.000960</title></rect>
+<text x="122" y="382" text-anchor="end" class="label">0.80-0.90</text>
+<rect x="132" y="366" width="54" height="24" fill="#f6f3ee" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.80-0.90: profit_per_available_contract=-0.001140</title></rect>
+<rect x="186" y="366" width="54" height="24" fill="#ecf1ea" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.80-0.90: profit_per_available_contract=0.002908</title></rect>
+<rect x="240" y="366" width="54" height="24" fill="#efe1dc" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.80-0.90: profit_per_available_contract=-0.006750</title></rect>
+<rect x="294" y="366" width="54" height="24" fill="#eddbd7" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.80-0.90: profit_per_available_contract=-0.008423</title></rect>
+<rect x="348" y="366" width="54" height="24" fill="#f4eee9" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.80-0.90: profit_per_available_contract=-0.002681</title></rect>
+<rect x="402" y="366" width="54" height="24" fill="#e2ece4" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.80-0.90: profit_per_available_contract=0.005435</title></rect>
+<rect x="456" y="366" width="54" height="24" fill="#f7f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.80-0.90: profit_per_available_contract=-0.000177</title></rect>
+<rect x="510" y="366" width="54" height="24" fill="#c6ddd1" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.80-0.90: profit_per_available_contract=0.012911</title></rect>
+<text x="537.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.013</text>
+<rect x="564" y="366" width="54" height="24" fill="#e1ece3" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.80-0.90: profit_per_available_contract=0.005704</title></rect>
+<rect x="618" y="366" width="54" height="24" fill="#f2eae5" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.80-0.90: profit_per_available_contract=-0.004089</title></rect>
+<rect x="672" y="366" width="54" height="24" fill="#f0f3ed" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.80-0.90: profit_per_available_contract=0.001932</title></rect>
+<rect x="726" y="366" width="54" height="24" fill="#f1f4ee" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.80-0.90: profit_per_available_contract=0.001461</title></rect>
+<rect x="780" y="366" width="54" height="24" fill="#cbe0d4" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.80-0.90: profit_per_available_contract=0.011674</title></rect>
+<text x="807.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.012</text>
+<rect x="834" y="366" width="54" height="24" fill="#f1f4ee" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.80-0.90: profit_per_available_contract=0.001667</title></rect>
+<rect x="888" y="366" width="54" height="24" fill="#f6f7f1" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.80-0.90: profit_per_available_contract=0.000244</title></rect>
+<text x="122" y="406" text-anchor="end" class="label">0.80-1.00</text>
+<rect x="132" y="390" width="54" height="24" fill="#f4eee9" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.80-1.00: profit_per_available_contract=-0.002814</title></rect>
+<rect x="186" y="390" width="54" height="24" fill="#f4eee9" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.80-1.00: profit_per_available_contract=-0.002684</title></rect>
+<rect x="240" y="390" width="54" height="24" fill="#ead3cf" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.80-1.00: profit_per_available_contract=-0.010911</title></rect>
+<text x="267.0" y="406" text-anchor="middle" class="small" fill="#401d1d">-0.011</text>
+<rect x="294" y="390" width="54" height="24" fill="#ecd8d3" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.80-1.00: profit_per_available_contract=-0.009597</title></rect>
+<rect x="348" y="390" width="54" height="24" fill="#f4eee9" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.80-1.00: profit_per_available_contract=-0.002851</title></rect>
+<rect x="402" y="390" width="54" height="24" fill="#d4e4da" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.80-1.00: profit_per_available_contract=0.009391</title></rect>
+<rect x="456" y="390" width="54" height="24" fill="#eaf0e9" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.80-1.00: profit_per_available_contract=0.003309</title></rect>
+<rect x="510" y="390" width="54" height="24" fill="#bdd8ca" stroke="#111111" stroke-width="2.4"><title>480s 0.80-1.00: profit_per_available_contract=0.015311</title></rect>
+<text x="537.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.015</text>
+<rect x="564" y="390" width="54" height="24" fill="#dce8df" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.80-1.00: profit_per_available_contract=0.007244</title></rect>
+<rect x="618" y="390" width="54" height="24" fill="#f6f4ef" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.80-1.00: profit_per_available_contract=-0.000837</title></rect>
+<rect x="672" y="390" width="54" height="24" fill="#e7eee7" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.80-1.00: profit_per_available_contract=0.004273</title></rect>
+<rect x="726" y="390" width="54" height="24" fill="#f4f6f0" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.80-1.00: profit_per_available_contract=0.000683</title></rect>
+<rect x="780" y="390" width="54" height="24" fill="#cfe2d6" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.80-1.00: profit_per_available_contract=0.010702</title></rect>
+<text x="807.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.011</text>
+<rect x="834" y="390" width="54" height="24" fill="#f0f3ed" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.80-1.00: profit_per_available_contract=0.001932</title></rect>
+<rect x="888" y="390" width="54" height="24" fill="#f6f7f1" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.80-1.00: profit_per_available_contract=0.000244</title></rect>
+<text x="122" y="430" text-anchor="end" class="label">0.90-1.00</text>
+<rect x="132" y="414" width="54" height="24" fill="#f5f2ed" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.90-1.00: profit_per_available_contract=-0.001674</title></rect>
+<rect x="186" y="414" width="54" height="24" fill="#f0e5e0" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.90-1.00: profit_per_available_contract=-0.005592</title></rect>
+<rect x="240" y="414" width="54" height="24" fill="#f2e9e5" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.90-1.00: profit_per_available_contract=-0.004162</title></rect>
+<rect x="294" y="414" width="54" height="24" fill="#f6f3ee" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.90-1.00: profit_per_available_contract=-0.001174</title></rect>
+<rect x="348" y="414" width="54" height="24" fill="#f7f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.90-1.00: profit_per_available_contract=-0.000170</title></rect>
+<rect x="402" y="414" width="54" height="24" fill="#e8efe8" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.90-1.00: profit_per_available_contract=0.003957</title></rect>
+<rect x="456" y="414" width="54" height="24" fill="#eaf0e9" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.90-1.00: profit_per_available_contract=0.003486</title></rect>
+<rect x="510" y="414" width="54" height="24" fill="#eef2ec" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.90-1.00: profit_per_available_contract=0.002399</title></rect>
+<rect x="564" y="414" width="54" height="24" fill="#f1f4ee" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.90-1.00: profit_per_available_contract=0.001540</title></rect>
+<rect x="618" y="414" width="54" height="24" fill="#ebf0ea" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.90-1.00: profit_per_available_contract=0.003252</title></rect>
+<rect x="672" y="414" width="54" height="24" fill="#eef2ec" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.90-1.00: profit_per_available_contract=0.002340</title></rect>
+<rect x="726" y="414" width="54" height="24" fill="#f6f4f0" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.90-1.00: profit_per_available_contract=-0.000777</title></rect>
+<rect x="780" y="414" width="54" height="24" fill="#f6f4ef" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.90-1.00: profit_per_available_contract=-0.000972</title></rect>
+<rect x="834" y="414" width="54" height="24" fill="#f6f6f1" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.90-1.00: profit_per_available_contract=0.000265</title></rect>
+<rect x="888" y="414" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.90-1.00: profit_per_available_contract=0.000000</title></rect>
+<text x="132" y="468" class="subtitle">Metric: profit_per_available_contract</text>
+<rect x="132" y="476" width="1" height="12" fill="#b03535"/>
+<rect x="133" y="476" width="1" height="12" fill="#b13737"/>
+<rect x="134" y="476" width="1" height="12" fill="#b23a3a"/>
+<rect x="135" y="476" width="1" height="12" fill="#b33c3c"/>
+<rect x="136" y="476" width="1" height="12" fill="#b43f3f"/>
+<rect x="137" y="476" width="1" height="12" fill="#b44141"/>
+<rect x="138" y="476" width="1" height="12" fill="#b54443"/>
+<rect x="139" y="476" width="1" height="12" fill="#b64646"/>
+<rect x="140" y="476" width="1" height="12" fill="#b74948"/>
+<rect x="141" y="476" width="1" height="12" fill="#b84b4a"/>
+<rect x="142" y="476" width="1" height="12" fill="#b94d4d"/>
+<rect x="143" y="476" width="1" height="12" fill="#ba504f"/>
+<rect x="144" y="476" width="1" height="12" fill="#bb5252"/>
+<rect x="145" y="476" width="1" height="12" fill="#bc5554"/>
+<rect x="146" y="476" width="1" height="12" fill="#bd5756"/>
+<rect x="147" y="476" width="1" height="12" fill="#bd5a59"/>
+<rect x="148" y="476" width="1" height="12" fill="#be5c5b"/>
+<rect x="149" y="476" width="1" height="12" fill="#bf5e5d"/>
+<rect x="150" y="476" width="1" height="12" fill="#c06160"/>
+<rect x="151" y="476" width="1" height="12" fill="#c16362"/>
+<rect x="152" y="476" width="1" height="12" fill="#c26665"/>
+<rect x="153" y="476" width="1" height="12" fill="#c36867"/>
+<rect x="154" y="476" width="1" height="12" fill="#c46b69"/>
+<rect x="155" y="476" width="1" height="12" fill="#c56d6c"/>
+<rect x="156" y="476" width="1" height="12" fill="#c5706e"/>
+<rect x="157" y="476" width="1" height="12" fill="#c67270"/>
+<rect x="158" y="476" width="1" height="12" fill="#c77473"/>
+<rect x="159" y="476" width="1" height="12" fill="#c87775"/>
+<rect x="160" y="476" width="1" height="12" fill="#c97978"/>
+<rect x="161" y="476" width="1" height="12" fill="#ca7c7a"/>
+<rect x="162" y="476" width="1" height="12" fill="#cb7e7c"/>
+<rect x="163" y="476" width="1" height="12" fill="#cc817f"/>
+<rect x="164" y="476" width="1" height="12" fill="#cd8381"/>
+<rect x="165" y="476" width="1" height="12" fill="#cd8683"/>
+<rect x="166" y="476" width="1" height="12" fill="#ce8886"/>
+<rect x="167" y="476" width="1" height="12" fill="#cf8a88"/>
+<rect x="168" y="476" width="1" height="12" fill="#d08d8b"/>
+<rect x="169" y="476" width="1" height="12" fill="#d18f8d"/>
+<rect x="170" y="476" width="1" height="12" fill="#d2928f"/>
+<rect x="171" y="476" width="1" height="12" fill="#d39492"/>
+<rect x="172" y="476" width="1" height="12" fill="#d49794"/>
+<rect x="173" y="476" width="1" height="12" fill="#d59996"/>
+<rect x="174" y="476" width="1" height="12" fill="#d69b99"/>
+<rect x="175" y="476" width="1" height="12" fill="#d69e9b"/>
+<rect x="176" y="476" width="1" height="12" fill="#d7a09e"/>
+<rect x="177" y="476" width="1" height="12" fill="#d8a3a0"/>
+<rect x="178" y="476" width="1" height="12" fill="#d9a5a2"/>
+<rect x="179" y="476" width="1" height="12" fill="#daa8a5"/>
+<rect x="180" y="476" width="1" height="12" fill="#dbaaa7"/>
+<rect x="181" y="476" width="1" height="12" fill="#dcada9"/>
+<rect x="182" y="476" width="1" height="12" fill="#ddafac"/>
+<rect x="183" y="476" width="1" height="12" fill="#deb1ae"/>
+<rect x="184" y="476" width="1" height="12" fill="#deb4b1"/>
+<rect x="185" y="476" width="1" height="12" fill="#dfb6b3"/>
+<rect x="186" y="476" width="1" height="12" fill="#e0b9b5"/>
+<rect x="187" y="476" width="1" height="12" fill="#e1bbb8"/>
+<rect x="188" y="476" width="1" height="12" fill="#e2beba"/>
+<rect x="189" y="476" width="1" height="12" fill="#e3c0bd"/>
+<rect x="190" y="476" width="1" height="12" fill="#e4c3bf"/>
+<rect x="191" y="476" width="1" height="12" fill="#e5c5c1"/>
+<rect x="192" y="476" width="1" height="12" fill="#e6c7c4"/>
+<rect x="193" y="476" width="1" height="12" fill="#e6cac6"/>
+<rect x="194" y="476" width="1" height="12" fill="#e7ccc8"/>
+<rect x="195" y="476" width="1" height="12" fill="#e8cfcb"/>
+<rect x="196" y="476" width="1" height="12" fill="#e9d1cd"/>
+<rect x="197" y="476" width="1" height="12" fill="#ead4d0"/>
+<rect x="198" y="476" width="1" height="12" fill="#ebd6d2"/>
+<rect x="199" y="476" width="1" height="12" fill="#ecd8d4"/>
+<rect x="200" y="476" width="1" height="12" fill="#eddbd7"/>
+<rect x="201" y="476" width="1" height="12" fill="#eeddd9"/>
+<rect x="202" y="476" width="1" height="12" fill="#efe0db"/>
+<rect x="203" y="476" width="1" height="12" fill="#efe2de"/>
+<rect x="204" y="476" width="1" height="12" fill="#f0e5e0"/>
+<rect x="205" y="476" width="1" height="12" fill="#f1e7e3"/>
+<rect x="206" y="476" width="1" height="12" fill="#f2eae5"/>
+<rect x="207" y="476" width="1" height="12" fill="#f3ece7"/>
+<rect x="208" y="476" width="1" height="12" fill="#f4eeea"/>
+<rect x="209" y="476" width="1" height="12" fill="#f5f1ec"/>
+<rect x="210" y="476" width="1" height="12" fill="#f6f3ee"/>
+<rect x="211" y="476" width="1" height="12" fill="#f7f6f1"/>
+<rect x="212" y="476" width="1" height="12" fill="#f6f6f1"/>
+<rect x="213" y="476" width="1" height="12" fill="#f3f5ef"/>
+<rect x="214" y="476" width="1" height="12" fill="#f0f3ed"/>
+<rect x="215" y="476" width="1" height="12" fill="#edf2eb"/>
+<rect x="216" y="476" width="1" height="12" fill="#eaf0e9"/>
+<rect x="217" y="476" width="1" height="12" fill="#e8efe7"/>
+<rect x="218" y="476" width="1" height="12" fill="#e5ede5"/>
+<rect x="219" y="476" width="1" height="12" fill="#e2ece4"/>
+<rect x="220" y="476" width="1" height="12" fill="#dfeae2"/>
+<rect x="221" y="476" width="1" height="12" fill="#dce9e0"/>
+<rect x="222" y="476" width="1" height="12" fill="#d9e7de"/>
+<rect x="223" y="476" width="1" height="12" fill="#d7e6dc"/>
+<rect x="224" y="476" width="1" height="12" fill="#d4e4da"/>
+<rect x="225" y="476" width="1" height="12" fill="#d1e3d8"/>
+<rect x="226" y="476" width="1" height="12" fill="#cee1d6"/>
+<rect x="227" y="476" width="1" height="12" fill="#cbe0d4"/>
+<rect x="228" y="476" width="1" height="12" fill="#c9ded2"/>
+<rect x="229" y="476" width="1" height="12" fill="#c6ddd0"/>
+<rect x="230" y="476" width="1" height="12" fill="#c3dbce"/>
+<rect x="231" y="476" width="1" height="12" fill="#c0dacc"/>
+<rect x="232" y="476" width="1" height="12" fill="#bdd8cb"/>
+<rect x="233" y="476" width="1" height="12" fill="#bad7c9"/>
+<rect x="234" y="476" width="1" height="12" fill="#b8d5c7"/>
+<rect x="235" y="476" width="1" height="12" fill="#b5d4c5"/>
+<rect x="236" y="476" width="1" height="12" fill="#b2d2c3"/>
+<rect x="237" y="476" width="1" height="12" fill="#afd1c1"/>
+<rect x="238" y="476" width="1" height="12" fill="#accfbf"/>
+<rect x="239" y="476" width="1" height="12" fill="#aacebd"/>
+<rect x="240" y="476" width="1" height="12" fill="#a7ccbb"/>
+<rect x="241" y="476" width="1" height="12" fill="#a4cbb9"/>
+<rect x="242" y="476" width="1" height="12" fill="#a1c9b7"/>
+<rect x="243" y="476" width="1" height="12" fill="#9ec8b5"/>
+<rect x="244" y="476" width="1" height="12" fill="#9bc6b3"/>
+<rect x="245" y="476" width="1" height="12" fill="#99c5b2"/>
+<rect x="246" y="476" width="1" height="12" fill="#96c3b0"/>
+<rect x="247" y="476" width="1" height="12" fill="#93c2ae"/>
+<rect x="248" y="476" width="1" height="12" fill="#90c0ac"/>
+<rect x="249" y="476" width="1" height="12" fill="#8dbfaa"/>
+<rect x="250" y="476" width="1" height="12" fill="#8bbda8"/>
+<rect x="251" y="476" width="1" height="12" fill="#88bca6"/>
+<rect x="252" y="476" width="1" height="12" fill="#85baa4"/>
+<rect x="253" y="476" width="1" height="12" fill="#82b9a2"/>
+<rect x="254" y="476" width="1" height="12" fill="#7fb7a0"/>
+<rect x="255" y="476" width="1" height="12" fill="#7cb69e"/>
+<rect x="256" y="476" width="1" height="12" fill="#7ab49c"/>
+<rect x="257" y="476" width="1" height="12" fill="#77b39a"/>
+<rect x="258" y="476" width="1" height="12" fill="#74b199"/>
+<rect x="259" y="476" width="1" height="12" fill="#71b097"/>
+<rect x="260" y="476" width="1" height="12" fill="#6eae95"/>
+<rect x="261" y="476" width="1" height="12" fill="#6cad93"/>
+<rect x="262" y="476" width="1" height="12" fill="#69ab91"/>
+<rect x="263" y="476" width="1" height="12" fill="#66aa8f"/>
+<rect x="264" y="476" width="1" height="12" fill="#63a88d"/>
+<rect x="265" y="476" width="1" height="12" fill="#60a78b"/>
+<rect x="266" y="476" width="1" height="12" fill="#5da589"/>
+<rect x="267" y="476" width="1" height="12" fill="#5ba487"/>
+<rect x="268" y="476" width="1" height="12" fill="#58a285"/>
+<rect x="269" y="476" width="1" height="12" fill="#55a183"/>
+<rect x="270" y="476" width="1" height="12" fill="#529f81"/>
+<rect x="271" y="476" width="1" height="12" fill="#4f9e7f"/>
+<rect x="272" y="476" width="1" height="12" fill="#4d9c7e"/>
+<rect x="273" y="476" width="1" height="12" fill="#4a9b7c"/>
+<rect x="274" y="476" width="1" height="12" fill="#47997a"/>
+<rect x="275" y="476" width="1" height="12" fill="#449878"/>
+<rect x="276" y="476" width="1" height="12" fill="#419676"/>
+<rect x="277" y="476" width="1" height="12" fill="#3e9574"/>
+<rect x="278" y="476" width="1" height="12" fill="#3c9372"/>
+<rect x="279" y="476" width="1" height="12" fill="#399270"/>
+<rect x="280" y="476" width="1" height="12" fill="#36906e"/>
+<rect x="281" y="476" width="1" height="12" fill="#338f6c"/>
+<rect x="282" y="476" width="1" height="12" fill="#308d6a"/>
+<rect x="283" y="476" width="1" height="12" fill="#2e8c68"/>
+<rect x="284" y="476" width="1" height="12" fill="#2b8a66"/>
+<rect x="285" y="476" width="1" height="12" fill="#288965"/>
+<rect x="286" y="476" width="1" height="12" fill="#258763"/>
+<rect x="287" y="476" width="1" height="12" fill="#228661"/>
+<rect x="288" y="476" width="1" height="12" fill="#1f845f"/>
+<rect x="289" y="476" width="1" height="12" fill="#1d835d"/>
+<rect x="290" y="476" width="1" height="12" fill="#1a815b"/>
+<rect x="291" y="476" width="1" height="12" fill="#178059"/>
+<text x="132" y="504" class="small">-0.059</text>
+<text x="212" y="504" text-anchor="middle" class="small">0</text>
+<text x="292" y="504" text-anchor="end" class="small">+0.059</text>
+</svg>

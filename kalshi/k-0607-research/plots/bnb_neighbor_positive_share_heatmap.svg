@@ -1,0 +1,652 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="972" height="510" viewBox="0 0 972 510">
+<style>
+text{font-family:Verdana,Arial,sans-serif;fill:#263238}
+.small{font-size:10px}.label{font-size:11px}.title{font-size:18px;font-weight:700}.subtitle{font-size:12px;fill:#52616b}
+</style>
+<rect width="100%" height="100%" fill="#fbfaf4"/>
+<text x="24" y="32" class="title">BNB Stability: Neighbor Positive Share</text>
+<text x="24" y="52" class="subtitle">Rows are contiguous more-likely price ranges; columns are seconds before expiry. Black outline marks selected stable parameter.</text>
+<text x="159.0" y="66" text-anchor="middle" class="label">60</text>
+<text x="213.0" y="66" text-anchor="middle" class="label">120</text>
+<text x="267.0" y="66" text-anchor="middle" class="label">180</text>
+<text x="321.0" y="66" text-anchor="middle" class="label">240</text>
+<text x="375.0" y="66" text-anchor="middle" class="label">300</text>
+<text x="429.0" y="66" text-anchor="middle" class="label">360</text>
+<text x="483.0" y="66" text-anchor="middle" class="label">420</text>
+<text x="537.0" y="66" text-anchor="middle" class="label">480</text>
+<text x="591.0" y="66" text-anchor="middle" class="label">540</text>
+<text x="645.0" y="66" text-anchor="middle" class="label">600</text>
+<text x="699.0" y="66" text-anchor="middle" class="label">660</text>
+<text x="753.0" y="66" text-anchor="middle" class="label">720</text>
+<text x="807.0" y="66" text-anchor="middle" class="label">780</text>
+<text x="861.0" y="66" text-anchor="middle" class="label">840</text>
+<text x="915.0" y="66" text-anchor="middle" class="label">900</text>
+<text x="122" y="94" text-anchor="end" class="label">0.50-0.60</text>
+<rect x="132" y="78" width="54" height="24" fill="#506aa5" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.50-0.60: neighbor_positive_share=0.500000</title></rect>
+<text x="159.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.500</text>
+<rect x="186" y="78" width="54" height="24" fill="#8799bf" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.50-0.60: neighbor_positive_share=0.333333</title></rect>
+<text x="213.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.333</text>
+<rect x="240" y="78" width="54" height="24" fill="#a3b1cc" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.50-0.60: neighbor_positive_share=0.250000</title></rect>
+<text x="267.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.250</text>
+<rect x="294" y="78" width="54" height="24" fill="#a3b1cc" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.50-0.60: neighbor_positive_share=0.250000</title></rect>
+<text x="321.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.250</text>
+<rect x="348" y="78" width="54" height="24" fill="#a3b1cc" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.50-0.60: neighbor_positive_share=0.250000</title></rect>
+<text x="375.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.250</text>
+<rect x="402" y="78" width="54" height="24" fill="#a3b1cc" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.50-0.60: neighbor_positive_share=0.250000</title></rect>
+<text x="429.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.250</text>
+<rect x="456" y="78" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.50-0.60: neighbor_positive_share=0.125000</title></rect>
+<text x="483.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="510" y="78" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.50-0.60: neighbor_positive_share=0.125000</title></rect>
+<text x="537.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="564" y="78" width="54" height="24" fill="#a3b1cc" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.50-0.60: neighbor_positive_share=0.250000</title></rect>
+<text x="591.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.250</text>
+<rect x="618" y="78" width="54" height="24" fill="#798db8" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.50-0.60: neighbor_positive_share=0.375000</title></rect>
+<text x="645.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.375</text>
+<rect x="672" y="78" width="54" height="24" fill="#506aa5" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.50-0.60: neighbor_positive_share=0.500000</title></rect>
+<text x="699.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.500</text>
+<rect x="726" y="78" width="54" height="24" fill="#a3b1cc" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.50-0.60: neighbor_positive_share=0.250000</title></rect>
+<text x="753.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.250</text>
+<rect x="780" y="78" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.50-0.60: neighbor_positive_share=0.125000</title></rect>
+<text x="807.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="834" y="78" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.50-0.60: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="78" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.50-0.60: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="94" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="118" text-anchor="end" class="label">0.50-0.70</text>
+<rect x="132" y="102" width="54" height="24" fill="#677eb0" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.50-0.70: neighbor_positive_share=0.428571</title></rect>
+<text x="159.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.429</text>
+<rect x="186" y="102" width="54" height="24" fill="#6b82b2" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.50-0.70: neighbor_positive_share=0.416667</title></rect>
+<text x="213.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.417</text>
+<rect x="240" y="102" width="54" height="24" fill="#afbbd1" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.50-0.70: neighbor_positive_share=0.214286</title></rect>
+<text x="267.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.214</text>
+<rect x="294" y="102" width="54" height="24" fill="#afbbd1" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.50-0.70: neighbor_positive_share=0.214286</title></rect>
+<text x="321.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.214</text>
+<rect x="348" y="102" width="54" height="24" fill="#afbbd1" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.50-0.70: neighbor_positive_share=0.214286</title></rect>
+<text x="375.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.214</text>
+<rect x="402" y="102" width="54" height="24" fill="#c7cfdc" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.50-0.70: neighbor_positive_share=0.142857</title></rect>
+<text x="429.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.143</text>
+<rect x="456" y="102" width="54" height="24" fill="#dfe3e7" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.50-0.70: neighbor_positive_share=0.071429</title></rect>
+<text x="483.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.071</text>
+<rect x="510" y="102" width="54" height="24" fill="#c7cfdc" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.50-0.70: neighbor_positive_share=0.142857</title></rect>
+<text x="537.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.143</text>
+<rect x="564" y="102" width="54" height="24" fill="#97a7c6" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.50-0.70: neighbor_positive_share=0.285714</title></rect>
+<text x="591.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.286</text>
+<rect x="618" y="102" width="54" height="24" fill="#97a7c6" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.50-0.70: neighbor_positive_share=0.285714</title></rect>
+<text x="645.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.286</text>
+<rect x="672" y="102" width="54" height="24" fill="#7f92bb" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.50-0.70: neighbor_positive_share=0.357143</title></rect>
+<text x="699.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.357</text>
+<rect x="726" y="102" width="54" height="24" fill="#afbbd1" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.50-0.70: neighbor_positive_share=0.214286</title></rect>
+<text x="753.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.214</text>
+<rect x="780" y="102" width="54" height="24" fill="#c7cfdc" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.50-0.70: neighbor_positive_share=0.142857</title></rect>
+<text x="807.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.143</text>
+<rect x="834" y="102" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.50-0.70: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="102" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.50-0.70: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="118" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="142" text-anchor="end" class="label">0.50-0.80</text>
+<rect x="132" y="126" width="54" height="24" fill="#7186b5" stroke="#111111" stroke-width="2.4"><title>60s 0.50-0.80: neighbor_positive_share=0.400000</title></rect>
+<text x="159.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.400</text>
+<rect x="186" y="126" width="54" height="24" fill="#8e9fc2" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.50-0.80: neighbor_positive_share=0.312500</title></rect>
+<text x="213.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.312</text>
+<rect x="240" y="126" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.50-0.80: neighbor_positive_share=0.000000</title></rect>
+<text x="267.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="294" y="126" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.50-0.80: neighbor_positive_share=0.000000</title></rect>
+<text x="321.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="348" y="126" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.50-0.80: neighbor_positive_share=0.058824</title></rect>
+<text x="375.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="402" y="126" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.50-0.80: neighbor_positive_share=0.058824</title></rect>
+<text x="429.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="456" y="126" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.50-0.80: neighbor_positive_share=0.058824</title></rect>
+<text x="483.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="510" y="126" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.50-0.80: neighbor_positive_share=0.058824</title></rect>
+<text x="537.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="564" y="126" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.50-0.80: neighbor_positive_share=0.058824</title></rect>
+<text x="591.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="618" y="126" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.50-0.80: neighbor_positive_share=0.176471</title></rect>
+<text x="645.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="672" y="126" width="54" height="24" fill="#a8b5ce" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.50-0.80: neighbor_positive_share=0.235294</title></rect>
+<text x="699.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.235</text>
+<rect x="726" y="126" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.50-0.80: neighbor_positive_share=0.176471</title></rect>
+<text x="753.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="780" y="126" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.50-0.80: neighbor_positive_share=0.117647</title></rect>
+<text x="807.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="834" y="126" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.50-0.80: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="126" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.50-0.80: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="142" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="166" text-anchor="end" class="label">0.50-0.90</text>
+<rect x="132" y="150" width="54" height="24" fill="#5f77ac" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.50-0.90: neighbor_positive_share=0.454545</title></rect>
+<text x="159.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.455</text>
+<rect x="186" y="150" width="54" height="24" fill="#8194bc" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.50-0.90: neighbor_positive_share=0.352941</title></rect>
+<text x="213.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.353</text>
+<rect x="240" y="150" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.50-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="267.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="294" y="150" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.50-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="321.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="348" y="150" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.50-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="375.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="402" y="150" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.50-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="429.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="456" y="150" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.50-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="483.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="510" y="150" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.50-0.90: neighbor_positive_share=0.058824</title></rect>
+<text x="537.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="564" y="150" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.50-0.90: neighbor_positive_share=0.058824</title></rect>
+<text x="591.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="618" y="150" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.50-0.90: neighbor_positive_share=0.058824</title></rect>
+<text x="645.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="672" y="150" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.50-0.90: neighbor_positive_share=0.058824</title></rect>
+<text x="699.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="726" y="150" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.50-0.90: neighbor_positive_share=0.058824</title></rect>
+<text x="753.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="780" y="150" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.50-0.90: neighbor_positive_share=0.058824</title></rect>
+<text x="807.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="834" y="150" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.50-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="150" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.50-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="166" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="190" text-anchor="end" class="label">0.50-1.00</text>
+<rect x="132" y="174" width="54" height="24" fill="#677eb0" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.50-1.00: neighbor_positive_share=0.428571</title></rect>
+<text x="159.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.429</text>
+<rect x="186" y="174" width="54" height="24" fill="#7d91ba" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.50-1.00: neighbor_positive_share=0.363636</title></rect>
+<text x="213.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.364</text>
+<rect x="240" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="267.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="294" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="321.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="348" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="375.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="402" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="429.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="456" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="483.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="510" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="537.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="564" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="591.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="618" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="645.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="672" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="699.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="726" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="753.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="780" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="807.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="834" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="174" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.50-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="190" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="214" text-anchor="end" class="label">0.60-0.70</text>
+<rect x="132" y="198" width="54" height="24" fill="#2e4e96" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.60-0.70: neighbor_positive_share=0.600000</title></rect>
+<text x="159.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.600</text>
+<rect x="186" y="198" width="54" height="24" fill="#4461a0" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.60-0.70: neighbor_positive_share=0.533333</title></rect>
+<text x="213.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.533</text>
+<rect x="240" y="198" width="54" height="24" fill="#8194bc" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.60-0.70: neighbor_positive_share=0.352941</title></rect>
+<text x="267.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.353</text>
+<rect x="294" y="198" width="54" height="24" fill="#94a4c5" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.60-0.70: neighbor_positive_share=0.294118</title></rect>
+<text x="321.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.294</text>
+<rect x="348" y="198" width="54" height="24" fill="#a8b5ce" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.60-0.70: neighbor_positive_share=0.235294</title></rect>
+<text x="375.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.235</text>
+<rect x="402" y="198" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.60-0.70: neighbor_positive_share=0.058824</title></rect>
+<text x="429.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="456" y="198" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.60-0.70: neighbor_positive_share=0.117647</title></rect>
+<text x="483.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="510" y="198" width="54" height="24" fill="#a8b5ce" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.60-0.70: neighbor_positive_share=0.235294</title></rect>
+<text x="537.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.235</text>
+<rect x="564" y="198" width="54" height="24" fill="#8194bc" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.60-0.70: neighbor_positive_share=0.352941</title></rect>
+<text x="591.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.353</text>
+<rect x="618" y="198" width="54" height="24" fill="#8194bc" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.60-0.70: neighbor_positive_share=0.352941</title></rect>
+<text x="645.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.353</text>
+<rect x="672" y="198" width="54" height="24" fill="#a8b5ce" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.60-0.70: neighbor_positive_share=0.235294</title></rect>
+<text x="699.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.235</text>
+<rect x="726" y="198" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.60-0.70: neighbor_positive_share=0.117647</title></rect>
+<text x="753.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="780" y="198" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.60-0.70: neighbor_positive_share=0.117647</title></rect>
+<text x="807.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="834" y="198" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.60-0.70: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="198" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.60-0.70: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="214" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="238" text-anchor="end" class="label">0.60-0.80</text>
+<rect x="132" y="222" width="54" height="24" fill="#506aa5" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.60-0.80: neighbor_positive_share=0.500000</title></rect>
+<text x="159.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.500</text>
+<rect x="186" y="222" width="54" height="24" fill="#6e84b3" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.60-0.80: neighbor_positive_share=0.409091</title></rect>
+<text x="213.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.409</text>
+<rect x="240" y="222" width="54" height="24" fill="#aebad1" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.60-0.80: neighbor_positive_share=0.217391</title></rect>
+<text x="267.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.217</text>
+<rect x="294" y="222" width="54" height="24" fill="#bdc6d7" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.60-0.80: neighbor_positive_share=0.173913</title></rect>
+<text x="321.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.174</text>
+<rect x="348" y="222" width="54" height="24" fill="#bdc6d7" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.60-0.80: neighbor_positive_share=0.173913</title></rect>
+<text x="375.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.174</text>
+<rect x="402" y="222" width="54" height="24" fill="#dadfe5" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.60-0.80: neighbor_positive_share=0.086957</title></rect>
+<text x="429.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.087</text>
+<rect x="456" y="222" width="54" height="24" fill="#cbd2de" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.60-0.80: neighbor_positive_share=0.130435</title></rect>
+<text x="483.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.130</text>
+<rect x="510" y="222" width="54" height="24" fill="#bdc6d7" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.60-0.80: neighbor_positive_share=0.173913</title></rect>
+<text x="537.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.174</text>
+<rect x="564" y="222" width="54" height="24" fill="#aebad1" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.60-0.80: neighbor_positive_share=0.217391</title></rect>
+<text x="591.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.217</text>
+<rect x="618" y="222" width="54" height="24" fill="#bdc6d7" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.60-0.80: neighbor_positive_share=0.173913</title></rect>
+<text x="645.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.174</text>
+<rect x="672" y="222" width="54" height="24" fill="#bdc6d7" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.60-0.80: neighbor_positive_share=0.173913</title></rect>
+<text x="699.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.174</text>
+<rect x="726" y="222" width="54" height="24" fill="#dadfe5" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.60-0.80: neighbor_positive_share=0.086957</title></rect>
+<text x="753.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.087</text>
+<rect x="780" y="222" width="54" height="24" fill="#dadfe5" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.60-0.80: neighbor_positive_share=0.086957</title></rect>
+<text x="807.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.087</text>
+<rect x="834" y="222" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.60-0.80: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="222" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.60-0.80: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="238" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="262" text-anchor="end" class="label">0.60-0.90</text>
+<rect x="132" y="246" width="54" height="24" fill="#5972aa" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.60-0.90: neighbor_positive_share=0.470588</title></rect>
+<text x="159.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.471</text>
+<rect x="186" y="246" width="54" height="24" fill="#768bb7" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.60-0.90: neighbor_positive_share=0.384615</title></rect>
+<text x="213.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.385</text>
+<rect x="240" y="246" width="54" height="24" fill="#b7c1d5" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.60-0.90: neighbor_positive_share=0.192308</title></rect>
+<text x="267.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.192</text>
+<rect x="294" y="246" width="54" height="24" fill="#c3ccda" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.60-0.90: neighbor_positive_share=0.153846</title></rect>
+<text x="321.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.154</text>
+<rect x="348" y="246" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.60-0.90: neighbor_positive_share=0.115385</title></rect>
+<text x="375.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.115</text>
+<rect x="402" y="246" width="54" height="24" fill="#eaecec" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.60-0.90: neighbor_positive_share=0.038462</title></rect>
+<text x="429.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.038</text>
+<rect x="456" y="246" width="54" height="24" fill="#dde1e6" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.60-0.90: neighbor_positive_share=0.076923</title></rect>
+<text x="483.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.077</text>
+<rect x="510" y="246" width="54" height="24" fill="#c3ccda" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.60-0.90: neighbor_positive_share=0.153846</title></rect>
+<text x="537.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.154</text>
+<rect x="564" y="246" width="54" height="24" fill="#c3ccda" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.60-0.90: neighbor_positive_share=0.153846</title></rect>
+<text x="591.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.154</text>
+<rect x="618" y="246" width="54" height="24" fill="#dde1e6" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.60-0.90: neighbor_positive_share=0.076923</title></rect>
+<text x="645.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.077</text>
+<rect x="672" y="246" width="54" height="24" fill="#eaecec" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.60-0.90: neighbor_positive_share=0.038462</title></rect>
+<text x="699.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.038</text>
+<rect x="726" y="246" width="54" height="24" fill="#eaecec" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.60-0.90: neighbor_positive_share=0.038462</title></rect>
+<text x="753.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.038</text>
+<rect x="780" y="246" width="54" height="24" fill="#eaecec" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.60-0.90: neighbor_positive_share=0.038462</title></rect>
+<text x="807.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.038</text>
+<rect x="834" y="246" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.60-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="246" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.60-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="262" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="286" text-anchor="end" class="label">0.60-1.00</text>
+<rect x="132" y="270" width="54" height="24" fill="#7d91ba" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.60-1.00: neighbor_positive_share=0.363636</title></rect>
+<text x="159.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.364</text>
+<rect x="186" y="270" width="54" height="24" fill="#94a4c5" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.60-1.00: neighbor_positive_share=0.294118</title></rect>
+<text x="213.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.294</text>
+<rect x="240" y="270" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.60-1.00: neighbor_positive_share=0.117647</title></rect>
+<text x="267.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="294" y="270" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.60-1.00: neighbor_positive_share=0.117647</title></rect>
+<text x="321.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="348" y="270" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.60-1.00: neighbor_positive_share=0.117647</title></rect>
+<text x="375.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="402" y="270" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.60-1.00: neighbor_positive_share=0.058824</title></rect>
+<text x="429.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="456" y="270" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.60-1.00: neighbor_positive_share=0.058824</title></rect>
+<text x="483.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="510" y="270" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.60-1.00: neighbor_positive_share=0.058824</title></rect>
+<text x="537.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="564" y="270" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.60-1.00: neighbor_positive_share=0.058824</title></rect>
+<text x="591.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="618" y="270" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.60-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="645.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="672" y="270" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.60-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="699.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="726" y="270" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.60-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="753.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="780" y="270" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.60-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="807.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="834" y="270" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.60-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="270" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.60-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="286" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="310" text-anchor="end" class="label">0.70-0.80</text>
+<rect x="132" y="294" width="54" height="24" fill="#627aae" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.70-0.80: neighbor_positive_share=0.444444</title></rect>
+<text x="159.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.444</text>
+<rect x="186" y="294" width="54" height="24" fill="#8799bf" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.70-0.80: neighbor_positive_share=0.333333</title></rect>
+<text x="213.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.333</text>
+<rect x="240" y="294" width="54" height="24" fill="#a8b5ce" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.70-0.80: neighbor_positive_share=0.235294</title></rect>
+<text x="267.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.235</text>
+<rect x="294" y="294" width="54" height="24" fill="#a8b5ce" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.70-0.80: neighbor_positive_share=0.235294</title></rect>
+<text x="321.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.235</text>
+<rect x="348" y="294" width="54" height="24" fill="#94a4c5" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.70-0.80: neighbor_positive_share=0.294118</title></rect>
+<text x="375.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.294</text>
+<rect x="402" y="294" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.70-0.80: neighbor_positive_share=0.176471</title></rect>
+<text x="429.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="456" y="294" width="54" height="24" fill="#a8b5ce" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.70-0.80: neighbor_positive_share=0.235294</title></rect>
+<text x="483.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.235</text>
+<rect x="510" y="294" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.70-0.80: neighbor_positive_share=0.176471</title></rect>
+<text x="537.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="564" y="294" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.70-0.80: neighbor_positive_share=0.176471</title></rect>
+<text x="591.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="618" y="294" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.70-0.80: neighbor_positive_share=0.117647</title></rect>
+<text x="645.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="672" y="294" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.70-0.80: neighbor_positive_share=0.176471</title></rect>
+<text x="699.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="726" y="294" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.70-0.80: neighbor_positive_share=0.176471</title></rect>
+<text x="753.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="780" y="294" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.70-0.80: neighbor_positive_share=0.125000</title></rect>
+<text x="807.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="834" y="294" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.70-0.80: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="294" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.70-0.80: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="310" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="334" text-anchor="end" class="label">0.70-0.90</text>
+<rect x="132" y="318" width="54" height="24" fill="#677eb0" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.70-0.90: neighbor_positive_share=0.428571</title></rect>
+<text x="159.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.429</text>
+<rect x="186" y="318" width="54" height="24" fill="#9caac8" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.70-0.90: neighbor_positive_share=0.272727</title></rect>
+<text x="213.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.273</text>
+<rect x="240" y="318" width="54" height="24" fill="#aebad1" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.70-0.90: neighbor_positive_share=0.217391</title></rect>
+<text x="267.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.217</text>
+<rect x="294" y="318" width="54" height="24" fill="#bdc6d7" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.70-0.90: neighbor_positive_share=0.173913</title></rect>
+<text x="321.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.174</text>
+<rect x="348" y="318" width="54" height="24" fill="#cbd2de" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.70-0.90: neighbor_positive_share=0.130435</title></rect>
+<text x="375.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.130</text>
+<rect x="402" y="318" width="54" height="24" fill="#dadfe5" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.70-0.90: neighbor_positive_share=0.086957</title></rect>
+<text x="429.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.087</text>
+<rect x="456" y="318" width="54" height="24" fill="#cbd2de" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.70-0.90: neighbor_positive_share=0.130435</title></rect>
+<text x="483.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.130</text>
+<rect x="510" y="318" width="54" height="24" fill="#cbd2de" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.70-0.90: neighbor_positive_share=0.130435</title></rect>
+<text x="537.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.130</text>
+<rect x="564" y="318" width="54" height="24" fill="#bdc6d7" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.70-0.90: neighbor_positive_share=0.173913</title></rect>
+<text x="591.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.174</text>
+<rect x="618" y="318" width="54" height="24" fill="#e8ebeb" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.70-0.90: neighbor_positive_share=0.043478</title></rect>
+<text x="645.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.043</text>
+<rect x="672" y="318" width="54" height="24" fill="#e8ebeb" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.70-0.90: neighbor_positive_share=0.043478</title></rect>
+<text x="699.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.043</text>
+<rect x="726" y="318" width="54" height="24" fill="#e8ebeb" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.70-0.90: neighbor_positive_share=0.043478</title></rect>
+<text x="753.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.043</text>
+<rect x="780" y="318" width="54" height="24" fill="#e7eaeb" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.70-0.90: neighbor_positive_share=0.047619</title></rect>
+<text x="807.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.048</text>
+<rect x="834" y="318" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.70-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="318" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.70-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="334" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="358" text-anchor="end" class="label">0.70-1.00</text>
+<rect x="132" y="342" width="54" height="24" fill="#92a2c4" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.70-1.00: neighbor_positive_share=0.300000</title></rect>
+<text x="159.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.300</text>
+<rect x="186" y="342" width="54" height="24" fill="#b8c2d5" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.70-1.00: neighbor_positive_share=0.187500</title></rect>
+<text x="213.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.188</text>
+<rect x="240" y="342" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.70-1.00: neighbor_positive_share=0.117647</title></rect>
+<text x="267.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="294" y="342" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.70-1.00: neighbor_positive_share=0.176471</title></rect>
+<text x="321.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="348" y="342" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.70-1.00: neighbor_positive_share=0.176471</title></rect>
+<text x="375.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="402" y="342" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.70-1.00: neighbor_positive_share=0.117647</title></rect>
+<text x="429.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="456" y="342" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.70-1.00: neighbor_positive_share=0.117647</title></rect>
+<text x="483.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="510" y="342" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.70-1.00: neighbor_positive_share=0.117647</title></rect>
+<text x="537.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="564" y="342" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.70-1.00: neighbor_positive_share=0.117647</title></rect>
+<text x="591.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="618" y="342" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.70-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="645.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="672" y="342" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.70-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="699.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="726" y="342" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.70-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="753.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="780" y="342" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.70-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="807.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="834" y="342" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.70-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="342" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.70-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="358" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="382" text-anchor="end" class="label">0.80-0.90</text>
+<rect x="132" y="366" width="54" height="24" fill="#9caac8" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.80-0.90: neighbor_positive_share=0.272727</title></rect>
+<text x="159.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.273</text>
+<rect x="186" y="366" width="54" height="24" fill="#a3b1cc" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.80-0.90: neighbor_positive_share=0.250000</title></rect>
+<text x="213.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.250</text>
+<rect x="240" y="366" width="54" height="24" fill="#94a4c5" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.80-0.90: neighbor_positive_share=0.294118</title></rect>
+<text x="267.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.294</text>
+<rect x="294" y="366" width="54" height="24" fill="#94a4c5" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.80-0.90: neighbor_positive_share=0.294118</title></rect>
+<text x="321.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.294</text>
+<rect x="348" y="366" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.80-0.90: neighbor_positive_share=0.176471</title></rect>
+<text x="375.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="402" y="366" width="54" height="24" fill="#d0d6e0" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.80-0.90: neighbor_positive_share=0.117647</title></rect>
+<text x="429.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.118</text>
+<rect x="456" y="366" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.80-0.90: neighbor_positive_share=0.176471</title></rect>
+<text x="483.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="510" y="366" width="54" height="24" fill="#bcc5d7" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.80-0.90: neighbor_positive_share=0.176471</title></rect>
+<text x="537.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.176</text>
+<rect x="564" y="366" width="54" height="24" fill="#a8b5ce" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.80-0.90: neighbor_positive_share=0.235294</title></rect>
+<text x="591.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.235</text>
+<rect x="618" y="366" width="54" height="24" fill="#e3e6e9" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.80-0.90: neighbor_positive_share=0.058824</title></rect>
+<text x="645.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.059</text>
+<rect x="672" y="366" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.80-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="699.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="726" y="366" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.80-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="753.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="780" y="366" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.80-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="807.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="834" y="366" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.80-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="366" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.80-0.90: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="382" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="406" text-anchor="end" class="label">0.80-1.00</text>
+<rect x="132" y="390" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.80-1.00: neighbor_positive_share=0.125000</title></rect>
+<text x="159.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="186" y="390" width="54" height="24" fill="#dde1e6" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.80-1.00: neighbor_positive_share=0.076923</title></rect>
+<text x="213.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.077</text>
+<rect x="240" y="390" width="54" height="24" fill="#c7cfdc" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.80-1.00: neighbor_positive_share=0.142857</title></rect>
+<text x="267.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.143</text>
+<rect x="294" y="390" width="54" height="24" fill="#afbbd1" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.80-1.00: neighbor_positive_share=0.214286</title></rect>
+<text x="321.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.214</text>
+<rect x="348" y="390" width="54" height="24" fill="#afbbd1" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.80-1.00: neighbor_positive_share=0.214286</title></rect>
+<text x="375.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.214</text>
+<rect x="402" y="390" width="54" height="24" fill="#c7cfdc" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.80-1.00: neighbor_positive_share=0.142857</title></rect>
+<text x="429.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.143</text>
+<rect x="456" y="390" width="54" height="24" fill="#c7cfdc" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.80-1.00: neighbor_positive_share=0.142857</title></rect>
+<text x="483.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.143</text>
+<rect x="510" y="390" width="54" height="24" fill="#c7cfdc" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.80-1.00: neighbor_positive_share=0.142857</title></rect>
+<text x="537.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.143</text>
+<rect x="564" y="390" width="54" height="24" fill="#c7cfdc" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.80-1.00: neighbor_positive_share=0.142857</title></rect>
+<text x="591.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.143</text>
+<rect x="618" y="390" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.80-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="645.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="672" y="390" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.80-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="699.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="726" y="390" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.80-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="753.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="780" y="390" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.80-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="807.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="834" y="390" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.80-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="390" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.80-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="406" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="122" y="430" text-anchor="end" class="label">0.90-1.00</text>
+<rect x="132" y="414" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>60s 0.90-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="159.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="186" y="414" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>120s 0.90-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="213.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="240" y="414" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>180s 0.90-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="267.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="294" y="414" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>240s 0.90-1.00: neighbor_positive_share=0.125000</title></rect>
+<text x="321.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="348" y="414" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>300s 0.90-1.00: neighbor_positive_share=0.125000</title></rect>
+<text x="375.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="402" y="414" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>360s 0.90-1.00: neighbor_positive_share=0.125000</title></rect>
+<text x="429.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="456" y="414" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>420s 0.90-1.00: neighbor_positive_share=0.125000</title></rect>
+<text x="483.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="510" y="414" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>480s 0.90-1.00: neighbor_positive_share=0.125000</title></rect>
+<text x="537.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="564" y="414" width="54" height="24" fill="#cdd4df" stroke="#e1dfd5" stroke-width="0.7"><title>540s 0.90-1.00: neighbor_positive_share=0.125000</title></rect>
+<text x="591.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.125</text>
+<rect x="618" y="414" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>600s 0.90-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="645.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="672" y="414" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>660s 0.90-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="699.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="726" y="414" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>720s 0.90-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="753.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="780" y="414" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>780s 0.90-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="807.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="834" y="414" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>840s 0.90-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="861.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<rect x="888" y="414" width="54" height="24" fill="#f7f7f2" stroke="#e1dfd5" stroke-width="0.7"><title>900s 0.90-1.00: neighbor_positive_share=0.000000</title></rect>
+<text x="915.0" y="430" text-anchor="middle" class="small" fill="#16211d">0.000</text>
+<text x="132" y="468" class="subtitle">Metric: neighbor_positive_share</text>
+<rect x="132" y="476" width="1" height="12" fill="#f7f7f2"/>
+<rect x="133" y="476" width="1" height="12" fill="#f6f6f1"/>
+<rect x="134" y="476" width="1" height="12" fill="#f4f5f1"/>
+<rect x="135" y="476" width="1" height="12" fill="#f3f4f0"/>
+<rect x="136" y="476" width="1" height="12" fill="#f2f3f0"/>
+<rect x="137" y="476" width="1" height="12" fill="#f1f2ef"/>
+<rect x="138" y="476" width="1" height="12" fill="#eff1ef"/>
+<rect x="139" y="476" width="1" height="12" fill="#eef0ee"/>
+<rect x="140" y="476" width="1" height="12" fill="#edeeed"/>
+<rect x="141" y="476" width="1" height="12" fill="#eceded"/>
+<rect x="142" y="476" width="1" height="12" fill="#eaecec"/>
+<rect x="143" y="476" width="1" height="12" fill="#e9ebec"/>
+<rect x="144" y="476" width="1" height="12" fill="#e8eaeb"/>
+<rect x="145" y="476" width="1" height="12" fill="#e7e9ea"/>
+<rect x="146" y="476" width="1" height="12" fill="#e5e8ea"/>
+<rect x="147" y="476" width="1" height="12" fill="#e4e7e9"/>
+<rect x="148" y="476" width="1" height="12" fill="#e3e6e9"/>
+<rect x="149" y="476" width="1" height="12" fill="#e2e5e8"/>
+<rect x="150" y="476" width="1" height="12" fill="#e0e4e8"/>
+<rect x="151" y="476" width="1" height="12" fill="#dfe3e7"/>
+<rect x="152" y="476" width="1" height="12" fill="#dee2e6"/>
+<rect x="153" y="476" width="1" height="12" fill="#dce1e6"/>
+<rect x="154" y="476" width="1" height="12" fill="#dbe0e5"/>
+<rect x="155" y="476" width="1" height="12" fill="#dadfe5"/>
+<rect x="156" y="476" width="1" height="12" fill="#d9dde4"/>
+<rect x="157" y="476" width="1" height="12" fill="#d7dce4"/>
+<rect x="158" y="476" width="1" height="12" fill="#d6dbe3"/>
+<rect x="159" y="476" width="1" height="12" fill="#d5dae2"/>
+<rect x="160" y="476" width="1" height="12" fill="#d4d9e2"/>
+<rect x="161" y="476" width="1" height="12" fill="#d2d8e1"/>
+<rect x="162" y="476" width="1" height="12" fill="#d1d7e1"/>
+<rect x="163" y="476" width="1" height="12" fill="#d0d6e0"/>
+<rect x="164" y="476" width="1" height="12" fill="#cfd5df"/>
+<rect x="165" y="476" width="1" height="12" fill="#cdd4df"/>
+<rect x="166" y="476" width="1" height="12" fill="#ccd3de"/>
+<rect x="167" y="476" width="1" height="12" fill="#cbd2de"/>
+<rect x="168" y="476" width="1" height="12" fill="#c9d1dd"/>
+<rect x="169" y="476" width="1" height="12" fill="#c8d0dd"/>
+<rect x="170" y="476" width="1" height="12" fill="#c7cfdc"/>
+<rect x="171" y="476" width="1" height="12" fill="#c6cedb"/>
+<rect x="172" y="476" width="1" height="12" fill="#c4ccdb"/>
+<rect x="173" y="476" width="1" height="12" fill="#c3cbda"/>
+<rect x="174" y="476" width="1" height="12" fill="#c2cada"/>
+<rect x="175" y="476" width="1" height="12" fill="#c1c9d9"/>
+<rect x="176" y="476" width="1" height="12" fill="#bfc8d9"/>
+<rect x="177" y="476" width="1" height="12" fill="#bec7d8"/>
+<rect x="178" y="476" width="1" height="12" fill="#bdc6d7"/>
+<rect x="179" y="476" width="1" height="12" fill="#bcc5d7"/>
+<rect x="180" y="476" width="1" height="12" fill="#bac4d6"/>
+<rect x="181" y="476" width="1" height="12" fill="#b9c3d6"/>
+<rect x="182" y="476" width="1" height="12" fill="#b8c2d5"/>
+<rect x="183" y="476" width="1" height="12" fill="#b7c1d4"/>
+<rect x="184" y="476" width="1" height="12" fill="#b5c0d4"/>
+<rect x="185" y="476" width="1" height="12" fill="#b4bfd3"/>
+<rect x="186" y="476" width="1" height="12" fill="#b3bed3"/>
+<rect x="187" y="476" width="1" height="12" fill="#b1bdd2"/>
+<rect x="188" y="476" width="1" height="12" fill="#b0bbd2"/>
+<rect x="189" y="476" width="1" height="12" fill="#afbad1"/>
+<rect x="190" y="476" width="1" height="12" fill="#aeb9d0"/>
+<rect x="191" y="476" width="1" height="12" fill="#acb8d0"/>
+<rect x="192" y="476" width="1" height="12" fill="#abb7cf"/>
+<rect x="193" y="476" width="1" height="12" fill="#aab6cf"/>
+<rect x="194" y="476" width="1" height="12" fill="#a9b5ce"/>
+<rect x="195" y="476" width="1" height="12" fill="#a7b4ce"/>
+<rect x="196" y="476" width="1" height="12" fill="#a6b3cd"/>
+<rect x="197" y="476" width="1" height="12" fill="#a5b2cc"/>
+<rect x="198" y="476" width="1" height="12" fill="#a4b1cc"/>
+<rect x="199" y="476" width="1" height="12" fill="#a2b0cb"/>
+<rect x="200" y="476" width="1" height="12" fill="#a1afcb"/>
+<rect x="201" y="476" width="1" height="12" fill="#a0aeca"/>
+<rect x="202" y="476" width="1" height="12" fill="#9fadc9"/>
+<rect x="203" y="476" width="1" height="12" fill="#9dacc9"/>
+<rect x="204" y="476" width="1" height="12" fill="#9caac8"/>
+<rect x="205" y="476" width="1" height="12" fill="#9ba9c8"/>
+<rect x="206" y="476" width="1" height="12" fill="#99a8c7"/>
+<rect x="207" y="476" width="1" height="12" fill="#98a7c7"/>
+<rect x="208" y="476" width="1" height="12" fill="#97a6c6"/>
+<rect x="209" y="476" width="1" height="12" fill="#96a5c5"/>
+<rect x="210" y="476" width="1" height="12" fill="#94a4c5"/>
+<rect x="211" y="476" width="1" height="12" fill="#93a3c4"/>
+<rect x="212" y="476" width="1" height="12" fill="#92a2c4"/>
+<rect x="213" y="476" width="1" height="12" fill="#91a1c3"/>
+<rect x="214" y="476" width="1" height="12" fill="#8fa0c3"/>
+<rect x="215" y="476" width="1" height="12" fill="#8e9fc2"/>
+<rect x="216" y="476" width="1" height="12" fill="#8d9ec1"/>
+<rect x="217" y="476" width="1" height="12" fill="#8c9dc1"/>
+<rect x="218" y="476" width="1" height="12" fill="#8a9cc0"/>
+<rect x="219" y="476" width="1" height="12" fill="#899bc0"/>
+<rect x="220" y="476" width="1" height="12" fill="#8899bf"/>
+<rect x="221" y="476" width="1" height="12" fill="#8698bf"/>
+<rect x="222" y="476" width="1" height="12" fill="#8597be"/>
+<rect x="223" y="476" width="1" height="12" fill="#8496bd"/>
+<rect x="224" y="476" width="1" height="12" fill="#8395bd"/>
+<rect x="225" y="476" width="1" height="12" fill="#8194bc"/>
+<rect x="226" y="476" width="1" height="12" fill="#8093bc"/>
+<rect x="227" y="476" width="1" height="12" fill="#7f92bb"/>
+<rect x="228" y="476" width="1" height="12" fill="#7e91ba"/>
+<rect x="229" y="476" width="1" height="12" fill="#7c90ba"/>
+<rect x="230" y="476" width="1" height="12" fill="#7b8fb9"/>
+<rect x="231" y="476" width="1" height="12" fill="#7a8eb9"/>
+<rect x="232" y="476" width="1" height="12" fill="#798db8"/>
+<rect x="233" y="476" width="1" height="12" fill="#778cb8"/>
+<rect x="234" y="476" width="1" height="12" fill="#768bb7"/>
+<rect x="235" y="476" width="1" height="12" fill="#758ab6"/>
+<rect x="236" y="476" width="1" height="12" fill="#7488b6"/>
+<rect x="237" y="476" width="1" height="12" fill="#7287b5"/>
+<rect x="238" y="476" width="1" height="12" fill="#7186b5"/>
+<rect x="239" y="476" width="1" height="12" fill="#7085b4"/>
+<rect x="240" y="476" width="1" height="12" fill="#6e84b4"/>
+<rect x="241" y="476" width="1" height="12" fill="#6d83b3"/>
+<rect x="242" y="476" width="1" height="12" fill="#6c82b2"/>
+<rect x="243" y="476" width="1" height="12" fill="#6b81b2"/>
+<rect x="244" y="476" width="1" height="12" fill="#6980b1"/>
+<rect x="245" y="476" width="1" height="12" fill="#687fb1"/>
+<rect x="246" y="476" width="1" height="12" fill="#677eb0"/>
+<rect x="247" y="476" width="1" height="12" fill="#667daf"/>
+<rect x="248" y="476" width="1" height="12" fill="#647caf"/>
+<rect x="249" y="476" width="1" height="12" fill="#637bae"/>
+<rect x="250" y="476" width="1" height="12" fill="#627aae"/>
+<rect x="251" y="476" width="1" height="12" fill="#6179ad"/>
+<rect x="252" y="476" width="1" height="12" fill="#5f77ad"/>
+<rect x="253" y="476" width="1" height="12" fill="#5e76ac"/>
+<rect x="254" y="476" width="1" height="12" fill="#5d75ab"/>
+<rect x="255" y="476" width="1" height="12" fill="#5c74ab"/>
+<rect x="256" y="476" width="1" height="12" fill="#5a73aa"/>
+<rect x="257" y="476" width="1" height="12" fill="#5972aa"/>
+<rect x="258" y="476" width="1" height="12" fill="#5871a9"/>
+<rect x="259" y="476" width="1" height="12" fill="#5670a9"/>
+<rect x="260" y="476" width="1" height="12" fill="#556fa8"/>
+<rect x="261" y="476" width="1" height="12" fill="#546ea7"/>
+<rect x="262" y="476" width="1" height="12" fill="#536da7"/>
+<rect x="263" y="476" width="1" height="12" fill="#516ca6"/>
+<rect x="264" y="476" width="1" height="12" fill="#506ba6"/>
+<rect x="265" y="476" width="1" height="12" fill="#4f6aa5"/>
+<rect x="266" y="476" width="1" height="12" fill="#4e69a4"/>
+<rect x="267" y="476" width="1" height="12" fill="#4c68a4"/>
+<rect x="268" y="476" width="1" height="12" fill="#4b66a3"/>
+<rect x="269" y="476" width="1" height="12" fill="#4a65a3"/>
+<rect x="270" y="476" width="1" height="12" fill="#4964a2"/>
+<rect x="271" y="476" width="1" height="12" fill="#4763a2"/>
+<rect x="272" y="476" width="1" height="12" fill="#4662a1"/>
+<rect x="273" y="476" width="1" height="12" fill="#4561a0"/>
+<rect x="274" y="476" width="1" height="12" fill="#4360a0"/>
+<rect x="275" y="476" width="1" height="12" fill="#425f9f"/>
+<rect x="276" y="476" width="1" height="12" fill="#415e9f"/>
+<rect x="277" y="476" width="1" height="12" fill="#405d9e"/>
+<rect x="278" y="476" width="1" height="12" fill="#3e5c9e"/>
+<rect x="279" y="476" width="1" height="12" fill="#3d5b9d"/>
+<rect x="280" y="476" width="1" height="12" fill="#3c5a9c"/>
+<rect x="281" y="476" width="1" height="12" fill="#3b599c"/>
+<rect x="282" y="476" width="1" height="12" fill="#39589b"/>
+<rect x="283" y="476" width="1" height="12" fill="#38579b"/>
+<rect x="284" y="476" width="1" height="12" fill="#37559a"/>
+<rect x="285" y="476" width="1" height="12" fill="#365499"/>
+<rect x="286" y="476" width="1" height="12" fill="#345399"/>
+<rect x="287" y="476" width="1" height="12" fill="#335298"/>
+<rect x="288" y="476" width="1" height="12" fill="#325198"/>
+<rect x="289" y="476" width="1" height="12" fill="#315097"/>
+<rect x="290" y="476" width="1" height="12" fill="#2f4f97"/>
+<rect x="291" y="476" width="1" height="12" fill="#2e4e96"/>
+<text x="132" y="504" class="small">0</text>
+<text x="292" y="504" text-anchor="end" class="small">0.600</text>
+</svg>

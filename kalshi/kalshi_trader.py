@@ -24,14 +24,15 @@ STATS_CSV_PATH = Path(
     os.getenv("KALSHI_TRADER_STATS_CSV", str(LOG_PATH.with_name("kalshi_trader_stats.csv")))
 ).expanduser()
 
-DEFAULT_BAND_LOW = 0.55
+DEFAULT_BAND_LOW = 0.50
 DEFAULT_BAND_HIGH = 0.80
 DEFAULT_CONTRACTS = 2
-DEFAULT_ENTRY_SECONDS = 630
+DEFAULT_ENTRY_SECONDS = 705
 DEFAULT_ENTRY_TOLERANCE_SECONDS = 5.0
 DEFAULT_RETRY_ATTEMPTS = 10
 DEFAULT_RETRY_DELAY_SECONDS = 0.5
-DEFAULT_OUTCOME_DELAY_SECONDS = -2.0
+DEFAULT_OUTCOME_DELAY_SECONDS = -180.0
+OUTCOME_WAIT_LOG_INTERVAL_SECONDS = 30.0
 PRICE_EPSILON = 1e-9
 
 TRADE_FIELDS = [
@@ -64,6 +65,12 @@ TRADE_FIELDS = [
     "kalshi_price",
     "kalshi_target",
     "kalshi_target_source",
+    "official_result",
+    "official_status",
+    "official_settlement_ts",
+    "official_settlement_value_dollars",
+    "official_expiration_value",
+    "official_outcome_source",
     "successful_count",
     "unsuccessful_count",
     "skipped_count",
@@ -170,6 +177,7 @@ class ContractRuntime:
     decision_logged: bool = False
     outcome_logged: bool = False
     last_status_log_at: float = 0.0
+    last_outcome_wait_log_at: float = 0.0
 
 
 class StopLossTriggered(RuntimeError):
@@ -199,6 +207,10 @@ def entry_timing_status(remaining: float | None, entry_seconds: float, tolerance
 
 def side_display(side: str | None) -> str:
     return str(side or "").upper()
+
+
+def spot_delta_text(spot: Any, target: Any) -> str:
+    return f"K {trader.fmt_price(spot, 2)} {trader.fmt_price_delta(spot, target, 2)}"
 
 
 def kalshi_source_price_snapshot(kalshi_market: dict[str, Any]) -> dict[str, Any]:
@@ -363,9 +375,59 @@ def spot_agreement(source_snapshot: dict[str, Any], side: str) -> tuple[bool | N
         spot,
         target,
         delta,
-        f"spot disagrees with {side_display(side)}: K {trader.fmt_price(spot, 2)} "
-        f"{trader.fmt_price_delta(spot, target, 2)}",
+        f"spot disagrees with {side_display(side)}: {spot_delta_text(spot, target)}",
     )
+
+
+def normalize_official_side(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"yes", "y", "1", "true"}:
+        return "YES"
+    if normalized in {"no", "n", "0", "false"}:
+        return "NO"
+    return ""
+
+
+def official_result_from_market(market: dict[str, Any]) -> tuple[int | None, str, str]:
+    result = normalize_official_side(market.get("result"))
+    if result == "YES":
+        return 1, "YES", "official_result"
+    if result == "NO":
+        return 0, "NO", "official_result"
+
+    settlement_value = finite_float(market.get("settlement_value_dollars"))
+    if settlement_value is not None:
+        if math.isclose(settlement_value, 1.0, abs_tol=1e-9):
+            return 1, "YES", "official_settlement_value_dollars"
+        if math.isclose(settlement_value, 0.0, abs_tol=1e-9):
+            return 0, "NO", "official_settlement_value_dollars"
+    return None, "MISSING", "official_unresolved"
+
+
+def fetch_official_market(ticker: str) -> dict[str, Any]:
+    data = trader.kalshi_get("/markets", {"tickers": ticker, "limit": 1})
+    markets = data.get("markets") if isinstance(data, dict) else None
+    if isinstance(markets, list):
+        for market in markets:
+            if isinstance(market, dict) and str(market.get("ticker") or "") == ticker:
+                return market
+        if markets and isinstance(markets[0], dict):
+            return markets[0]
+
+    data = trader.kalshi_get(f"/markets/{ticker}")
+    if isinstance(data, dict) and isinstance(data.get("market"), dict):
+        return data["market"]
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+async def official_outcome(
+    runtime: ContractRuntime,
+) -> tuple[int | None, str, dict[str, Any], str]:
+    market = await asyncio.to_thread(fetch_official_market, runtime.ticker)
+    actual_label, actual_side, outcome_source = official_result_from_market(market)
+    return actual_label, actual_side, market, outcome_source
 
 
 def entry_candidate(
@@ -400,52 +462,7 @@ def entry_candidate(
             f"selected probability {trader.fmt_price(probability, 4)} outside probability band "
             f"{band_low:.2f}<=p<{band_high:.2f}"
         )
-    elif agrees is not True:
-        candidate.reason = spot_reason
     return candidate
-
-
-def current_outcome(
-    runtime: ContractRuntime,
-    source_snapshot: dict[str, Any],
-) -> tuple[int | None, str, float | None, float | None, str, str]:
-    price = finite_float(source_snapshot.get("kalshi_60_sma"))
-    price_source = "kalshi_60_sma_source_snapshot"
-    target = finite_float(source_snapshot.get("kalshi_target"))
-    target_source = "observed_source_snapshot"
-    if target is None:
-        for row in reversed(runtime.history):
-            target = finite_float(row.get("kalshi_target"))
-            if target is not None:
-                target_source = "observed_history"
-                break
-    if price is None:
-        for row in reversed(runtime.history):
-            price = finite_float(row.get("kalshi_60_sma"))
-            if price is not None:
-                price_source = "kalshi_60_sma_history"
-                break
-    if price is None:
-        price = finite_float(source_snapshot.get("kalshi_price"))
-        if price is not None:
-            price_source = "kalshi_spot_source_snapshot_fallback"
-    if price is None:
-        for row in reversed(runtime.history):
-            price = finite_float(row.get("kalshi_price"))
-            if price is not None:
-                price_source = "kalshi_spot_history_fallback"
-                break
-    if price is None or target is None:
-        return (
-            None,
-            "MISSING",
-            price,
-            target,
-            price_source if price is not None else "missing",
-            target_source if target is not None else "missing",
-        )
-    actual_label = int(price > target)
-    return actual_label, "YES" if actual_label else "NO", price, target, price_source, target_source
 
 
 def trade_row_base(
@@ -706,6 +723,7 @@ async def evaluate_entry(
         runtime.decision = decision
         append_log(
             f"STATUS {entry_label(args.entry_seconds)} {runtime.ticker} | "
+            f"{spot_delta_text(source_snapshot.get('kalshi_price'), source_snapshot.get('kalshi_target'))} | "
             f"yes_mid={trader.fmt_price(kalshi_snapshot.get('yes_mid'), 4)} decision=SKIP "
             f"reason={decision.reason} | counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
             prefix_timestamp=False,
@@ -739,6 +757,7 @@ async def evaluate_entry(
         runtime.decision = decision
         append_log(
             f"STATUS {entry_label(args.entry_seconds)} {runtime.ticker} | "
+            f"{spot_delta_text(candidate.entry_spot, candidate.entry_target)} | "
             f"yes_mid={trader.fmt_price(kalshi_snapshot.get('yes_mid'), 4)} decision=SKIP "
             f"reason={candidate.reason} | counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
             prefix_timestamp=False,
@@ -761,10 +780,11 @@ async def evaluate_entry(
 
     append_log(
         f"STATUS {entry_label(args.entry_seconds)} {runtime.ticker} | "
+        f"{spot_delta_text(candidate.entry_spot, candidate.entry_target)} | "
         f"yes_mid={trader.fmt_price(kalshi_snapshot.get('yes_mid'), 4)} selected={side_display(candidate.side)} "
         f"selected_prob={trader.fmt_price(candidate.selected_probability, 4)} "
         f"ask={trader.fmt_cents(candidate.selected_ask)} prob_band={args.band_low:.2f}<=p<{args.band_high:.2f} "
-        f"spot_agrees=1 "
+        f"spot_agrees={int(candidate.spot_agrees) if candidate.spot_agrees is not None else '--'} "
         f"contracts={args.contracts}",
         prefix_timestamp=False,
     )
@@ -824,17 +844,19 @@ async def evaluate_entry(
 
 def outcome_event(
     runtime: ContractRuntime,
-    source_snapshot: dict[str, Any],
     kalshi_snapshot: dict[str, Any],
+    official_market: dict[str, Any],
+    actual_label: int,
+    actual_side: str,
+    outcome_source: str,
     counts: Counts,
     args: argparse.Namespace,
     remaining: float | None,
 ) -> None:
-    actual_label, actual_side, price, target, price_source, target_source = current_outcome(runtime, source_snapshot)
     decision = runtime.decision
     latest = "skipped"
     correct: int | str = ""
-    if decision is not None and decision.outcome_eligible and actual_label is not None:
+    if decision is not None and decision.outcome_eligible:
         correct = int(decision.predicted_label == actual_label)
         if correct:
             counts.successful += 1
@@ -844,10 +866,16 @@ def outcome_event(
             latest = "unsuccessful"
         decision.outcome_recorded = True
 
+    settlement_value = official_market.get("settlement_value_dollars")
+    expiration_value = official_market.get("expiration_value")
+    floor_strike = official_market.get("floor_strike")
     append_log(
-        f"OUTCOME {runtime.ticker} | K outcome_price={trader.fmt_price(price, 2)} "
-        f"outcome_source={price_source} target={trader.fmt_price(target, 2)} "
-        f"target_source={target_source} actual={actual_side} "
+        f"OUTCOME {runtime.ticker} | official_result={official_market.get('result') or '--'} "
+        f"settlement_value={settlement_value if settlement_value not in (None, '') else '--'} "
+        f"status={official_market.get('status') or '--'} settlement_ts={official_market.get('settlement_ts') or '--'} "
+        f"expiration_value={expiration_value if expiration_value not in (None, '') else '--'} "
+        f"floor_strike={floor_strike if floor_strike not in (None, '') else '--'} "
+        f"actual={actual_side} outcome_source={outcome_source} "
         f"trade={side_display(decision.side) if decision else '--'} status={decision.status if decision else 'none'} "
         f"result={latest} correct={correct if correct != '' else '--'} | "
         f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
@@ -867,11 +895,17 @@ def outcome_event(
             "fill_price": decision.fill_price if decision else "",
             "filled_size": decision.filled_size if decision else "",
             "actual_side": actual_side,
-            "actual_label": actual_label if actual_label is not None else "",
+            "actual_label": actual_label,
             "correct": correct,
-            "kalshi_price": price if price is not None else "",
-            "kalshi_target": target if target is not None else "",
-            "kalshi_target_source": f"{target_source}; outcome_source={price_source}",
+            "kalshi_price": expiration_value if expiration_value not in (None, "") else "",
+            "kalshi_target": floor_strike if floor_strike not in (None, "") else "",
+            "kalshi_target_source": outcome_source,
+            "official_result": official_market.get("result", ""),
+            "official_status": official_market.get("status", ""),
+            "official_settlement_ts": official_market.get("settlement_ts", ""),
+            "official_settlement_value_dollars": settlement_value if settlement_value not in (None, "") else "",
+            "official_expiration_value": expiration_value if expiration_value not in (None, "") else "",
+            "official_outcome_source": outcome_source,
             "reason": latest,
         }
     )
@@ -898,17 +932,84 @@ async def maybe_record_runtime_outcome(
     if remaining > args.outcome_delay_seconds:
         return False, runtime
 
-    state = await fetch_state_polling(runtime.market, allow_missing_orderbook=True)
-    if state is None:
-        source_snapshot = kalshi_source_price_snapshot(runtime.market)
-        kalshi_snapshot = minimal_snapshot(runtime.market)
-    else:
-        _market, kalshi_snapshot, source_snapshot, _orderbook = state
+    try:
+        actual_label, actual_side, official_market, outcome_source = await official_outcome(runtime)
+    except Exception as exc:
+        now = time.monotonic()
+        if now - runtime.last_outcome_wait_log_at >= OUTCOME_WAIT_LOG_INTERVAL_SECONDS:
+            runtime.last_outcome_wait_log_at = now
+            append_log(
+                f"OUTCOME WAIT {runtime.ticker} | official API error {type(exc).__name__}: {exc}; retrying",
+                prefix_timestamp=False,
+            )
+        return False, runtime
+    if actual_label is None:
+        now = time.monotonic()
+        if now - runtime.last_outcome_wait_log_at >= OUTCOME_WAIT_LOG_INTERVAL_SECONDS:
+            runtime.last_outcome_wait_log_at = now
+            append_log(
+                f"OUTCOME WAIT {runtime.ticker} | official result unresolved "
+                f"status={official_market.get('status') or '--'} result={official_market.get('result') or '--'} "
+                f"settlement_value={official_market.get('settlement_value_dollars') or '--'}; retrying",
+                prefix_timestamp=False,
+            )
+        return False, runtime
+
+    kalshi_snapshot = minimal_snapshot({**runtime.market, **official_market})
     await log_balance_with_stop_loss_baseline("OUTCOME", remaining, args)
-    outcome_event(runtime, source_snapshot, kalshi_snapshot, counts, args, remaining)
+    outcome_event(
+        runtime,
+        kalshi_snapshot,
+        official_market,
+        actual_label,
+        actual_side,
+        outcome_source,
+        counts,
+        args,
+        remaining,
+    )
     completed_seen.add(contract_key(runtime.ticker, runtime.close_time))
     trader.KALSHI_MARKET_CACHE.pop(trader.SERIES_TICKER, None)
     return True, None
+
+
+def queue_pending_outcome(
+    runtime: ContractRuntime | None,
+    pending_outcomes: dict[tuple[str, str], ContractRuntime],
+    completed_seen: set[tuple[str, str]],
+    outcome_delay_seconds: float,
+) -> None:
+    if runtime is None or runtime.outcome_logged:
+        return
+    key = contract_key(runtime.ticker, runtime.close_time)
+    if key in completed_seen or key in pending_outcomes:
+        return
+    pending_outcomes[key] = runtime
+    append_log(
+        f"OUTCOME PENDING {runtime.ticker} | official API check scheduled "
+        f"{abs(outcome_delay_seconds):.0f}s after close",
+        prefix_timestamp=False,
+    )
+
+
+async def record_due_pending_outcomes(
+    pending_outcomes: dict[tuple[str, str], ContractRuntime],
+    counts: Counts,
+    args: argparse.Namespace,
+    completed_seen: set[tuple[str, str]],
+) -> int:
+    completed = 0
+    for key, pending_runtime in list(pending_outcomes.items()):
+        outcome_done, _runtime = await maybe_record_runtime_outcome(
+            pending_runtime,
+            counts,
+            args,
+            completed_seen,
+        )
+        if outcome_done:
+            pending_outcomes.pop(key, None)
+            completed += 1
+    return completed
 
 
 async def run() -> None:
@@ -919,12 +1020,14 @@ async def run() -> None:
     completed_contracts = 0
     completed_seen: set[tuple[str, str]] = set()
     expired_seen: set[tuple[str, str]] = set()
+    pending_outcomes: dict[tuple[str, str], ContractRuntime] = {}
 
     append_log(
         f"START kalshi_trader live={args.live} contracts={args.contracts} "
-        f"prob_band={args.band_low:.2f}<=p<{args.band_high:.2f} spot_agreement=required "
+        f"prob_band={args.band_low:.2f}<=p<{args.band_high:.2f} spot_agreement=not_required "
         f"entry_seconds={args.entry_seconds:g} "
         f"entry_tolerance_seconds={args.entry_tolerance_seconds:g} "
+        f"outcome_delay_seconds={args.outcome_delay_seconds:g} official_outcomes=kalshi_api "
         f"retry_attempts={args.retry_attempts} stop_loss={trader.fmt_money(args.stop_loss)}"
     )
     if await log_balance_with_stop_loss_baseline("START", None, args) is None and args.stop_loss > 0:
@@ -936,6 +1039,16 @@ async def run() -> None:
         while True:
             if args.max_seconds and time.monotonic() - started_at >= args.max_seconds:
                 append_log(f"STOP max_seconds={args.max_seconds:g} reached")
+                return
+
+            completed_contracts += await record_due_pending_outcomes(
+                pending_outcomes,
+                counts,
+                args,
+                completed_seen,
+            )
+            if args.max_contracts and completed_contracts >= args.max_contracts:
+                append_log(f"STOP max_contracts={args.max_contracts:g} reached")
                 return
 
             outcome_done, runtime = await maybe_record_runtime_outcome(runtime, counts, args, completed_seen)
@@ -971,6 +1084,7 @@ async def run() -> None:
                 continue
 
             if runtime is None or runtime.ticker != ticker:
+                queue_pending_outcome(runtime, pending_outcomes, completed_seen, args.outcome_delay_seconds)
                 runtime = ContractRuntime(ticker=ticker, close_time=close_time, market=kalshi_market)
                 append_log("", prefix_timestamp=False)
                 append_log(
@@ -1024,6 +1138,7 @@ async def run() -> None:
                         f"missed {entry_label(args.entry_seconds)} entry window "
                         f"({lower:.1f}s<=T<={upper:.1f}s); current T={remaining:.1f}s"
                     )
+                    counts.skipped += 1
                     runtime.decision = TradeDecision(
                         status="skip",
                         contracts=args.contracts,
@@ -1043,12 +1158,12 @@ async def run() -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Kalshi BTC 15m midpoint-band trader with spot-agreement filter.")
+    parser = argparse.ArgumentParser(description="Kalshi BTC 15m official-outcome midpoint-band trader.")
     parser.add_argument("--live", action="store_true", help="Submit real Kalshi orders. Omit for dry-run logging.")
     parser.add_argument("--contracts", type=int, default=DEFAULT_CONTRACTS, help="Contracts to buy. Default: 2.")
-    parser.add_argument("--band-low", type=float, default=DEFAULT_BAND_LOW, help="Inclusive selected-midpoint probability lower bound. Default: 0.55.")
+    parser.add_argument("--band-low", type=float, default=DEFAULT_BAND_LOW, help="Inclusive selected-midpoint probability lower bound. Default: 0.50.")
     parser.add_argument("--band-high", type=float, default=DEFAULT_BAND_HIGH, help="Exclusive selected-midpoint probability upper bound. Default: 0.80.")
-    parser.add_argument("--entry-seconds", type=float, default=DEFAULT_ENTRY_SECONDS, help="Target entry time in seconds before close. Default: 630.")
+    parser.add_argument("--entry-seconds", type=float, default=DEFAULT_ENTRY_SECONDS, help="Target entry time in seconds before close. Default: 705.")
     parser.add_argument(
         "--entry-tolerance-seconds",
         type=float,
@@ -1061,7 +1176,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stop-loss", type=float, default=10.0, help="Stop if Kalshi balance drops this many dollars below initial balance. Default: 10.")
     parser.add_argument("--poll-interval", type=float, default=2.0, help="Seconds between HTTP polls. Default: 2.")
     parser.add_argument("--log-interval", type=float, default=60.0, help="Seconds between recurring STATUS log lines. Use 0 to log every poll. Default: 60.")
-    parser.add_argument("--outcome-delay-seconds", type=float, default=DEFAULT_OUTCOME_DELAY_SECONDS, help="Evaluate outcome this many seconds relative to close. Default: -2.")
+    parser.add_argument(
+        "--outcome-delay-seconds",
+        type=float,
+        default=DEFAULT_OUTCOME_DELAY_SECONDS,
+        help="Fetch official Kalshi outcome this many seconds relative to close. Default: -180.",
+    )
     parser.add_argument("--max-contracts", type=int, default=0, help="Stop after this many contract outcomes. 0 means run forever.")
     parser.add_argument("--max-seconds", type=float, default=0.0, help="Stop after this many wall-clock seconds. 0 means no limit.")
     args = parser.parse_args()
