@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import csv
 import math
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,12 +33,6 @@ STATS_FIELDS = [
     "estimated_realized_pnl_dollars",
     "estimated_realized_pnl_percent",
 ]
-
-BALANCE_RE = re.compile(
-    r"^(?P<timestamp>\d{4}-\d{2}-\d{2}T[0-9:.]+Z) \| "
-    r"BALANCE(?P<event>.*?) \| Kalshi \$(?P<balance>-?\d+(?:\.\d+)?)"
-    r"(?: available=\$(?P<available>-?\d+(?:\.\d+)?))?"
-)
 
 
 def parse_timestamp(value: Any) -> datetime | None:
@@ -201,30 +194,24 @@ class StrategyState:
         return self.realized_pnl / self.total_stake if self.total_stake else None
 
 
-def read_balance_events(log_path: Path) -> list[TimelineEvent]:
-    if not log_path.exists():
+def read_portfolio_events(portfolio_csv_path: Path) -> list[TimelineEvent]:
+    if not portfolio_csv_path.exists():
         return []
     events: list[TimelineEvent] = []
-    for sequence, line in enumerate(log_path.read_text(encoding="utf-8", errors="replace").splitlines()):
-        match = BALANCE_RE.match(line.strip())
-        if not match:
-            continue
-        timestamp = parse_timestamp(match.group("timestamp"))
-        if timestamp is None:
-            continue
-        events.append(
-            TimelineEvent(
-                timestamp=timestamp,
-                sequence=sequence,
-                kind="balance",
-                row={
-                    "event": "balance",
-                    "balance_event": " ".join((match.group("event") or "").split()) or "BALANCE",
-                    "portfolio_value": finite_float(match.group("balance")),
-                    "portfolio_available": finite_float(match.group("available")),
-                },
+    with portfolio_csv_path.open(newline="", encoding="utf-8") as file_obj:
+        reader = csv.DictReader(file_obj)
+        for sequence, row in enumerate(reader):
+            timestamp = parse_timestamp(row.get("timestamp_utc"))
+            if timestamp is None:
+                continue
+            events.append(
+                TimelineEvent(
+                    timestamp=timestamp,
+                    sequence=sequence,
+                    kind="portfolio",
+                    row=row,
+                )
             )
-        )
     return events
 
 
@@ -242,8 +229,8 @@ def read_trade_events(trades_csv_path: Path) -> list[TimelineEvent]:
     return events
 
 
-def build_stats_rows(log_path: Path, trades_csv_path: Path) -> list[dict[str, Any]]:
-    events = read_balance_events(log_path) + read_trade_events(trades_csv_path)
+def build_stats_rows(portfolio_csv_path: Path, trades_csv_path: Path) -> list[dict[str, Any]]:
+    events = read_portfolio_events(portfolio_csv_path) + read_trade_events(trades_csv_path)
     events.sort()
     portfolio = PortfolioState()
     strategy = StrategyState()
@@ -252,13 +239,13 @@ def build_stats_rows(log_path: Path, trades_csv_path: Path) -> list[dict[str, An
         source = event.kind
         contract_id = event.row.get("contract_id", "")
         event_name = str(event.row.get("event") or source)
-        if event.kind == "balance":
+        if event.kind == "portfolio":
             portfolio.update_balance(
                 event.timestamp,
                 finite_float(event.row.get("portfolio_value")),
                 finite_float(event.row.get("portfolio_available")),
             )
-            event_name = event.row.get("balance_event") or "BALANCE"
+            event_name = event.row.get("event") or "portfolio"
         elif event.kind == "trade":
             strategy.update_trade(event.row)
 
@@ -287,8 +274,8 @@ def build_stats_rows(log_path: Path, trades_csv_path: Path) -> list[dict[str, An
     return rows
 
 
-def write_stats_csv(log_path: Path, trades_csv_path: Path, stats_csv_path: Path) -> list[dict[str, Any]]:
-    rows = build_stats_rows(log_path, trades_csv_path)
+def write_stats_csv(portfolio_csv_path: Path, trades_csv_path: Path, stats_csv_path: Path) -> list[dict[str, Any]]:
+    rows = build_stats_rows(portfolio_csv_path, trades_csv_path)
     stats_csv_path.parent.mkdir(parents=True, exist_ok=True)
     with stats_csv_path.open("w", newline="", encoding="utf-8") as file_obj:
         writer = csv.DictWriter(file_obj, fieldnames=STATS_FIELDS)
@@ -297,8 +284,8 @@ def write_stats_csv(log_path: Path, trades_csv_path: Path, stats_csv_path: Path)
     return rows
 
 
-def refresh_stats_csv(log_path: Path, trades_csv_path: Path, stats_csv_path: Path) -> None:
-    write_stats_csv(log_path, trades_csv_path, stats_csv_path)
+def refresh_stats_csv(portfolio_csv_path: Path, trades_csv_path: Path, stats_csv_path: Path) -> None:
+    write_stats_csv(portfolio_csv_path, trades_csv_path, stats_csv_path)
 
 
 def read_stats_csv(stats_csv_path: Path) -> list[dict[str, Any]]:
@@ -309,12 +296,12 @@ def read_stats_csv(stats_csv_path: Path) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Backfill Kalshi trader stats CSV from log and trade CSV files.")
-    parser.add_argument("--log", type=Path, default=Path("kalshi_trader.log"))
+    parser = argparse.ArgumentParser(description="Backfill Kalshi trader stats CSV from portfolio and trade CSV files.")
+    parser.add_argument("--portfolio", type=Path, default=Path("kalshi_trader_portfolio.csv"))
     parser.add_argument("--trades", type=Path, default=Path("kalshi_trader_trades.csv"))
     parser.add_argument("--stats", type=Path, default=Path("kalshi_trader_stats.csv"))
     args = parser.parse_args()
-    rows = write_stats_csv(args.log, args.trades, args.stats)
+    rows = write_stats_csv(args.portfolio, args.trades, args.stats)
     print(f"wrote {args.stats} rows={len(rows)}")
 
 

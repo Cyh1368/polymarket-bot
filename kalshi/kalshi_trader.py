@@ -20,6 +20,9 @@ import kalshi_trader_stats
 APP_DIR = Path(__file__).resolve().parent
 LOG_PATH = Path(os.getenv("KALSHI_TRADER_LOG_PATH", str(APP_DIR / "kalshi_trader.log"))).expanduser()
 TRADES_CSV_PATH = Path(os.getenv("KALSHI_TRADER_TRADES_CSV", str(APP_DIR / "kalshi_trader_trades.csv"))).expanduser()
+PORTFOLIO_CSV_PATH = Path(
+    os.getenv("KALSHI_TRADER_PORTFOLIO_CSV", str(LOG_PATH.with_name("kalshi_trader_portfolio.csv")))
+).expanduser()
 STATS_CSV_PATH = Path(
     os.getenv("KALSHI_TRADER_STATS_CSV", str(LOG_PATH.with_name("kalshi_trader_stats.csv")))
 ).expanduser()
@@ -79,6 +82,16 @@ TRADE_FIELDS = [
     "reason",
 ]
 
+PORTFOLIO_FIELDS = [
+    "timestamp_utc",
+    "event",
+    "remaining_seconds",
+    "portfolio_value",
+    "portfolio_available",
+    "initial_balance",
+    "drawdown_dollars",
+]
+
 
 def iso_utc(dt: datetime | None = None) -> str:
     return (dt or datetime.now(timezone.utc)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -111,9 +124,19 @@ def append_trade_row(row: dict[str, Any]) -> None:
     refresh_stats_csv()
 
 
+def append_portfolio_row(row: dict[str, Any]) -> None:
+    PORTFOLIO_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    exists = PORTFOLIO_CSV_PATH.exists()
+    with PORTFOLIO_CSV_PATH.open("a", newline="", encoding="utf-8") as file_obj:
+        writer = csv.DictWriter(file_obj, fieldnames=PORTFOLIO_FIELDS)
+        if not exists:
+            writer.writeheader()
+        writer.writerow({field: row.get(field, "") for field in PORTFOLIO_FIELDS})
+
+
 def refresh_stats_csv() -> None:
     try:
-        kalshi_trader_stats.refresh_stats_csv(LOG_PATH, TRADES_CSV_PATH, STATS_CSV_PATH)
+        kalshi_trader_stats.refresh_stats_csv(PORTFOLIO_CSV_PATH, TRADES_CSV_PATH, STATS_CSV_PATH)
     except Exception as exc:
         append_log(f"STATS_CSV ERROR {type(exc).__name__}: {exc}", prefix_timestamp=True)
 
@@ -516,8 +539,20 @@ async def log_balance(
         append_log(f"BALANCE{remaining_text} {event} | Kalshi ERROR {error}")
         return None
     available_text = "" if available is None else f" available={trader.fmt_money(available)}"
-    drawdown = "" if initial_balance is None else f" drawdown={initial_balance - balance:.4f}"
+    drawdown_value = None if initial_balance is None else initial_balance - balance
+    drawdown = "" if drawdown_value is None else f" drawdown={drawdown_value:.4f}"
     append_log(f"BALANCE{remaining_text} {event} | Kalshi {trader.fmt_money(balance)}{available_text}{drawdown}")
+    append_portfolio_row(
+        {
+            "timestamp_utc": iso_utc(),
+            "event": event,
+            "remaining_seconds": "" if remaining is None else f"{remaining:.3f}",
+            "portfolio_value": balance,
+            "portfolio_available": available,
+            "initial_balance": initial_balance,
+            "drawdown_dollars": drawdown_value,
+        }
+    )
     refresh_stats_csv()
     if initial_balance is not None and stop_loss > 0 and balance < initial_balance - stop_loss:
         raise StopLossTriggered(

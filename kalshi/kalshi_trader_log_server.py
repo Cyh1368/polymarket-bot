@@ -14,6 +14,9 @@ LOG_PATH = Path(os.getenv("KALSHI_TRADER_LOG_PATH", str(DEFAULT_DATA_DIR / "kals
 TRADES_CSV_PATH = Path(
     os.getenv("KALSHI_TRADER_TRADES_CSV", str(LOG_PATH.with_name("kalshi_trader_trades.csv")))
 ).expanduser()
+PORTFOLIO_CSV_PATH = Path(
+    os.getenv("KALSHI_TRADER_PORTFOLIO_CSV", str(LOG_PATH.with_name("kalshi_trader_portfolio.csv")))
+).expanduser()
 STATS_CSV_PATH = Path(
     os.getenv("KALSHI_TRADER_STATS_CSV", str(LOG_PATH.with_name("kalshi_trader_stats.csv")))
 ).expanduser()
@@ -846,7 +849,7 @@ def read_log_tail() -> str:
 
 
 def refresh_stats() -> None:
-    kalshi_trader_stats.refresh_stats_csv(LOG_PATH, TRADES_CSV_PATH, STATS_CSV_PATH)
+    kalshi_trader_stats.refresh_stats_csv(PORTFOLIO_CSV_PATH, TRADES_CSV_PATH, STATS_CSV_PATH)
 
 
 def read_stats_rows() -> list[dict[str, str]]:
@@ -942,6 +945,7 @@ def stats() -> Response:
         {
             "log_path": str(LOG_PATH),
             "trades_path": str(TRADES_CSV_PATH),
+            "portfolio_path": str(PORTFOLIO_CSV_PATH),
             "stats_path": str(STATS_CSV_PATH),
             "rows": rows,
             "latest": latest,
