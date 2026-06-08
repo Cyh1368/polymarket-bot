@@ -26,6 +26,26 @@ import httpx
 GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 CLOB_BASE_URL = "https://clob.polymarket.com"
 BTC_15M_SECONDS = 15 * 60
+DEFAULT_ORDER_IMBALANCE_TAUS = (0.01, 0.02, 0.05, 0.10)
+
+
+def parse_order_imbalance_taus(raw: str) -> tuple[float, ...]:
+    values: list[float] = []
+    for item in raw.split(","):
+        try:
+            value = float(item.strip())
+        except ValueError:
+            continue
+        if value > 0:
+            values.append(value)
+    return tuple(dict.fromkeys(values)) or DEFAULT_ORDER_IMBALANCE_TAUS
+
+
+def tau_label(value: float) -> str:
+    cents_value = value * 100.0
+    if abs(cents_value - round(cents_value)) < 1e-9:
+        return f"{int(round(cents_value))}c"
+    return str(value).replace(".", "p").replace("-", "m")
 
 
 @dataclass
@@ -119,6 +139,32 @@ def init_db(path: Path) -> sqlite3.Connection:
 
         CREATE INDEX IF NOT EXISTS idx_orderbook_levels_snapshot
             ON orderbook_levels(snapshot_id);
+
+        CREATE TABLE IF NOT EXISTS orderbook_imbalance_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug TEXT NOT NULL,
+            collected_ts INTEGER NOT NULL,
+            collected_utc TEXT NOT NULL,
+            tau REAL NOT NULL,
+            tau_label TEXT NOT NULL,
+            up_snapshot_id INTEGER NOT NULL,
+            down_snapshot_id INTEGER NOT NULL,
+            up_bid_depth REAL NOT NULL,
+            up_ask_depth REAL NOT NULL,
+            up_book_imbalance REAL,
+            down_bid_depth REAL NOT NULL,
+            down_ask_depth REAL NOT NULL,
+            down_book_imbalance REAL,
+            up_down_bid_imbalance REAL,
+            up_down_ask_imbalance REAL,
+            FOREIGN KEY(up_snapshot_id) REFERENCES orderbook_snapshots(id),
+            FOREIGN KEY(down_snapshot_id) REFERENCES orderbook_snapshots(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_orderbook_imbalance_slug_time
+            ON orderbook_imbalance_snapshots(slug, collected_ts);
+        CREATE INDEX IF NOT EXISTS idx_orderbook_imbalance_tau
+            ON orderbook_imbalance_snapshots(tau_label, collected_ts);
         """
     )
     return conn
@@ -173,6 +219,92 @@ def best_bid_ask(book: dict[str, Any]) -> tuple[float | None, float | None]:
     best_bid = max(bids) if bids else None
     best_ask = min(asks) if asks else None
     return best_bid, best_ask
+
+
+def levels_to_depth_map(levels: Any) -> dict[float, float]:
+    depth: dict[float, float] = {}
+    if not isinstance(levels, list):
+        return depth
+    for item in levels:
+        if not isinstance(item, dict):
+            continue
+        try:
+            price = float(item["price"])
+            size = float(item["size"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if size > 0:
+            depth[price] = depth.get(price, 0.0) + size
+    return depth
+
+
+def depth_within_tau(levels: Any, tau: float, *, side: str) -> float:
+    depth = levels_to_depth_map(levels)
+    if not depth:
+        return 0.0
+    if side == "ask":
+        reference = min(depth)
+        return sum(size for price, size in depth.items() if price <= reference + tau + 1e-12)
+    reference = max(depth)
+    return sum(size for price, size in depth.items() if price >= reference - tau - 1e-12)
+
+
+def imbalance_value(left_depth: float, right_depth: float) -> float | None:
+    total = left_depth + right_depth
+    if total <= 0:
+        return None
+    return (left_depth - right_depth) / total
+
+
+def insert_order_imbalance_snapshots(
+    conn: sqlite3.Connection,
+    market: CurrentMarket,
+    up_snapshot_id: int,
+    down_snapshot_id: int,
+    up_book: dict[str, Any],
+    down_book: dict[str, Any],
+    tau_values: tuple[float, ...] = DEFAULT_ORDER_IMBALANCE_TAUS,
+) -> None:
+    collected_ts = utc_now_ts()
+    rows = []
+    for tau in tau_values:
+        up_bid_depth = depth_within_tau(up_book.get("bids", []), tau, side="bid")
+        up_ask_depth = depth_within_tau(up_book.get("asks", []), tau, side="ask")
+        down_bid_depth = depth_within_tau(down_book.get("bids", []), tau, side="bid")
+        down_ask_depth = depth_within_tau(down_book.get("asks", []), tau, side="ask")
+        rows.append(
+            (
+                market.slug,
+                collected_ts,
+                utc_iso(collected_ts),
+                tau,
+                tau_label(tau),
+                up_snapshot_id,
+                down_snapshot_id,
+                up_bid_depth,
+                up_ask_depth,
+                imbalance_value(up_bid_depth, up_ask_depth),
+                down_bid_depth,
+                down_ask_depth,
+                imbalance_value(down_bid_depth, down_ask_depth),
+                imbalance_value(up_bid_depth, down_bid_depth),
+                imbalance_value(down_ask_depth, up_ask_depth),
+            )
+        )
+    conn.executemany(
+        """
+        INSERT INTO orderbook_imbalance_snapshots (
+            slug, collected_ts, collected_utc, tau, tau_label,
+            up_snapshot_id, down_snapshot_id,
+            up_bid_depth, up_ask_depth, up_book_imbalance,
+            down_bid_depth, down_ask_depth, down_book_imbalance,
+            up_down_bid_imbalance, up_down_ask_imbalance
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    conn.commit()
 
 
 def insert_book(
@@ -310,14 +442,24 @@ async def poll_once(
     client: httpx.AsyncClient,
     conn: sqlite3.Connection,
     market: CurrentMarket,
+    tau_values: tuple[float, ...] = DEFAULT_ORDER_IMBALANCE_TAUS,
 ) -> None:
     up_book, down_book = await asyncio.gather(
         fetch_book(client, market.up_token_id),
         fetch_book(client, market.down_token_id),
     )
     upsert_market(conn, market)
-    insert_book(conn, market, market.up_token_id, "Up", up_book)
-    insert_book(conn, market, market.down_token_id, "Down", down_book)
+    up_snapshot_id = insert_book(conn, market, market.up_token_id, "Up", up_book)
+    down_snapshot_id = insert_book(conn, market, market.down_token_id, "Down", down_book)
+    insert_order_imbalance_snapshots(
+        conn,
+        market,
+        up_snapshot_id,
+        down_snapshot_id,
+        up_book,
+        down_book,
+        tau_values,
+    )
 
     up_bid, up_ask = best_bid_ask(up_book)
     down_bid, down_ask = best_bid_ask(down_book)
@@ -356,7 +498,7 @@ async def run(args: argparse.Namespace) -> None:
                 )
 
             started = time.monotonic()
-            await poll_once(client, conn, current_market)
+            await poll_once(client, conn, current_market, args.imbalance_taus)
             if args.once:
                 break
             elapsed = time.monotonic() - started
@@ -373,8 +515,15 @@ def parse_args() -> argparse.Namespace:
         default=Path("data/live_orderbooks/btc_updown_orderbooks.sqlite"),
     )
     parser.add_argument("--interval-seconds", type=float, default=1.0)
+    parser.add_argument(
+        "--imbalance-taus",
+        default=",".join(str(value) for value in DEFAULT_ORDER_IMBALANCE_TAUS),
+        help="Comma-separated price-depth bands for order imbalance, e.g. 0.01,0.02,0.05,0.10.",
+    )
     parser.add_argument("--once", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.imbalance_taus = parse_order_imbalance_taus(args.imbalance_taus)
+    return args
 
 
 def main() -> None:

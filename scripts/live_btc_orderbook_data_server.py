@@ -12,6 +12,7 @@ Endpoints:
   GET /api/state
   GET /api/latest
   GET /api/snapshots?limit=200
+  GET /api/imbalances?limit=200
   GET /api/levels?snapshot_id=123
 """
 
@@ -39,8 +40,10 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from live_btc_orderbook_collector import (  # noqa: E402
     CurrentMarket,
+    DEFAULT_ORDER_IMBALANCE_TAUS,
     discover_current_market,
     init_db,
+    parse_order_imbalance_taus,
     poll_once,
     utc_iso,
     utc_now_ts,
@@ -146,6 +149,39 @@ def query_snapshots(db_path: Path, params: dict[str, list[str]]) -> list[dict]:
     return rows_to_dicts(rows)
 
 
+def query_imbalances(db_path: Path, params: dict[str, list[str]]) -> list[dict]:
+    limit = min(5000, max(1, int(params.get("limit", ["200"])[0])))
+    slug = params.get("slug", [None])[0]
+    tau_label = params.get("tau", [None])[0]
+
+    clauses = []
+    values: list[object] = []
+    if slug:
+        clauses.append("slug = ?")
+        values.append(slug)
+    if tau_label:
+        clauses.append("tau_label = ?")
+        values.append(tau_label)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT slug, collected_ts, collected_utc, tau, tau_label,
+                   up_snapshot_id, down_snapshot_id,
+                   up_bid_depth, up_ask_depth, up_book_imbalance,
+                   down_bid_depth, down_ask_depth, down_book_imbalance,
+                   up_down_bid_imbalance, up_down_ask_imbalance
+            FROM orderbook_imbalance_snapshots
+            {where}
+            ORDER BY collected_ts DESC, id DESC
+            LIMIT ?
+            """,
+            (*values, limit),
+        ).fetchall()
+    return rows_to_dicts(rows)
+
+
 def query_levels(db_path: Path, params: dict[str, list[str]]) -> list[dict]:
     snapshot_id = int(params.get("snapshot_id", ["0"])[0])
     if snapshot_id <= 0:
@@ -193,6 +229,8 @@ class DataServerHandler(BaseHTTPRequestHandler):
                             "/api/latest",
                             "/api/snapshots?limit=200",
                             "/api/snapshots?outcome=Up&limit=200",
+                            "/api/imbalances?limit=200",
+                            "/api/imbalances?tau=1c&limit=200",
                             "/api/levels?snapshot_id=123",
                         ],
                     }
@@ -221,6 +259,9 @@ class DataServerHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/snapshots":
                 self.send_json(query_snapshots(self.db_path, params))
+                return
+            if parsed.path == "/api/imbalances":
+                self.send_json(query_imbalances(self.db_path, params))
                 return
             if parsed.path == "/api/levels":
                 self.send_json(query_levels(self.db_path, params))
@@ -271,7 +312,7 @@ async def collector_loop(args: argparse.Namespace, state: ServerState) -> None:
                     )
 
                 started = time.monotonic()
-                await poll_once(client, conn, current_market)
+                await poll_once(client, conn, current_market, args.imbalance_taus)
                 state.set_collection(current_market)
                 backoff = 1.0
                 elapsed = time.monotonic() - started
@@ -316,7 +357,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--interval-seconds", type=float, default=1.0)
     parser.add_argument("--http-timeout", type=float, default=10.0)
     parser.add_argument("--max-backoff-seconds", type=float, default=30.0)
-    return parser.parse_args()
+    parser.add_argument(
+        "--imbalance-taus",
+        default=",".join(str(value) for value in DEFAULT_ORDER_IMBALANCE_TAUS),
+        help="Comma-separated price-depth bands for order imbalance, e.g. 0.01,0.02,0.05,0.10.",
+    )
+    args = parser.parse_args()
+    args.imbalance_taus = parse_order_imbalance_taus(args.imbalance_taus)
+    return args
 
 
 def main() -> None:

@@ -71,6 +71,7 @@ LIVE_LATCH_THRESHOLDS = {
 }
 KALSHI_MIN_QUOTE_SPREAD = 0.001
 ORDERBOOK_DEPTH = int(os.getenv("ORDERBOOK_DEPTH", "10"))
+ORDER_IMBALANCE_TAUS_RAW = os.getenv("ORDER_IMBALANCE_TAUS", "0.01,0.02,0.05,0.10")
 KALSHI_LOCAL_BOOK_RESYNC_SECONDS = 30.0
 ACTIVE_MARKET_REFRESH_MIN_INTERVAL_SECONDS = float(os.getenv("ACTIVE_MARKET_REFRESH_MIN_INTERVAL_SECONDS", "5"))
 WEBSOCKET_REPORT_INTERVAL = 0.5
@@ -91,6 +92,47 @@ EMERGENCY_EXIT_MAX_CHUNK_CONTRACTS = max(1, int(os.getenv("EMERGENCY_EXIT_MAX_CH
 KALSHI_MIN_ORDER_CONTRACTS = max(1, int(os.getenv("KALSHI_MIN_ORDER_CONTRACTS", "1")))
 POLYMARKET_MIN_ORDER_CONTRACTS = max(1, int(os.getenv("POLYMARKET_MIN_ORDER_CONTRACTS", "1")))
 POLYMARKET_MIN_EXIT_CONTRACTS = max(1, int(os.getenv("POLYMARKET_MIN_EXIT_CONTRACTS", str(POLYMARKET_MIN_ORDER_CONTRACTS))))
+
+
+def parse_order_imbalance_taus(raw: str) -> tuple[float, ...]:
+    values: list[float] = []
+    for item in raw.split(","):
+        try:
+            value = float(item.strip())
+        except ValueError:
+            continue
+        if value > 0:
+            values.append(value)
+    return tuple(dict.fromkeys(values)) or (0.01, 0.02, 0.05, 0.10)
+
+
+def tau_label(value: float) -> str:
+    cents_value = value * 100.0
+    if abs(cents_value - round(cents_value)) < 1e-9:
+        return f"{int(round(cents_value))}c"
+    return str(value).replace(".", "p").replace("-", "m")
+
+
+ORDER_IMBALANCE_TAUS = parse_order_imbalance_taus(ORDER_IMBALANCE_TAUS_RAW)
+
+
+def order_imbalance_csv_fields(prefix: str) -> list[str]:
+    fields: list[str] = []
+    for tau in ORDER_IMBALANCE_TAUS:
+        label = tau_label(tau)
+        fields.extend(
+            [
+                f"{prefix}_yes_bid_depth_tau_{label}",
+                f"{prefix}_yes_ask_depth_tau_{label}",
+                f"{prefix}_yes_book_imbalance_tau_{label}",
+                f"{prefix}_no_bid_depth_tau_{label}",
+                f"{prefix}_no_ask_depth_tau_{label}",
+                f"{prefix}_no_book_imbalance_tau_{label}",
+                f"{prefix}_directional_bid_imbalance_tau_{label}",
+                f"{prefix}_directional_ask_imbalance_tau_{label}",
+            ]
+        )
+    return fields
 
 HORIZONS: dict[str, int] = {
     "5m": 5 * 60,
@@ -177,6 +219,7 @@ CSV_FIELDS = [
     "kalshi_open_interest",
     "kalshi_best_yes_bid_qty",
     "kalshi_best_no_bid_qty",
+    *order_imbalance_csv_fields("kalshi"),
     "polymarket_timestamp_utc",
     "polymarket_ticker",
     "polymarket_title",
@@ -193,6 +236,7 @@ CSV_FIELDS = [
     "polymarket_open_interest",
     "polymarket_best_yes_bid_qty",
     "polymarket_best_no_bid_qty",
+    *order_imbalance_csv_fields("polymarket"),
     "source_timestamp_utc",
     "kalshi_btc_source",
     "kalshi_btc_price",
@@ -1069,8 +1113,95 @@ def polymarket_book_levels(orderbook: dict[str, Any]) -> tuple[list[list[Any]], 
     return convert(data.get("bids")), convert(data.get("offers") or data.get("asks"))
 
 
+def normalized_level_pairs(levels: Any) -> list[tuple[float, float]]:
+    pairs: list[tuple[float, float]] = []
+    if not isinstance(levels, list):
+        return pairs
+    for level in levels:
+        price = None
+        quantity = None
+        if isinstance(level, dict):
+            price = nested_price(level.get("px") or level.get("price"))
+            quantity = finite_float(level.get("qty") or level.get("quantity") or level.get("size"))
+        elif isinstance(level, (list, tuple)) and level:
+            price = normalize_price(level[0])
+            quantity = finite_float(level[1]) if len(level) > 1 else None
+        if price is not None and quantity is not None and quantity > 0:
+            pairs.append((price, quantity))
+    return pairs
+
+
+def implied_ask_levels_from_bid_levels(bid_levels: Any) -> list[list[float]]:
+    return [
+        [round(1.0 - price, 10), quantity]
+        for price, quantity in normalized_level_pairs(bid_levels)
+    ]
+
+
+def depth_within_tau(levels: Any, tau: float, *, side: str) -> float:
+    pairs = normalized_level_pairs(levels)
+    if not pairs:
+        return 0.0
+    if side == "ask":
+        reference = min(price for price, _quantity in pairs)
+        return sum(quantity for price, quantity in pairs if price <= reference + tau + 1e-12)
+    reference = max(price for price, _quantity in pairs)
+    return sum(quantity for price, quantity in pairs if price >= reference - tau - 1e-12)
+
+
+def imbalance_value(left_depth: float, right_depth: float) -> float | None:
+    total = left_depth + right_depth
+    if total <= 0:
+        return None
+    return (left_depth - right_depth) / total
+
+
+def order_imbalance_metrics(
+    yes_bid_levels: Any,
+    yes_ask_levels: Any,
+    no_bid_levels: Any,
+    no_ask_levels: Any,
+) -> dict[str, float | None]:
+    metrics: dict[str, float | None] = {}
+    for tau in ORDER_IMBALANCE_TAUS:
+        label = tau_label(tau)
+        yes_bid_depth = depth_within_tau(yes_bid_levels, tau, side="bid")
+        yes_ask_depth = depth_within_tau(yes_ask_levels, tau, side="ask")
+        no_bid_depth = depth_within_tau(no_bid_levels, tau, side="bid")
+        no_ask_depth = depth_within_tau(no_ask_levels, tau, side="ask")
+        metrics.update(
+            {
+                f"yes_bid_depth_tau_{label}": yes_bid_depth,
+                f"yes_ask_depth_tau_{label}": yes_ask_depth,
+                f"yes_book_imbalance_tau_{label}": imbalance_value(yes_bid_depth, yes_ask_depth),
+                f"no_bid_depth_tau_{label}": no_bid_depth,
+                f"no_ask_depth_tau_{label}": no_ask_depth,
+                f"no_book_imbalance_tau_{label}": imbalance_value(no_bid_depth, no_ask_depth),
+                f"directional_bid_imbalance_tau_{label}": imbalance_value(yes_bid_depth, no_bid_depth),
+                f"directional_ask_imbalance_tau_{label}": imbalance_value(no_ask_depth, yes_ask_depth),
+            }
+        )
+    return metrics
+
+
+def prefixed_order_imbalance_fields(prefix: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+    if not any(snapshot.get(key) for key in ("yes_levels", "yes_ask_levels", "no_levels", "no_ask_levels")):
+        return {field: "" for field in order_imbalance_csv_fields(prefix)}
+    return {
+        f"{prefix}_{key}": value
+        for key, value in order_imbalance_metrics(
+            snapshot.get("yes_levels", []),
+            snapshot.get("yes_ask_levels", []),
+            snapshot.get("no_levels", []),
+            snapshot.get("no_ask_levels", []),
+        ).items()
+    }
+
+
 def make_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) -> dict[str, Any]:
     yes_levels, no_levels = orderbook_levels(orderbook)
+    yes_ask_levels = implied_ask_levels_from_bid_levels(no_levels)
+    no_ask_levels = implied_ask_levels_from_bid_levels(yes_levels)
     best_yes_bid, best_yes_bid_qty = best_level(yes_levels)
     best_no_bid, best_no_bid_qty = best_level(no_levels)
     yes_bid = best_yes_bid
@@ -1105,6 +1236,9 @@ def make_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) -> dict[str
         "best_no_ask_qty": best_yes_bid_qty,
         "yes_levels": yes_levels,
         "no_levels": no_levels,
+        "yes_ask_levels": yes_ask_levels,
+        "no_ask_levels": no_ask_levels,
+        **order_imbalance_metrics(yes_levels, yes_ask_levels, no_levels, no_ask_levels),
     })
 
 
@@ -1185,6 +1319,7 @@ def make_polymarket_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) 
         "no_levels": no_levels,
         "yes_ask_levels": yes_ask_levels,
         "no_ask_levels": no_ask_levels,
+        **order_imbalance_metrics(yes_levels, yes_ask_levels, no_levels, no_ask_levels),
     }
 
 
@@ -1302,11 +1437,15 @@ def snapshot_with_kalshi_book(
 ) -> dict[str, Any]:
     yes_levels = book_to_levels(yes_book)
     no_levels = book_to_levels(no_book)
+    yes_ask_levels = implied_ask_levels_from_bid_levels(no_levels)
+    no_ask_levels = implied_ask_levels_from_bid_levels(yes_levels)
     best_yes_bid, best_yes_bid_qty = best_level(yes_levels)
     best_no_bid, best_no_bid_qty = best_level(no_levels)
     updated = dict(snapshot)
     updated["yes_levels"] = yes_levels
     updated["no_levels"] = no_levels
+    updated["yes_ask_levels"] = yes_ask_levels
+    updated["no_ask_levels"] = no_ask_levels
     updated["yes_bid"] = best_yes_bid
     updated["yes_ask"] = invert_price(best_no_bid)
     updated["no_bid"] = best_no_bid
@@ -1323,6 +1462,7 @@ def snapshot_with_kalshi_book(
         updated["yes_mid"] = updated["yes_ask"]
     else:
         updated["yes_mid"] = None
+    updated.update(order_imbalance_metrics(yes_levels, yes_ask_levels, no_levels, no_ask_levels))
     return normalize_kalshi_snapshot_quotes(updated)
 
 
@@ -1421,6 +1561,20 @@ def best_bid_ask_from_message(message: dict[str, Any]) -> tuple[float | None, fl
         if parsed:
             ask, ask_qty = min(parsed, key=lambda item: item[0])
     return bid, ask, bid_qty, ask_qty
+
+
+def update_level_list(levels: Any, price: float, size: float, *, side: str) -> list[list[float]]:
+    book = {level_price: quantity for level_price, quantity in normalized_level_pairs(levels)}
+    rounded_price = round(price, 10)
+    if size <= 0:
+        book.pop(rounded_price, None)
+    else:
+        book[rounded_price] = size
+    return [
+        [level_price, quantity]
+        for level_price, quantity in sorted(book.items(), key=lambda item: item[0], reverse=side == "bid")
+        if quantity > 0
+    ]
 
 
 def websocket_connect(websockets_module: Any, url: str, **kwargs: Any) -> Any:
@@ -1823,8 +1977,39 @@ class AsyncMarketContext:
                 contract = token_map.get(str(payload.get("asset_id") or ""))
                 if contract not in ("YES", "NO"):
                     continue
-                bid, ask, bid_qty, ask_qty = best_bid_ask_from_message(payload)
                 prefix = contract.lower()
+                if event_type == "book":
+                    bid_levels, ask_levels = polymarket_book_levels(payload)
+                    if bid_levels:
+                        updated[f"{prefix}_levels"] = bid_levels
+                    if ask_levels:
+                        updated[f"{prefix}_ask_levels"] = ask_levels
+                    if bid_levels or ask_levels:
+                        changed = True
+                elif event_type == "price_change":
+                    side = str(payload.get("side") or "").upper()
+                    price = normalize_price(payload.get("price"))
+                    size = as_optional_float(payload.get("size"))
+                    if price is not None and size is not None and side in ("BUY", "SELL"):
+                        level_key = f"{prefix}_levels" if side == "BUY" else f"{prefix}_ask_levels"
+                        updated[level_key] = update_level_list(
+                            updated.get(level_key, []),
+                            price,
+                            size,
+                            side="bid" if side == "BUY" else "ask",
+                        )
+                        changed = True
+                bid_levels = updated.get(f"{prefix}_levels", [])
+                ask_levels = updated.get(f"{prefix}_ask_levels", [])
+                level_bid, level_bid_qty = best_level(bid_levels)
+                level_ask, level_ask_qty = best_level(ask_levels, reverse=False)
+                if level_bid is not None:
+                    updated[f"{prefix}_bid"] = level_bid
+                    updated[f"best_{prefix}_bid_qty"] = level_bid_qty
+                if level_ask is not None:
+                    updated[f"{prefix}_ask"] = level_ask
+                    updated[f"best_{prefix}_ask_qty"] = level_ask_qty
+                bid, ask, bid_qty, ask_qty = best_bid_ask_from_message(payload)
                 for key, value in (
                     (f"{prefix}_bid", bid),
                     (f"{prefix}_ask", ask),
@@ -1846,6 +2031,14 @@ class AsyncMarketContext:
                 updated["yes_mid"] = yes_ask
             else:
                 updated["yes_mid"] = None
+            updated.update(
+                order_imbalance_metrics(
+                    updated.get("yes_levels", []),
+                    updated.get("yes_ask_levels", []),
+                    updated.get("no_levels", []),
+                    updated.get("no_ask_levels", []),
+                )
+            )
             old_signature = self._last_signature
             self._state = (kalshi_market, kalshi_snapshot, polymarket_market, updated, source_snapshot)
             self._last_signature = book_signature(kalshi_snapshot, updated)
@@ -2090,7 +2283,7 @@ def balance_csv_path(csv_dir: Path) -> Path:
 
 
 def append_csv_row(csv_path: Path, row: dict[str, Any]) -> None:
-    exists = csv_path.exists()
+    exists = ensure_csv_schema(csv_path, CSV_FIELDS)
     with csv_path.open("a", newline="") as file_obj:
         writer = csv.DictWriter(file_obj, fieldnames=CSV_FIELDS)
         if not exists:
@@ -2105,6 +2298,26 @@ def append_balance_csv_row(csv_path: Path, row: dict[str, Any]) -> None:
         if not exists:
             writer.writeheader()
         writer.writerow({field: row.get(field, "") for field in BALANCE_CSV_FIELDS})
+
+
+def ensure_csv_schema(path: Path, fields: list[str]) -> bool:
+    if not path.exists():
+        return False
+    try:
+        with path.open(newline="") as file_obj:
+            reader = csv.DictReader(file_obj)
+            old_fields = reader.fieldnames or []
+            if old_fields == fields:
+                return True
+            rows = list(reader)
+    except OSError:
+        return True
+    with path.open("w", newline="") as file_obj:
+        writer = csv.DictWriter(file_obj, fieldnames=fields)
+        writer.writeheader()
+        for old_row in rows:
+            writer.writerow({field: old_row.get(field, "") for field in fields})
+    return True
 
 
 def build_csv_row(
@@ -2144,6 +2357,7 @@ def build_csv_row(
         "kalshi_open_interest": kalshi_snapshot.get("open_interest", ""),
         "kalshi_best_yes_bid_qty": kalshi_snapshot.get("best_yes_bid_qty", ""),
         "kalshi_best_no_bid_qty": kalshi_snapshot.get("best_no_bid_qty", ""),
+        **prefixed_order_imbalance_fields("kalshi", kalshi_snapshot),
         "polymarket_timestamp_utc": polymarket_snapshot.get("timestamp_utc", ""),
         "polymarket_ticker": polymarket_snapshot.get("ticker", ""),
         "polymarket_title": polymarket_snapshot.get("title", ""),
@@ -2160,6 +2374,7 @@ def build_csv_row(
         "polymarket_open_interest": polymarket_snapshot.get("open_interest", ""),
         "polymarket_best_yes_bid_qty": polymarket_snapshot.get("best_yes_bid_qty", ""),
         "polymarket_best_no_bid_qty": polymarket_snapshot.get("best_no_bid_qty", ""),
+        **prefixed_order_imbalance_fields("polymarket", polymarket_snapshot),
         "source_timestamp_utc": source_snapshot.get("timestamp_utc", ""),
         "kalshi_btc_source": "BRTI",
         "kalshi_btc_price": source_snapshot.get("kalshi_price", ""),

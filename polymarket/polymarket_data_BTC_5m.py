@@ -18,6 +18,7 @@ import asyncio
 import csv
 import json
 import math
+import os
 import signal
 import sys
 import time
@@ -47,6 +48,7 @@ APP_DIR = Path(__file__).resolve().parent
 FIVE_MINUTE_SECONDS = 5 * 60
 DEFAULT_COIN = "BTC"
 DEFAULT_SPOT_TOPIC = "crypto_prices_chainlink"
+ORDER_IMBALANCE_TAUS_RAW = os.getenv("ORDER_IMBALANCE_TAUS", "0.01,0.02,0.05,0.10")
 SPOT_TOPIC_ALIASES = {
     "crypto_prices": {"crypto_prices_chainlink"},
     "crypto_prices_chainlink": {"crypto_prices"},
@@ -72,6 +74,55 @@ COIN_CONFIGS: dict[str, CoinConfig] = {
     "BNB": CoinConfig("BNB", "bnb", "bnb/usd", "BNB", "data_BNB_5m"),
 }
 DEFAULT_SPOT_SYMBOL = COIN_CONFIGS[DEFAULT_COIN].spot_symbol
+
+
+def parse_order_imbalance_taus(raw: str) -> tuple[float, ...]:
+    values: list[float] = []
+    for item in raw.split(","):
+        try:
+            value = float(item.strip())
+        except ValueError:
+            continue
+        if value > 0:
+            values.append(value)
+    return tuple(dict.fromkeys(values)) or (0.01, 0.02, 0.05, 0.10)
+
+
+def tau_label(value: float) -> str:
+    cents_value = value * 100.0
+    if abs(cents_value - round(cents_value)) < 1e-9:
+        return f"{int(round(cents_value))}c"
+    return str(value).replace(".", "p").replace("-", "m")
+
+
+ORDER_IMBALANCE_TAUS = parse_order_imbalance_taus(ORDER_IMBALANCE_TAUS_RAW)
+
+
+def token_order_imbalance_csv_fields(prefix: str) -> list[str]:
+    fields: list[str] = []
+    for tau in ORDER_IMBALANCE_TAUS:
+        label = tau_label(tau)
+        fields.extend(
+            [
+                f"{prefix}_bid_depth_tau_{label}",
+                f"{prefix}_ask_depth_tau_{label}",
+                f"{prefix}_book_imbalance_tau_{label}",
+            ]
+        )
+    return fields
+
+
+def cross_order_imbalance_csv_fields() -> list[str]:
+    fields: list[str] = []
+    for tau in ORDER_IMBALANCE_TAUS:
+        label = tau_label(tau)
+        fields.extend(
+            [
+                f"up_down_bid_imbalance_tau_{label}",
+                f"up_down_ask_imbalance_tau_{label}",
+            ]
+        )
+    return fields
 
 CSV_FIELDS = [
     "timestamp_utc",
@@ -99,6 +150,7 @@ CSV_FIELDS = [
     "up_best_bid_size",
     "up_best_ask",
     "up_best_ask_size",
+    *token_order_imbalance_csv_fields("up"),
     "up_mid",
     "up_spread",
     "up_last_trade_price",
@@ -110,6 +162,7 @@ CSV_FIELDS = [
     "down_best_bid_size",
     "down_best_ask",
     "down_best_ask_size",
+    *token_order_imbalance_csv_fields("down"),
     "down_mid",
     "down_spread",
     "down_last_trade_price",
@@ -118,6 +171,7 @@ CSV_FIELDS = [
     "down_book_hash",
     "down_event_count",
     "book_timestamp_skew_seconds",
+    *cross_order_imbalance_csv_fields(),
     "up_ask_plus_down_ask",
     "up_bid_plus_down_bid",
     "book_state_complete",
@@ -222,6 +276,7 @@ class TokenBook:
             "best_bid_size": bid_size,
             "best_ask": ask,
             "best_ask_size": ask_size,
+            **token_order_imbalance_metrics(self.bids, self.asks),
             "mid": mid,
             "spread": spread,
             "last_trade_price": self.last_trade_price,
@@ -288,6 +343,72 @@ def finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return out if math.isfinite(out) else None
+
+
+def depth_within_tau(levels: dict[float, float], tau: float, *, side: str) -> float:
+    if not levels:
+        return 0.0
+    if side == "ask":
+        reference = min(levels)
+        return sum(size for price, size in levels.items() if size > 0 and price <= reference + tau + 1e-12)
+    reference = max(levels)
+    return sum(size for price, size in levels.items() if size > 0 and price >= reference - tau - 1e-12)
+
+
+def imbalance_value(left_depth: float | None, right_depth: float | None) -> float | None:
+    if left_depth is None or right_depth is None:
+        return None
+    total = left_depth + right_depth
+    if total <= 0:
+        return None
+    return (left_depth - right_depth) / total
+
+
+def token_order_imbalance_metrics(bids: dict[float, float], asks: dict[float, float]) -> dict[str, float | None]:
+    metrics: dict[str, float | None] = {}
+    for tau in ORDER_IMBALANCE_TAUS:
+        label = tau_label(tau)
+        bid_depth = depth_within_tau(bids, tau, side="bid")
+        ask_depth = depth_within_tau(asks, tau, side="ask")
+        metrics.update(
+            {
+                f"bid_depth_tau_{label}": bid_depth,
+                f"ask_depth_tau_{label}": ask_depth,
+                f"book_imbalance_tau_{label}": imbalance_value(bid_depth, ask_depth),
+            }
+        )
+    return metrics
+
+
+def quote_imbalance_csv_values(prefix: str, quote: dict[str, Any]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for tau in ORDER_IMBALANCE_TAUS:
+        label = tau_label(tau)
+        values.update(
+            {
+                f"{prefix}_bid_depth_tau_{label}": quote.get(f"bid_depth_tau_{label}"),
+                f"{prefix}_ask_depth_tau_{label}": quote.get(f"ask_depth_tau_{label}"),
+                f"{prefix}_book_imbalance_tau_{label}": quote.get(f"book_imbalance_tau_{label}"),
+            }
+        )
+    return values
+
+
+def cross_imbalance_csv_values(up_quote: dict[str, Any], down_quote: dict[str, Any]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for tau in ORDER_IMBALANCE_TAUS:
+        label = tau_label(tau)
+        up_bid_depth = finite_float(up_quote.get(f"bid_depth_tau_{label}"))
+        down_bid_depth = finite_float(down_quote.get(f"bid_depth_tau_{label}"))
+        up_ask_depth = finite_float(up_quote.get(f"ask_depth_tau_{label}"))
+        down_ask_depth = finite_float(down_quote.get(f"ask_depth_tau_{label}"))
+        values.update(
+            {
+                f"up_down_bid_imbalance_tau_{label}": imbalance_value(up_bid_depth, down_bid_depth),
+                f"up_down_ask_imbalance_tau_{label}": imbalance_value(down_ask_depth, up_ask_depth),
+            }
+        )
+    return values
 
 
 def spot_topic_matches(actual_topic: Any, requested_topic: str) -> bool:
@@ -752,6 +873,7 @@ def build_sample_row(
         "up_best_bid_size": up_quote.get("best_bid_size"),
         "up_best_ask": up_quote.get("best_ask"),
         "up_best_ask_size": up_quote.get("best_ask_size"),
+        **quote_imbalance_csv_values("up", up_quote),
         "up_mid": up_quote.get("mid"),
         "up_spread": up_quote.get("spread"),
         "up_last_trade_price": up_quote.get("last_trade_price"),
@@ -763,6 +885,7 @@ def build_sample_row(
         "down_best_bid_size": down_quote.get("best_bid_size"),
         "down_best_ask": down_quote.get("best_ask"),
         "down_best_ask_size": down_quote.get("best_ask_size"),
+        **quote_imbalance_csv_values("down", down_quote),
         "down_mid": down_quote.get("mid"),
         "down_spread": down_quote.get("spread"),
         "down_last_trade_price": down_quote.get("last_trade_price"),
@@ -771,6 +894,7 @@ def build_sample_row(
         "down_book_hash": down_quote.get("hash"),
         "down_event_count": down_quote.get("event_count"),
         "book_timestamp_skew_seconds": skew,
+        **cross_imbalance_csv_values(up_quote, down_quote),
         "up_ask_plus_down_ask": up_ask_plus_down_ask,
         "up_bid_plus_down_bid": up_bid_plus_down_bid,
         "book_state_complete": int(
@@ -795,10 +919,30 @@ def csv_path(data_dir: Path, coin_symbol: str, market_slug: str) -> Path:
     return data_dir / f"polymarket_data_{coin_symbol}_5m_{safe_filename(market_slug)}.csv"
 
 
+def ensure_csv_schema(path: Path, fields: list[str]) -> bool:
+    if not path.exists():
+        return False
+    try:
+        with path.open(newline="", encoding="utf-8") as file_obj:
+            reader = csv.DictReader(file_obj)
+            old_fields = reader.fieldnames or []
+            if old_fields == fields:
+                return True
+            rows = list(reader)
+    except OSError:
+        return True
+    with path.open("w", newline="", encoding="utf-8") as file_obj:
+        writer = csv.DictWriter(file_obj, fieldnames=fields)
+        writer.writeheader()
+        for old_row in rows:
+            writer.writerow({field: old_row.get(field, "") for field in fields})
+    return True
+
+
 def append_csv_row(data_dir: Path, coin_symbol: str, row: dict[str, Any]) -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
     path = csv_path(data_dir, coin_symbol, str(row.get("market_slug") or "unknown"))
-    exists = path.exists()
+    exists = ensure_csv_schema(path, CSV_FIELDS)
     with path.open("a", newline="", encoding="utf-8") as file_obj:
         writer = csv.DictWriter(file_obj, fieldnames=CSV_FIELDS)
         if not exists:

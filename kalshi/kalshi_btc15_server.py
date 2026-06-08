@@ -60,12 +60,55 @@ POLYMARKET_MARKET_SLUG = os.getenv("POLYMARKET_MARKET_SLUG", "").strip()
 POLYMARKET_SEARCH_QUERY = os.getenv("POLYMARKET_SEARCH_QUERY", "Bitcoin Up or Down")
 POLL_SECONDS = float(os.getenv("POLL_SECONDS", "2"))
 ORDERBOOK_DEPTH = int(os.getenv("ORDERBOOK_DEPTH", "10"))
+ORDER_IMBALANCE_TAUS_RAW = os.getenv("ORDER_IMBALANCE_TAUS", "0.01,0.02,0.05,0.10")
 DATA_DIR = Path(os.getenv("KALSHI_DATA_DIR", "kalshi_btc15m_data"))
 KRAKEN_API_URL = os.getenv("KRAKEN_API_URL", "https://api.kraken.com")
 KRAKEN_PAIR = os.getenv("KRAKEN_PAIR", "XBTUSD")
 POLYMARKET_RTDS_URL = os.getenv("POLYMARKET_RTDS_URL", "wss://ws-live-data.polymarket.com")
 POLYMARKET_RTDS_SYMBOL = os.getenv("POLYMARKET_RTDS_SYMBOL", "btc/usd")
 POLYMARKET_TARGET_MAX_DISTANCE_SECONDS = float(os.getenv("POLYMARKET_TARGET_MAX_DISTANCE_SECONDS", "1"))
+
+
+def parse_order_imbalance_taus(raw: str) -> tuple[float, ...]:
+    values: list[float] = []
+    for item in raw.split(","):
+        try:
+            value = float(item.strip())
+        except ValueError:
+            continue
+        if value > 0:
+            values.append(value)
+    return tuple(dict.fromkeys(values)) or (0.01, 0.02, 0.05, 0.10)
+
+
+def tau_label(value: float) -> str:
+    cents_value = value * 100.0
+    if abs(cents_value - round(cents_value)) < 1e-9:
+        return f"{int(round(cents_value))}c"
+    return str(value).replace(".", "p").replace("-", "m")
+
+
+ORDER_IMBALANCE_TAUS = parse_order_imbalance_taus(ORDER_IMBALANCE_TAUS_RAW)
+
+
+def order_imbalance_csv_fields(prefix: str) -> list[str]:
+    fields: list[str] = []
+    stem = f"{prefix}_" if prefix else ""
+    for tau in ORDER_IMBALANCE_TAUS:
+        label = tau_label(tau)
+        fields.extend(
+            [
+                f"{stem}yes_bid_depth_tau_{label}",
+                f"{stem}yes_ask_depth_tau_{label}",
+                f"{stem}yes_book_imbalance_tau_{label}",
+                f"{stem}no_bid_depth_tau_{label}",
+                f"{stem}no_ask_depth_tau_{label}",
+                f"{stem}no_book_imbalance_tau_{label}",
+                f"{stem}directional_bid_imbalance_tau_{label}",
+                f"{stem}directional_ask_imbalance_tau_{label}",
+            ]
+        )
+    return fields
 
 
 STATE_LOCK = threading.Lock()
@@ -846,6 +889,91 @@ def polymarket_book_levels(orderbook: dict[str, Any]) -> tuple[list[list[Any]], 
     return convert(data.get("bids")), convert(data.get("offers") or data.get("asks"))
 
 
+def normalized_level_pairs(levels: Any) -> list[tuple[float, float]]:
+    pairs: list[tuple[float, float]] = []
+    if not isinstance(levels, list):
+        return pairs
+    for level in levels:
+        price = None
+        quantity = None
+        if isinstance(level, dict):
+            price = nested_price(level.get("px") or level.get("price"))
+            quantity = numeric_value(level.get("qty") or level.get("quantity") or level.get("size"))
+        elif isinstance(level, (list, tuple)) and level:
+            price = normalize_price(level[0])
+            quantity = numeric_value(level[1]) if len(level) > 1 else None
+        if price is not None and quantity is not None and quantity > 0:
+            pairs.append((price, quantity))
+    return pairs
+
+
+def implied_ask_levels_from_bid_levels(bid_levels: Any) -> list[list[float]]:
+    return [
+        [round(1.0 - price, 10), quantity]
+        for price, quantity in normalized_level_pairs(bid_levels)
+    ]
+
+
+def depth_within_tau(levels: Any, tau: float, *, side: str) -> float:
+    pairs = normalized_level_pairs(levels)
+    if not pairs:
+        return 0.0
+    if side == "ask":
+        reference = min(price for price, _quantity in pairs)
+        return sum(quantity for price, quantity in pairs if price <= reference + tau + 1e-12)
+    reference = max(price for price, _quantity in pairs)
+    return sum(quantity for price, quantity in pairs if price >= reference - tau - 1e-12)
+
+
+def imbalance_value(left_depth: float, right_depth: float) -> float | None:
+    total = left_depth + right_depth
+    if total <= 0:
+        return None
+    return (left_depth - right_depth) / total
+
+
+def order_imbalance_metrics(
+    yes_bid_levels: Any,
+    yes_ask_levels: Any,
+    no_bid_levels: Any,
+    no_ask_levels: Any,
+) -> dict[str, float | None]:
+    metrics: dict[str, float | None] = {}
+    for tau in ORDER_IMBALANCE_TAUS:
+        label = tau_label(tau)
+        yes_bid_depth = depth_within_tau(yes_bid_levels, tau, side="bid")
+        yes_ask_depth = depth_within_tau(yes_ask_levels, tau, side="ask")
+        no_bid_depth = depth_within_tau(no_bid_levels, tau, side="bid")
+        no_ask_depth = depth_within_tau(no_ask_levels, tau, side="ask")
+        metrics.update(
+            {
+                f"yes_bid_depth_tau_{label}": yes_bid_depth,
+                f"yes_ask_depth_tau_{label}": yes_ask_depth,
+                f"yes_book_imbalance_tau_{label}": imbalance_value(yes_bid_depth, yes_ask_depth),
+                f"no_bid_depth_tau_{label}": no_bid_depth,
+                f"no_ask_depth_tau_{label}": no_ask_depth,
+                f"no_book_imbalance_tau_{label}": imbalance_value(no_bid_depth, no_ask_depth),
+                f"directional_bid_imbalance_tau_{label}": imbalance_value(yes_bid_depth, no_bid_depth),
+                f"directional_ask_imbalance_tau_{label}": imbalance_value(no_ask_depth, yes_ask_depth),
+            }
+        )
+    return metrics
+
+
+def prefixed_order_imbalance_fields(prefix: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+    if not any(snapshot.get(key) for key in ("yes_levels", "yes_ask_levels", "no_levels", "no_ask_levels")):
+        return {field: "" for field in order_imbalance_csv_fields(prefix)}
+    return {
+        f"{prefix}_{key}": value
+        for key, value in order_imbalance_metrics(
+            snapshot.get("yes_levels", []),
+            snapshot.get("yes_ask_levels", []),
+            snapshot.get("no_levels", []),
+            snapshot.get("no_ask_levels", []),
+        ).items()
+    }
+
+
 def parse_json_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -881,6 +1009,8 @@ def polymarket_clob_orderbooks(market: dict[str, Any]) -> dict[str, Any]:
 
 def make_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) -> dict[str, Any]:
     yes_levels, no_levels = orderbook_levels(orderbook)
+    yes_ask_levels = implied_ask_levels_from_bid_levels(no_levels)
+    no_ask_levels = implied_ask_levels_from_bid_levels(yes_levels)
     best_yes_bid, best_yes_bid_qty = best_level(yes_levels)
     best_no_bid, best_no_bid_qty = best_level(no_levels)
     yes_bid = best_yes_bid
@@ -913,6 +1043,9 @@ def make_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) -> dict[str
         "best_no_bid_qty": best_no_bid_qty,
         "yes_levels": yes_levels,
         "no_levels": no_levels,
+        "yes_ask_levels": yes_ask_levels,
+        "no_ask_levels": no_ask_levels,
+        **order_imbalance_metrics(yes_levels, yes_ask_levels, no_levels, no_ask_levels),
     }
 
 
@@ -973,7 +1106,10 @@ def make_polymarket_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) 
         "best_no_bid_qty": best_no_bid_qty,
         "yes_levels": yes_levels,
         "no_levels": no_levels,
+        "yes_ask_levels": yes_ask_levels,
+        "no_ask_levels": no_ask_levels,
         "ask_levels": yes_ask_levels,
+        **order_imbalance_metrics(yes_levels, yes_ask_levels, no_levels, no_ask_levels),
     }
 
 
@@ -1000,12 +1136,18 @@ def append_snapshot_csv(snapshot: dict[str, Any], prefix: str = "") -> None:
         "open_interest",
         "best_yes_bid_qty",
         "best_no_bid_qty",
+        *order_imbalance_csv_fields(""),
         "yes_levels_json",
         "no_levels_json",
+        "yes_ask_levels_json",
+        "no_ask_levels_json",
     ]
     row = {key: snapshot.get(key, "") for key in fields}
     row["yes_levels_json"] = json.dumps(snapshot.get("yes_levels", []), separators=(",", ":"))
     row["no_levels_json"] = json.dumps(snapshot.get("no_levels", []), separators=(",", ":"))
+    row["yes_ask_levels_json"] = json.dumps(snapshot.get("yes_ask_levels", []), separators=(",", ":"))
+    row["no_ask_levels_json"] = json.dumps(snapshot.get("no_ask_levels", []), separators=(",", ":"))
+    exists = ensure_csv_schema(path, fields)
     with path.open("a", newline="") as file_obj:
         writer = csv.DictWriter(file_obj, fieldnames=fields)
         if not exists:
@@ -1074,6 +1216,7 @@ def append_combined_snapshot_csv(
         "kalshi_open_interest",
         "kalshi_best_yes_bid_qty",
         "kalshi_best_no_bid_qty",
+        *order_imbalance_csv_fields("kalshi"),
         "polymarket_timestamp_utc",
         "polymarket_ticker",
         "polymarket_title",
@@ -1090,6 +1233,7 @@ def append_combined_snapshot_csv(
         "polymarket_open_interest",
         "polymarket_best_yes_bid_qty",
         "polymarket_best_no_bid_qty",
+        *order_imbalance_csv_fields("polymarket"),
         "source_timestamp_utc",
         "kalshi_btc_source",
         "kalshi_btc_price",
@@ -1123,6 +1267,7 @@ def append_combined_snapshot_csv(
         "kalshi_open_interest": kalshi_snapshot.get("open_interest", ""),
         "kalshi_best_yes_bid_qty": kalshi_snapshot.get("best_yes_bid_qty", ""),
         "kalshi_best_no_bid_qty": kalshi_snapshot.get("best_no_bid_qty", ""),
+        **prefixed_order_imbalance_fields("kalshi", kalshi_snapshot),
         "polymarket_timestamp_utc": poly.get("timestamp_utc", ""),
         "polymarket_ticker": poly.get("ticker", ""),
         "polymarket_title": poly.get("title", ""),
@@ -1139,6 +1284,7 @@ def append_combined_snapshot_csv(
         "polymarket_open_interest": poly.get("open_interest", ""),
         "polymarket_best_yes_bid_qty": poly.get("best_yes_bid_qty", ""),
         "polymarket_best_no_bid_qty": poly.get("best_no_bid_qty", ""),
+        **prefixed_order_imbalance_fields("polymarket", poly),
         "source_timestamp_utc": source.get("timestamp_utc", ""),
         "kalshi_btc_source": "BRTI",
         "kalshi_btc_price": source.get("kalshi_price", ""),

@@ -23,6 +23,8 @@ CSV_FIELDS = [
     "polymarket_yes_ask",
     "polymarket_no_bid",
     "polymarket_no_ask",
+    *btc.order_imbalance_csv_fields("kalshi"),
+    *btc.order_imbalance_csv_fields("polymarket"),
     "arbitrage_direction",
     "arbitrage_kalshi_price",
     "arbitrage_polymarket_price",
@@ -223,6 +225,8 @@ def csv_row(
         "polymarket_yes_ask": polymarket_snapshot.get("yes_ask"),
         "polymarket_no_bid": polymarket_snapshot.get("no_bid"),
         "polymarket_no_ask": polymarket_snapshot.get("no_ask"),
+        **btc.prefixed_order_imbalance_fields("kalshi", kalshi_snapshot),
+        **btc.prefixed_order_imbalance_fields("polymarket", polymarket_snapshot),
         "arbitrage_direction": "",
         "arbitrage_kalshi_price": "",
         "arbitrage_polymarket_price": "",
@@ -307,7 +311,7 @@ def csv_path_for_contract(csv_dir: Path, kalshi_snapshot: dict[str, Any]) -> Pat
 
 def append_rows(csv_path: Path, rows: list[dict[str, Any]]) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    exists = csv_path.exists()
+    exists = btc.ensure_csv_schema(csv_path, CSV_FIELDS)
     with csv_path.open("a", newline="") as file_obj:
         writer = csv.DictWriter(file_obj, fieldnames=CSV_FIELDS)
         if not exists:
