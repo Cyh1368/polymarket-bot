@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Collect live Polymarket BTC 5-minute Up/Down market data.
+"""Collect live Polymarket crypto 5-minute Up/Down market data.
 
 The collector uses:
   - Gamma API for active-market discovery.
   - CLOB /books for one-call, simultaneous initial Up/Down order-book snapshots.
   - CLOB market websocket for live order-book/BBO updates.
-  - Polymarket RTDS websocket for BTC/USD Chainlink spot updates.
+  - Polymarket RTDS websocket for Chainlink spot updates.
 
 Rows are sampled every 5 seconds and written to one CSV per market slug.
 """
@@ -38,17 +38,40 @@ except ImportError as exc:  # pragma: no cover - operator environment guard
     ) from exc
 
 
-APP_DIR = Path(__file__).resolve().parent
-DEFAULT_DATA_DIR = APP_DIR / "data_BTC_5m"
-
 GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 CLOB_BASE_URL = "https://clob.polymarket.com"
 CLOB_MARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 RTDS_WS_URL = "wss://ws-live-data.polymarket.com"
 
-BTC_5M_SECONDS = 5 * 60
-DEFAULT_SPOT_SYMBOL = "btc/usd"
+APP_DIR = Path(__file__).resolve().parent
+FIVE_MINUTE_SECONDS = 5 * 60
+DEFAULT_COIN = "BTC"
 DEFAULT_SPOT_TOPIC = "crypto_prices_chainlink"
+SPOT_TOPIC_ALIASES = {
+    "crypto_prices": {"crypto_prices_chainlink"},
+    "crypto_prices_chainlink": {"crypto_prices"},
+}
+
+
+@dataclass(frozen=True)
+class CoinConfig:
+    symbol: str
+    slug_prefix: str
+    spot_symbol: str
+    display_name: str
+    data_dir_name: str
+
+
+COIN_CONFIGS: dict[str, CoinConfig] = {
+    "BTC": CoinConfig("BTC", "btc", "btc/usd", "Bitcoin", "data_BTC_5m"),
+    "ETH": CoinConfig("ETH", "eth", "eth/usd", "Ethereum", "data_ETH_5m"),
+    "SOL": CoinConfig("SOL", "sol", "sol/usd", "Solana", "data_SOL_5m"),
+    "XRP": CoinConfig("XRP", "xrp", "xrp/usd", "XRP", "data_XRP_5m"),
+    "HYPE": CoinConfig("HYPE", "hype", "hype/usd", "Hyperliquid", "data_HYPE_5m"),
+    "DOGE": CoinConfig("DOGE", "doge", "doge/usd", "Dogecoin", "data_DOGE_5m"),
+    "BNB": CoinConfig("BNB", "bnb", "bnb/usd", "BNB", "data_BNB_5m"),
+}
+DEFAULT_SPOT_SYMBOL = COIN_CONFIGS[DEFAULT_COIN].spot_symbol
 
 CSV_FIELDS = [
     "timestamp_utc",
@@ -211,10 +234,10 @@ class TokenBook:
 
 
 class CollectorState:
-    def __init__(self, max_spot_history: int = 2000) -> None:
+    def __init__(self, spot_symbol: str, spot_source: str, max_spot_history: int = 2000) -> None:
         self.lock = asyncio.Lock()
         self.market: CurrentMarket | None = None
-        self.spot = SpotState()
+        self.spot = SpotState(source=spot_source, symbol=spot_symbol)
         self.spot_history: deque[SpotState] = deque(maxlen=max_spot_history)
         self.books: dict[str, TokenBook] = {}
 
@@ -265,6 +288,15 @@ def finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return out if math.isfinite(out) else None
+
+
+def spot_topic_matches(actual_topic: Any, requested_topic: str) -> bool:
+    actual = str(actual_topic or "")
+    if not actual:
+        return True
+    if actual == requested_topic:
+        return True
+    return actual in SPOT_TOPIC_ALIASES.get(requested_topic, set())
 
 
 def parse_json_list(value: Any) -> list[Any]:
@@ -377,27 +409,31 @@ async def fetch_event(client: httpx.AsyncClient, slug: str) -> dict[str, Any] | 
     return response.json()
 
 
-async def discover_current_market(client: httpx.AsyncClient, explicit_slug: str | None = None) -> CurrentMarket:
+async def discover_current_market(
+    client: httpx.AsyncClient,
+    coin: CoinConfig,
+    explicit_slug: str | None = None,
+) -> CurrentMarket:
     if explicit_slug:
         event = await fetch_event(client, explicit_slug)
         if not event:
             raise RuntimeError(f"Polymarket event slug not found: {explicit_slug}")
         market = parse_market_from_event(event, allow_upcoming=True)
         if not market:
-            raise RuntimeError(f"Polymarket event slug is not a usable BTC 5m market: {explicit_slug}")
+            raise RuntimeError(f"Polymarket event slug is not a usable {coin.symbol} 5m market: {explicit_slug}")
         return market
 
-    current_slot = int(time.time()) // BTC_5M_SECONDS * BTC_5M_SECONDS
-    candidate_slots = [current_slot + offset * BTC_5M_SECONDS for offset in (0, -1, 1, -2, 2, -3, 3)]
+    current_slot = int(time.time()) // FIVE_MINUTE_SECONDS * FIVE_MINUTE_SECONDS
+    candidate_slots = [current_slot + offset * FIVE_MINUTE_SECONDS for offset in (0, -1, 1, -2, 2, -3, 3)]
     for slot in candidate_slots:
-        slug = f"btc-updown-5m-{slot}"
+        slug = f"{coin.slug_prefix}-updown-5m-{slot}"
         event = await fetch_event(client, slug)
         if not event:
             continue
         market = parse_market_from_event(event)
         if market:
             return market
-    raise RuntimeError("No active BTC 5-minute Up/Down market found")
+    raise RuntimeError(f"No active {coin.symbol} 5-minute Up/Down market found")
 
 
 async def fetch_books_simultaneous(client: httpx.AsyncClient, market: CurrentMarket) -> dict[str, dict[str, Any]]:
@@ -500,8 +536,9 @@ async def rtds_ws_loop(state: CollectorState, stop: asyncio.Event, args: argpars
                     except json.JSONDecodeError:
                         continue
                     topic = msg.get("topic")
-                    if topic and topic != args.spot_topic:
+                    if not spot_topic_matches(topic, args.spot_topic):
                         continue
+                    spot_source = str(topic or args.spot_topic)
                     for payload in spot_payloads(msg, args.spot_symbol):
                         symbol = str(payload.get("symbol") or "").lower()
                         if symbol != args.spot_symbol.lower():
@@ -511,7 +548,7 @@ async def rtds_ws_loop(state: CollectorState, stop: asyncio.Event, args: argpars
                         if price is None:
                             continue
                         spot = SpotState(
-                            source=args.spot_topic,
+                            source=spot_source,
                             symbol=args.spot_symbol,
                             price=price,
                             timestamp_ms=timestamp_ms or parse_epoch_ms(msg.get("timestamp")) or utc_now_ms(),
@@ -556,7 +593,7 @@ def spot_payloads(msg: dict[str, Any], default_symbol: str) -> list[dict[str, An
     out: list[dict[str, Any]] = []
     for item in items:
         row = dict(item)
-        row.setdefault("symbol", parent_symbol or default_symbol)
+        row["symbol"] = str(row.get("symbol") or parent_symbol or default_symbol)
         out.append(row)
     return out
 
@@ -754,13 +791,13 @@ def nullable_sum(left: Any, right: Any) -> float | None:
     return left_float + right_float
 
 
-def csv_path(data_dir: Path, market_slug: str) -> Path:
-    return data_dir / f"polymarket_data_BTC_5m_{safe_filename(market_slug)}.csv"
+def csv_path(data_dir: Path, coin_symbol: str, market_slug: str) -> Path:
+    return data_dir / f"polymarket_data_{coin_symbol}_5m_{safe_filename(market_slug)}.csv"
 
 
-def append_csv_row(data_dir: Path, row: dict[str, Any]) -> Path:
+def append_csv_row(data_dir: Path, coin_symbol: str, row: dict[str, Any]) -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
-    path = csv_path(data_dir, str(row.get("market_slug") or "unknown"))
+    path = csv_path(data_dir, coin_symbol, str(row.get("market_slug") or "unknown"))
     exists = path.exists()
     with path.open("a", newline="", encoding="utf-8") as file_obj:
         writer = csv.DictWriter(file_obj, fieldnames=CSV_FIELDS)
@@ -789,7 +826,7 @@ async def sample_loop(state: CollectorState, market: CurrentMarket, stop: asynci
             else:
                 down_quote = {}
         row = build_sample_row(active_market, spot, up_quote, down_quote, args)
-        path = append_csv_row(args.data_dir, row)
+        path = append_csv_row(args.data_dir, args.coin, row)
         wrote_once = True
         print(
             f"{row['timestamp_utc']} {market.slug} "
@@ -869,13 +906,13 @@ async def run(args: argparse.Namespace) -> None:
         except NotImplementedError:
             pass
 
-    state = CollectorState()
+    state = CollectorState(args.spot_symbol, args.spot_topic)
     spot_task = asyncio.create_task(rtds_ws_loop(state, stop, args))
     async with httpx.AsyncClient(timeout=args.http_timeout) as client:
         try:
             last_slug = ""
             while not stop.is_set():
-                market = await discover_current_market(client, args.slug)
+                market = await discover_current_market(client, args.coin_config, args.slug)
                 if market.slug == last_slug and not args.once:
                     await asyncio.sleep(args.market_refresh_seconds)
                     continue
@@ -890,10 +927,11 @@ async def run(args: argparse.Namespace) -> None:
             await asyncio.gather(spot_task, return_exceptions=True)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(default_coin: str = DEFAULT_COIN) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--slug", default="", help="Optional explicit market slug, e.g. btc-updown-5m-1778803200.")
+    parser.add_argument("--coin", default=default_coin, help=f"Coin to collect: {', '.join(sorted(COIN_CONFIGS))}.")
+    parser.add_argument("--data-dir", type=Path, default=None, help="Output directory. Defaults to polymarket/data_<COIN>_5m.")
+    parser.add_argument("--slug", default="", help="Optional explicit market slug, e.g. eth-updown-5m-1778803200.")
     parser.add_argument("--sample-seconds", type=float, default=5.0)
     parser.add_argument("--market-refresh-seconds", type=float, default=2.0)
     parser.add_argument("--after-close-seconds", type=float, default=10.0)
@@ -902,7 +940,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clob-ws-url", default=CLOB_MARKET_WS_URL)
     parser.add_argument("--rtds-ws-url", default=RTDS_WS_URL)
     parser.add_argument("--spot-topic", default=DEFAULT_SPOT_TOPIC)
-    parser.add_argument("--spot-symbol", default=DEFAULT_SPOT_SYMBOL)
+    parser.add_argument("--spot-symbol", default="", help="RTDS source symbol. Defaults to the selected coin, e.g. eth/usd.")
     parser.add_argument("--target-max-distance-seconds", type=float, default=90.0)
     parser.add_argument("--initial-spot-wait-seconds", type=float, default=5.0)
     parser.add_argument("--max-spread", type=float, default=0.20)
@@ -912,19 +950,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-complement-deviation", type=float, default=0.20)
     parser.add_argument("--once", action="store_true", help="Write one sample and exit.")
     args = parser.parse_args()
+    args.coin = args.coin.strip().upper()
+    if args.coin not in COIN_CONFIGS:
+        parser.error(f"--coin must be one of: {', '.join(sorted(COIN_CONFIGS))}")
+    args.coin_config = COIN_CONFIGS[args.coin]
+    if args.data_dir is None:
+        args.data_dir = APP_DIR / args.coin_config.data_dir_name
+    args.spot_symbol = args.spot_symbol.strip().lower() or args.coin_config.spot_symbol
     args.slug = args.slug.strip() or None
     return args
 
 
-def main() -> int:
+def main(default_coin: str = DEFAULT_COIN) -> int:
     try:
-        asyncio.run(run(parse_args()))
+        asyncio.run(run(parse_args(default_coin)))
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
         print(f"{iso_now()} fatal: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
         return 1
     return 0
+
+
+def main_with_default_coin(default_coin: str) -> int:
+    return main(default_coin)
 
 
 if __name__ == "__main__":
