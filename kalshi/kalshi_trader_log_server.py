@@ -624,10 +624,13 @@ PAGE = """<!doctype html>
       const closeTime = fmtShortTime(contract.close_time);
       const actual = contract.actual_side || "pending";
       const prediction = contract.prediction_side || "none";
-      const resultText = contract.correct === "1" ? "correct" : contract.correct === "0" ? "wrong" : "open";
-      mainEl.textContent = `${closeTime} · actual ${actual} · pred ${prediction}`;
-      const probability = contract.prediction_probability ? ` @ ${fmtPct(contract.prediction_probability, 1)}` : "";
       const status = contract.order_status || "unknown";
+      const skipped = ["skip", "skipped"].includes(String(status).toLowerCase());
+      const resultText = contract.correct === "1" ? "correct" : contract.correct === "0" ? "wrong" : "open";
+      mainEl.textContent = skipped
+        ? `${closeTime} · actual ${actual} · skipped`
+        : `${closeTime} · actual ${actual} · pred ${prediction}`;
+      const probability = !skipped && contract.prediction_probability ? ` @ ${fmtPct(contract.prediction_probability, 1)}` : "";
       const updated = contract.outcome_timestamp_utc || contract.prediction_timestamp_utc || contract.timestamp_utc || "";
       subEl.textContent = `${contract.contract_id} · ${status}${probability} · ${resultText} · updated ${fmtShortDateTime(updated)}`;
     }
