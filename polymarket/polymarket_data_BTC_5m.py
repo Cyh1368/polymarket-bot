@@ -48,7 +48,7 @@ APP_DIR = Path(__file__).resolve().parent
 FIVE_MINUTE_SECONDS = 5 * 60
 DEFAULT_COIN = "BTC"
 DEFAULT_SPOT_TOPIC = "crypto_prices_chainlink"
-ORDER_IMBALANCE_TAUS_RAW = os.getenv("ORDER_IMBALANCE_TAUS", "0.01,0.02,0.05,0.10")
+ORDER_IMBALANCE_TAUS_RAW = os.getenv("ORDER_IMBALANCE_TAUS", "0.01,0.02,0.03,0.05,0.07,0.10,0.15,0.20")
 SPOT_TOPIC_ALIASES = {
     "crypto_prices": {"crypto_prices_chainlink"},
     "crypto_prices_chainlink": {"crypto_prices"},
@@ -420,6 +420,11 @@ def spot_topic_matches(actual_topic: Any, requested_topic: str) -> bool:
     return actual in SPOT_TOPIC_ALIASES.get(requested_topic, set())
 
 
+def normalize_spot_symbol(symbol: str) -> str:
+    """Normalise symbol for comparison: lowercase, hyphens → slashes."""
+    return symbol.lower().replace("-", "/")
+
+
 def parse_json_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -595,9 +600,11 @@ def target_from_spot_history(market: CurrentMarket, history: deque[SpotState], m
     start_ms = market.start_ts * 1000
     best: tuple[int, float] | None = None
     for item in history:
-        if item.price is None or item.timestamp_ms is None:
+        if item.price is None or item.received_ms is None:
             continue
-        distance_ms = abs(item.timestamp_ms - start_ms)
+        # Use wall-clock receipt time, not the on-chain Chainlink timestamp which can
+        # lag by 2–3 minutes and causes distance checks against start_ms to always fail.
+        distance_ms = abs(item.received_ms - start_ms)
         if distance_ms <= max_distance_seconds * 1000 and (best is None or distance_ms < best[0]):
             best = (distance_ms, item.price)
     if best is None:
@@ -617,25 +624,31 @@ async def set_current_market(state: CollectorState, market: CurrentMarket, targe
 async def maybe_set_target_from_spot(state: CollectorState, spot: SpotState, target_max_distance_seconds: float) -> None:
     async with state.lock:
         market = state.market
-        if not market or market.price_target is not None or spot.price is None or spot.timestamp_ms is None:
+        if not market or market.price_target is not None or spot.price is None or spot.received_ms is None:
             return
         start_ms = market.start_ts * 1000
-        distance = abs(spot.timestamp_ms - start_ms) / 1000.0
+        # Use wall-clock receipt time for the same reason as target_from_spot_history.
+        distance = abs(spot.received_ms - start_ms) / 1000.0
         if distance <= target_max_distance_seconds:
             market.price_target = spot.price
             market.price_target_source = f"rtds_nearest_start_{distance:.1f}s"
 
 
 async def rtds_ws_loop(state: CollectorState, stop: asyncio.Event, args: argparse.Namespace) -> None:
+    # Subscribe to the requested topic AND all its aliases so that coins whose
+    # Chainlink feed arrives under a sibling topic name (e.g. BTC comes via
+    # "crypto_prices" rather than "crypto_prices_chainlink") are also captured.
+    topics = sorted({args.spot_topic} | SPOT_TOPIC_ALIASES.get(args.spot_topic, set()))
     subscription = json.dumps(
         {
             "action": "subscribe",
             "subscriptions": [
                 {
-                    "topic": args.spot_topic,
+                    "topic": topic,
                     "type": "*",
                     "filters": json.dumps({"symbol": args.spot_symbol}),
                 }
+                for topic in topics
             ],
         }
     )
@@ -662,7 +675,8 @@ async def rtds_ws_loop(state: CollectorState, stop: asyncio.Event, args: argpars
                     spot_source = str(topic or args.spot_topic)
                     for payload in spot_payloads(msg, args.spot_symbol):
                         symbol = str(payload.get("symbol") or "").lower()
-                        if symbol != args.spot_symbol.lower():
+                        # Normalise hyphens so "btc-usd" matches "btc/usd".
+                        if normalize_spot_symbol(symbol) != normalize_spot_symbol(args.spot_symbol):
                             continue
                         price = finite_float(payload.get("value"))
                         timestamp_ms = parse_epoch_ms(payload.get("timestamp"))
@@ -1085,7 +1099,7 @@ def parse_args(default_coin: str = DEFAULT_COIN) -> argparse.Namespace:
     parser.add_argument("--rtds-ws-url", default=RTDS_WS_URL)
     parser.add_argument("--spot-topic", default=DEFAULT_SPOT_TOPIC)
     parser.add_argument("--spot-symbol", default="", help="RTDS source symbol. Defaults to the selected coin, e.g. eth/usd.")
-    parser.add_argument("--target-max-distance-seconds", type=float, default=90.0)
+    parser.add_argument("--target-max-distance-seconds", type=float, default=300.0)
     parser.add_argument("--initial-spot-wait-seconds", type=float, default=5.0)
     parser.add_argument("--max-spread", type=float, default=0.20)
     parser.add_argument("--max-book-age-seconds", type=float, default=15.0)

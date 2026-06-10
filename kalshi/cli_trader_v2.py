@@ -71,7 +71,7 @@ LIVE_LATCH_THRESHOLDS = {
 }
 KALSHI_MIN_QUOTE_SPREAD = 0.001
 ORDERBOOK_DEPTH = int(os.getenv("ORDERBOOK_DEPTH", "10"))
-ORDER_IMBALANCE_TAUS_RAW = os.getenv("ORDER_IMBALANCE_TAUS", "0.01,0.02,0.05,0.10")
+ORDER_IMBALANCE_TAUS_RAW = os.getenv("ORDER_IMBALANCE_TAUS", "0.01,0.02,0.03,0.05,0.07,0.10,0.15,0.20")
 KALSHI_LOCAL_BOOK_RESYNC_SECONDS = 30.0
 ACTIVE_MARKET_REFRESH_MIN_INTERVAL_SECONDS = float(os.getenv("ACTIVE_MARKET_REFRESH_MIN_INTERVAL_SECONDS", "5"))
 WEBSOCKET_REPORT_INTERVAL = 0.5
@@ -376,7 +376,7 @@ def fmt_price_delta(value: Any, target: Any, places: int = 2) -> str:
         return "--"
     delta = number - target_number
     sign = "+" if delta >= 0 else "-"
-    return f"{sign} {abs(delta):.{places}f}"
+    return f"[{sign}{abs(delta):.{places}f}]"
 
 
 def fmt_cents(value: Any) -> str:
