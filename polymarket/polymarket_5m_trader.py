@@ -93,7 +93,7 @@ INDICATOR_WINDOW_SECONDS = 60.0
 TOLERANCE_SECONDS = 5.0       # entry window: [T-5, T]
 OUTCOME_POLL_INTERVAL = 15.0
 OUTCOME_WAIT_LOG_INTERVAL = 30.0
-OUTCOME_DELAY_SECONDS = -120.0  # check outcome 2 min after close
+OUTCOME_DELAY_SECONDS = -270.0  # check outcome 4.5 min after close; observed resolution ~5.5 min
 COST_ADD = 0.01               # spread penalty per leg
 
 # Paths
@@ -1801,7 +1801,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-interval", type=float, default=30.0, help="Seconds between status log lines. Default: 30.")
     parser.add_argument("--stop-loss", type=float, default=5.0, help="Stop if balance drops this many USD. Default: 5.")
     parser.add_argument("--outcome-delay-seconds", type=float, default=OUTCOME_DELAY_SECONDS,
-                        help="Check outcome this many seconds after close. Default: -120.")
+                        help="Check outcome this many seconds after close. Default: -270 (4.5 min; observed resolution ~5.5 min).")
     args = parser.parse_args()
     args.contracts = max(1, args.contracts)
     args.entry_tolerance = max(0.0, args.entry_tolerance)
