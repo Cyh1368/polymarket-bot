@@ -1555,6 +1555,8 @@ async def run(args: argparse.Namespace) -> None:
             pass
 
     state = CollectorState()
+    rtds_task: asyncio.Task[None] | None = None
+    clob_task: asyncio.Task[None] | None = None
     rtds_task = asyncio.create_task(rtds_ws_loop(state, stop))
 
     try:
@@ -1564,7 +1566,6 @@ async def run(args: argparse.Namespace) -> None:
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            clob_task: asyncio.Task[None] | None = None
             last_market_slug = ""
 
             while not stop.is_set():
@@ -1714,14 +1715,19 @@ async def run(args: argparse.Namespace) -> None:
         if "STOP_LOSS" in str(exc):
             append_log(str(exc))
         else:
-            raise
+            import traceback
+            append_log(f"FATAL {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+    except Exception as exc:
+        import traceback
+        append_log(f"FATAL {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
     finally:
         stop.set()
         if clob_task:
             clob_task.cancel()
             await asyncio.gather(clob_task, return_exceptions=True)
-        rtds_task.cancel()
-        await asyncio.gather(rtds_task, return_exceptions=True)
+        if rtds_task:
+            rtds_task.cancel()
+            await asyncio.gather(rtds_task, return_exceptions=True)
         append_log("STOP polymarket_5m_trader")
 
 
