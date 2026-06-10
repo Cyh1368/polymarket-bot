@@ -50,7 +50,8 @@ def compute_stats() -> dict[str, Any]:
     wins = sum(1 for r in outcome_rows if str(r.get("correct", "")).strip() == "1")
     losses = sum(1 for r in outcome_rows if str(r.get("correct", "")).strip() == "0")
     skipped = sum(1 for r in rows if r.get("order_status") == "skip")
-    win_rate = wins / total if total > 0 else None
+    decided = wins + losses
+    win_rate = wins / decided if decided > 0 else None
     pnl = sum(
         (_finite(r.get("fill_price")) - _finite(r.get("selected_ask"))) * _finite(r.get("filled_size", 1))
         for r in outcome_rows
@@ -276,17 +277,18 @@ function scrollToBottom() {
 }
 
 function colorLine(text) {
-  if (text.includes('OUTCOME') && text.includes('result=successful')) return '#22e08a';
-  if (text.includes('OUTCOME') && text.includes('result=unsuccessful')) return '#ff6060';
-  if (text.includes('OUTCOME') && text.includes('result=skipped')) return '#8080a0';
-  if (text.includes('ORDER FILLED') || text.includes('order filled')) return '#22e08a';
-  if (text.includes('ORDER ERROR') || text.includes('error')) return '#ff8060';
-  if (text.includes('SKIP') || text.includes('skip')) return '#8080a0';
-  if (text.includes('CONTRACT ')) return '#a0c4ff';
-  if (text.includes('MODEL')) return '#d4b896';
-  if (text.includes('STOP')) return '#ff6060';
-  if (text.includes('BALANCE')) return '#c0e0c0';
-  return '';
+  if (text.includes('OUTCOME') && text.includes('result=successful')) return {color: '#22e08a'};
+  if (text.includes('OUTCOME') && text.includes('result=unsuccessful')) return {color: '#ff6060'};
+  if (text.includes('OUTCOME') && text.includes('result=skipped')) return {color: '#8080a0'};
+  if (text.startsWith('ORDER') || text.includes(' | ORDER ')) return {color: '#ffe066', bold: true};
+  if (text.includes('ORDER ERROR') || (text.includes('ORDER') && text.includes('error'))) return {color: '#ff8060', bold: true};
+  if (text.includes('FEATURES ')) return {color: '#c0a0ff'};
+  if (text.includes('SKIP') || text.includes('skip')) return {color: '#8080a0'};
+  if (text.includes('CONTRACT ')) return {color: '#a0c4ff'};
+  if (text.includes('MODEL')) return {color: '#d4b896'};
+  if (text.includes('STOP')) return {color: '#ff6060'};
+  if (text.includes('BALANCE')) return {color: '#c0e0c0'};
+  return {};
 }
 
 function updateLog(lines) {
@@ -295,8 +297,9 @@ function updateLog(lines) {
     const span = document.createElement('span');
     span.className = 'line';
     span.textContent = line;
-    const color = colorLine(line);
-    if (color) span.style.color = color;
+    const style = colorLine(line);
+    if (style.color) span.style.color = style.color;
+    if (style.bold) span.style.fontWeight = '700';
     frag.appendChild(span);
   });
   logbox.innerHTML = '';
