@@ -1141,6 +1141,42 @@ def _response_status(resp: dict[str, Any], contracts: int) -> tuple[str, str, fl
 # Outcome fetching
 # ---------------------------------------------------------------------------
 
+def _infer_winner(market: dict[str, Any]) -> tuple[str, str]:
+    """Mirror of fetch_all_outcomes.py _infer_winner. Returns (winning_outcome, source)."""
+    outcomes = [str(o) for o in _parse_json_list(market.get("outcomes"))]
+    prices_raw = _parse_json_list(market.get("outcomePrices"))
+    prices = [finite_float(p) for p in prices_raw]
+
+    # Priority 1: explicit resolution field
+    resolution = str(market.get("resolution") or market.get("resolved_to") or "").strip()
+    if resolution:
+        return resolution, "gamma.resolution"
+
+    # Priority 2: winner field (index or string)
+    winner = str(market.get("winner") or "").strip()
+    if winner:
+        if winner.isdigit() and outcomes:
+            idx = int(winner)
+            if 0 <= idx < len(outcomes):
+                return outcomes[idx], "gamma.winner_index"
+        return winner, "gamma.winner"
+
+    # Priority 3: outcomePrices settled to final (>= 0.999)
+    if outcomes and len(prices) >= len(outcomes):
+        resolved = [(o, p) for o, p in zip(outcomes, prices) if p is not None]
+        ones = [(o, p) for o, p in resolved if p >= 0.999]
+        zeros = [(o, p) for o, p in resolved if p <= 0.001]
+        if len(ones) == 1 and len(zeros) >= len(outcomes) - 1:
+            return ones[0][0], "gamma.outcomePrices_final"
+        # Priority 4: near-final (> 0.9)
+        highs = [(o, p) for o, p in resolved if p > 0.9]
+        lows = [(o, p) for o, p in resolved if p < 0.1]
+        if len(highs) == 1 and len(lows) >= len(outcomes) - 1:
+            return highs[0][0], "gamma.outcomePrices_near_final"
+
+    return "", ""
+
+
 async def fetch_outcome_from_gamma(slug: str, client: httpx.AsyncClient) -> tuple[int | None, str, str]:
     try:
         resp = await client.get(f"{GAMMA_BASE_URL}/events/slug/{slug}")
@@ -1152,24 +1188,14 @@ async def fetch_outcome_from_gamma(slug: str, client: httpx.AsyncClient) -> tupl
         return None, "", f"fetch_error:{exc}"
     markets = event.get("markets") or []
     for market in markets:
-        outcomes = [str(i) for i in _parse_json_list(market.get("outcomes"))]
-        prices = [str(i) for i in _parse_json_list(market.get("outcomePrices"))]
-        if len(outcomes) == 2 and len(prices) == 2:
-            try:
-                up_idx = outcomes.index("Up") if "Up" in outcomes else 0
-                down_idx = outcomes.index("Down") if "Down" in outcomes else 1
-                up_price = float(prices[up_idx])
-                if up_price >= 0.99:
-                    return 1, "Up", "gamma.outcomePrices_final"
-                if up_price <= 0.01:
-                    return 0, "Down", "gamma.outcomePrices_final"
-            except (ValueError, IndexError):
-                pass
-        winning = str(market.get("winningOutcome") or market.get("winning_outcome") or "").strip()
-        if winning == "Up":
-            return 1, "Up", "gamma.winningOutcome"
-        if winning == "Down":
-            return 0, "Down", "gamma.winningOutcome"
+        wo, source = _infer_winner(market)
+        if not wo:
+            continue
+        wo_lower = wo.lower().strip()
+        if wo_lower == "up":
+            return 1, "Up", source
+        if wo_lower == "down":
+            return 0, "Down", source
     return None, "", "unresolved"
 
 
