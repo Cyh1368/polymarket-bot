@@ -43,6 +43,20 @@ def _finite(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _poisson_binomial_pvalue(wins: int, probs: list[float]) -> float | None:
+    """P(X >= wins) where X ~ PoissonBinomial(probs). Exact DP, O(n^2)."""
+    n = len(probs)
+    if n == 0 or wins <= 0:
+        return None
+    dp = [0.0] * (n + 1)
+    dp[0] = 1.0
+    for p in probs:
+        for j in range(n, 0, -1):
+            dp[j] = dp[j] * (1.0 - p) + dp[j - 1] * p
+        dp[0] *= (1.0 - p)
+    return sum(dp[wins:])
+
+
 def compute_stats() -> dict[str, Any]:
     rows = _read_csv_rows(TRADES_CSV)
     outcome_rows = [r for r in rows if r.get("event") == "outcome"]
@@ -52,6 +66,14 @@ def compute_stats() -> dict[str, Any]:
     skipped = sum(1 for r in rows if r.get("order_status") == "skip")
     decided = wins + losses
     win_rate = wins / decided if decided > 0 else None
+
+    # Breakeven p-value: P(X >= wins | X ~ PoissonBinomial(ask_prices))
+    # Null hypothesis: each trade wins with probability = the ask price paid
+    decided_rows = [r for r in outcome_rows if str(r.get("correct", "")).strip() in ("0", "1")]
+    ask_probs = [_finite(r.get("selected_ask")) for r in decided_rows]
+    ask_probs = [p for p in ask_probs if 0.0 < p < 1.0]
+    breakeven_p = _poisson_binomial_pvalue(wins, ask_probs) if len(ask_probs) == decided and decided > 0 else None
+
     pnl = sum(
         (_finite(r.get("fill_price")) - _finite(r.get("selected_ask"))) * _finite(r.get("filled_size", 1))
         for r in outcome_rows
@@ -63,6 +85,7 @@ def compute_stats() -> dict[str, Any]:
         "losses": losses,
         "skipped": skipped,
         "win_rate": round(win_rate * 100, 1) if win_rate is not None else None,
+        "breakeven_p": round(breakeven_p, 4) if breakeven_p is not None else None,
         "pnl": round(pnl, 4),
     }
 
@@ -231,6 +254,10 @@ def index() -> Response:
           <div class="label">Win Rate</div>
           <div class="value blue" id="win-rate">--</div>
         </div>
+        <div class="metric-item" style="grid-column:1/-1;">
+          <div class="label">Breakeven p-value <span style="color:#404070;font-size:9px;">(wins ≥ avg cost; Poisson-Binomial)</span></div>
+          <div class="value" id="breakeven-p" style="font-size:14px;">--</div>
+        </div>
       </div>
     </div>
 
@@ -315,6 +342,14 @@ function updateStats(data) {
   el('cnt-k').textContent = s.skipped ?? '--';
   el('win-rate').textContent = s.win_rate != null ? s.win_rate.toFixed(1) + '%' : '--';
   el('header-status').textContent = `S:${s.wins||0} U:${s.losses||0} K:${s.skipped||0}`;
+  const bpEl = el('breakeven-p');
+  if (s.breakeven_p != null) {
+    bpEl.textContent = s.breakeven_p < 0.001 ? s.breakeven_p.toExponential(2) : s.breakeven_p.toFixed(4);
+    bpEl.style.color = s.breakeven_p <= 0.01 ? '#22e08a' : s.breakeven_p <= 0.05 ? '#ffe066' : '#8080b0';
+  } else {
+    bpEl.textContent = '--';
+    bpEl.style.color = '#8080b0';
+  }
 
   const lc = data.latest_contract || {};
   const box = document.getElementById('contract-box');
