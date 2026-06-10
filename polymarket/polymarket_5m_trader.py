@@ -112,6 +112,9 @@ TRADES_CSV_PATH = Path(
 PORTFOLIO_CSV_PATH = Path(
     os.getenv("POLYMARKET_TRADER_PORTFOLIO_CSV", str(APP_DIR / "polymarket_5m_trader_portfolio.csv"))
 )
+FEATURES_CSV_PATH = Path(
+    os.getenv("POLYMARKET_TRADER_FEATURES_CSV", str(APP_DIR / "polymarket_5m_trader_features.csv"))
+)
 
 TRADE_FIELDS = [
     "timestamp_utc", "event", "contract_id", "close_time", "remaining_seconds",
@@ -1202,6 +1205,19 @@ def append_portfolio_row(row: dict[str, Any]) -> None:
         writer.writerow({k: row.get(k, "") for k in PORTFOLIO_FIELDS})
 
 
+FEATURES_FIELDS = ["timestamp_utc", "contract_id", "remaining_seconds"] + FEATURES
+
+
+def append_features_row(row: dict[str, Any]) -> None:
+    FEATURES_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    exists = FEATURES_CSV_PATH.exists()
+    with FEATURES_CSV_PATH.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=FEATURES_FIELDS)
+        if not exists:
+            writer.writeheader()
+        writer.writerow({k: row.get(k, "") for k in FEATURES_FIELDS})
+
+
 # ---------------------------------------------------------------------------
 # Trading actions
 # ---------------------------------------------------------------------------
@@ -1317,6 +1333,16 @@ async def evaluate_entry(
         )
         append_trade_row({**base_row, "order_status": "skip", "reason": "features_failed", "skipped_count": counts.skipped})
         return
+
+    # Log and save all feature values before evaluation
+    feat_parts = "  ".join(f"{f}={features[f]:.4f}" for f in FEATURES)
+    append_log(f"FEATURES T={remaining:.1f}s {runtime.market.slug} | {feat_parts}", prefix_timestamp=False)
+    append_features_row({
+        "timestamp_utc": iso_utc(),
+        "contract_id": runtime.market.slug,
+        "remaining_seconds": f"{remaining:.3f}",
+        **{f: features[f] for f in FEATURES},
+    })
 
     pred_class, probs = predict(model, features)
 
