@@ -1129,10 +1129,13 @@ def _response_status(resp: dict[str, Any], contracts: int) -> tuple[str, str, fl
     if resp.get("error"):
         return "error", str(resp["error"]), None, 0.0
     verified = resp.get("verified_order") or resp
-    status = str(verified.get("status") or resp.get("status") or "unknown")
+    status = str(verified.get("status") or resp.get("status") or "unknown").lower()
     filled = float(verified.get("size_matched") or verified.get("amount_filled") or verified.get("filledAmount") or 0.0)
     fill_price = finite_float(verified.get("average_price") or verified.get("avgPrice") or resp.get("price"))
     order_id = str(resp.get("id") or resp.get("order_id") or "")
+    # FOK orders on Polymarket return status="matched" when fully filled; size_matched may be absent.
+    if status == "matched" and filled == 0.0:
+        filled = float(contracts)
     if filled >= contracts:
         return "filled", f"filled {filled:g} @ {fmt_pct(fill_price)} id={order_id}", fill_price, filled
     if filled > 0:
