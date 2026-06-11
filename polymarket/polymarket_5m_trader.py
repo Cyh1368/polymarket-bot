@@ -1734,6 +1734,7 @@ async def run(args: argparse.Namespace) -> None:
                             market.price_target = target
                         state.market = market
                         state.books = {}
+                        contract_spot = state.spot.price
 
                     await load_initial_books(client, state, market)
                     runtime = ContractRuntime(market=market)
@@ -1743,11 +1744,13 @@ async def run(args: argparse.Namespace) -> None:
                         await asyncio.gather(clob_task, return_exceptions=True)
                     clob_task = asyncio.create_task(clob_ws_loop(state, market, stop))
 
+                    contract_spot_str = f"{contract_spot:.2f}" if contract_spot is not None else "--"
+                    contract_tgt_str = f"{market.price_target:.2f}" if market.price_target is not None else "--"
                     append_log("", prefix_timestamp=False)
                     append_log(
                         f"CONTRACT {market.slug} | "
                         f"close {iso_from_ms(market.end_ts * 1000)} | "
-                        f"target {market.price_target}",
+                        f"spot {contract_spot_str} target {contract_tgt_str}",
                         prefix_timestamp=False,
                     )
 
@@ -1799,11 +1802,14 @@ async def run(args: argparse.Namespace) -> None:
                             ub_val, _ = up_b.best_bid()
                             ua_val, _ = up_b.best_ask()
                         up_mid_log = (ub_val + ua_val) / 2.0 if ub_val and ua_val else None
+                        spot_price_log = state.spot.price
                     status_str = runtime.decision.status if runtime.decision else "--"
                     um_str = f"{up_mid_log:.4f}" if up_mid_log is not None else "--"
+                    spot_str = f"{spot_price_log:.2f}" if spot_price_log is not None else "--"
+                    tgt_str = f"{market.price_target:.2f}" if market.price_target is not None else "--"
                     append_log(
                         f"STATUS T={remaining:.1f}s | up_mid={um_str} "
-                        f"target={market.price_target} trade={status_str}",
+                        f"spot={spot_str} target={tgt_str} trade={status_str}",
                         prefix_timestamp=False,
                     )
                     runtime.last_status_log = now_mono
