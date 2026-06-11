@@ -63,7 +63,7 @@ def compute_stats() -> dict[str, Any]:
     total = len(outcome_rows)
     wins = sum(1 for r in outcome_rows if str(r.get("correct", "")).strip() == "1")
     losses = sum(1 for r in outcome_rows if str(r.get("correct", "")).strip() == "0")
-    skipped = sum(1 for r in rows if r.get("order_status") == "skip")
+    skipped = sum(1 for r in rows if r.get("event") == "decision" and r.get("order_status") == "skip")
     decided = wins + losses
     win_rate = wins / decided if decided > 0 else None
 

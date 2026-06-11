@@ -96,6 +96,8 @@ OUTCOME_POLL_INTERVAL = 15.0
 OUTCOME_WAIT_LOG_INTERVAL = 30.0
 OUTCOME_DELAY_SECONDS = -270.0  # check outcome 4.5 min after close; observed resolution ~5.5 min
 COST_ADD = 0.01               # spread penalty per leg
+MAX_ORDER_ATTEMPTS = 10       # FOK retry limit; each attempt uses fresh best-ask from book
+ORDER_RETRY_DELAY = 0.25      # seconds between retry attempts
 
 # Paths
 APP_DIR = Path(__file__).resolve().parent
@@ -1445,7 +1447,6 @@ async def evaluate_entry(
         })
         return
 
-    price_rounded = round(round(ask_price * 100) / 100, 2)
     um_str2 = f"{up_mid:.4f}" if up_mid is not None else "--"
     append_log(
         f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str2} "
@@ -1454,10 +1455,36 @@ async def evaluate_entry(
         prefix_timestamp=False,
     )
 
-    resp = await asyncio.to_thread(place_order, token_id, price_rounded, args.contracts, dry_run=not args.live)
-    order_status, order_reason, fill_price, filled_size = _response_status(resp, args.contracts)
+    # Retry loop: up to MAX_ORDER_ATTEMPTS FOK attempts, each using a fresh best-ask.
+    order_status = "error"
+    order_reason = "no attempts made"
+    fill_price: float | None = None
+    filled_size: float = 0.0
+    order_id = ""
+    resp: dict[str, Any] = {}
+    for attempt in range(1, MAX_ORDER_ATTEMPTS + 1):
+        # Refresh best ask from live book on every attempt.
+        async with state.lock:
+            cur_book = state.books.get(token_id)
+        if cur_book is not None:
+            fresh_ask, _ = cur_book.best_ask()
+            if fresh_ask is not None and 0.0 < fresh_ask < 1.0 and fresh_ask > 0.50:
+                ask_price = fresh_ask
+        price_rounded = round(round(ask_price * 100) / 100, 2)
+        if attempt > 1:
+            append_log(
+                f"ORDER RETRY {attempt}/{MAX_ORDER_ATTEMPTS} {runtime.market.slug} {side} "
+                f"ask={fmt_pct(ask_price)}",
+                prefix_timestamp=False,
+            )
+        resp = await asyncio.to_thread(place_order, token_id, price_rounded, args.contracts, dry_run=not args.live)
+        order_status, order_reason, fill_price, filled_size = _response_status(resp, args.contracts)
+        if order_status in ("filled", "dry_run", "partial"):
+            break
+        if attempt < MAX_ORDER_ATTEMPTS:
+            await asyncio.sleep(ORDER_RETRY_DELAY)
 
-    order_id = str(resp.get("id") or resp.get("order_id") or resp.get("order_id") or "")
+    order_id = str(resp.get("id") or resp.get("order_id") or "")
     if order_status in ("dry_run",):
         order_id = str(resp.get("order_id", ""))
     outcome_eligible = order_status in ("dry_run", "filled") and filled_size >= args.contracts
