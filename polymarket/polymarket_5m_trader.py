@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Polymarket SOL 5m Up/Down live trader — sol_t30 v2 LightGBM model.
+"""Polymarket SOL 5m Up/Down live trader — sol_t30 best model (idea12_highreg_120rnd).
 
 Features (15):
   p_yes_mid, yes_mid_z_60, yes_mid_vol_60, yes_mid_z_20, yes_mid_vol_20,
@@ -87,8 +87,8 @@ CLASS_SKIP = 2
 # LightGBM hyperparams (same as sol_t30 research)
 LGB_NUM_LEAVES = 7
 LGB_MAX_DEPTH = 3
-LGB_LAMBDA_L2 = 1.0
-LGB_NUM_BOOST_ROUNDS = 80
+LGB_LAMBDA_L2 = 5.0
+LGB_NUM_BOOST_ROUNDS = 120
 MIN_TRAIN_ROWS = 30
 INDICATOR_WINDOW_SECONDS = 60.0
 TOLERANCE_SECONDS = 5.0       # entry window: [T-5, T]
@@ -105,7 +105,7 @@ REPO_ROOT = APP_DIR.parent
 
 DEFAULT_DATA_DIR = APP_DIR / "data_SOL_5m"
 DEFAULT_OUTCOMES_CSV = APP_DIR / "polymarket_sol_5m_official_outcomes.csv"
-DEFAULT_MODEL_PATH = REPO_ROOT / "2026-06-11-research" / "sol_t30_report" / "sol_t30_best_seed6_depth3.lgb"
+DEFAULT_MODEL_PATH = REPO_ROOT / "2026-06-11-research" / "sol_t30_best_report" / "sol_t30_best_seed6.lgb"
 LOG_PATH = Path(
     os.getenv("POLYMARKET_TRADER_LOG", str(APP_DIR / "polymarket_5m_trader.log"))
 )
@@ -275,7 +275,7 @@ def _lgb_params(seed: int = 42) -> dict[str, Any]:
         "num_class": 3,
         "num_leaves": LGB_NUM_LEAVES,
         "max_depth": LGB_MAX_DEPTH,
-        "min_child_samples": 16,
+        "min_child_samples": 32,
         "subsample": 0.90,
         "feature_fraction": 0.90,
         "lambda_l2": LGB_LAMBDA_L2,
@@ -1359,6 +1359,27 @@ async def evaluate_entry(
         append_trade_row({**base_row, "order_status": "skip", "reason": "no model", "skipped_count": counts.skipped})
         return
 
+    # Pre-filter on mid price before attempting feature extraction.
+    # Catches two problems at once:
+    #   (1) features_failed — at extreme prices (e.g. up_mid=0.995) the orderbook is
+    #       lopsided and book_imbalance(tau) returns None (zero depth on one side), which
+    #       propagates to features=None. These rows were excluded from training too.
+    #   (2) The traded-side ask filter misses edge cases like pred=NO with up_mid=0.905
+    #       because down_ask=0.10 is exactly on the [0.10,0.90] boundary and passes through.
+    if up_mid is not None and not (0.10 < up_mid < 0.90):
+        counts.skipped += 1
+        reason = f"price_filter_mid: up_mid={fmt_pct(up_mid)} outside (0.10, 0.90)"
+        runtime.decision = TradeDecision(
+            status="skip", contracts=args.contracts, dry_run=not args.live, reason=reason,
+        )
+        append_log(
+            f"ORDER SKIP {runtime.market.slug} price_filter_mid: up_mid={fmt_pct(up_mid)} outside (0.10, 0.90) | "
+            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
+            prefix_timestamp=False,
+        )
+        append_trade_row({**base_row, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
+        return
+
     features = extract_features(runtime, up_book, down_book)
     if features is None:
         counts.skipped += 1
@@ -1439,6 +1460,28 @@ async def evaluate_entry(
     if not (0.10 <= ask_price <= 0.90):
         counts.skipped += 1
         reason = f"price_filter: ask={fmt_pct(ask_price)} outside [0.10, 0.90]"
+        runtime.decision = TradeDecision(
+            status="skip", pred_class=pred_class, contracts=args.contracts,
+            dry_run=not args.live, reason=reason,
+        )
+        append_log(
+            f"ORDER SKIP {runtime.market.slug} {side} {reason} | "
+            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
+            prefix_timestamp=False,
+        )
+        append_trade_row({
+            **base_row, "selected_side": side, "pred_class": pred_class,
+            "pred_p_yes": float(probs[0]), "pred_p_no": float(probs[1]), "pred_p_skip": float(probs[2]),
+            "order_status": "skip", "reason": reason, "skipped_count": counts.skipped,
+        })
+        return
+
+    # Polymarket minimum marketable order is $1.00. Reject before attempting if
+    # ask_price × contracts would be below that (avoids repeated ORDER RETRY + error).
+    order_value = ask_price * args.contracts
+    if order_value < 1.0:
+        counts.skipped += 1
+        reason = f"min_order_size: {fmt_pct(ask_price)} × {args.contracts} = ${order_value:.2f} < $1.00"
         runtime.decision = TradeDecision(
             status="skip", pred_class=pred_class, contracts=args.contracts,
             dry_run=not args.live, reason=reason,
