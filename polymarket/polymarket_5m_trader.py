@@ -1596,18 +1596,19 @@ async def maybe_record_outcome(
 # ---------------------------------------------------------------------------
 
 def _rotate_session_files() -> None:
-    """Backup log and trades CSV from the previous session, then clear them."""
+    """Backup log and trades files from the previous session, then remove them.
+
+    CSV files are deleted (not truncated) so append_trade_row / append_portfolio_row
+    see exists=False and write a fresh header on the next call.
+    The log file is also deleted; append_log creates it on first write.
+    """
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     for src in (LOG_PATH, TRADES_CSV_PATH, PORTFOLIO_CSV_PATH):
         if src.exists() and src.stat().st_size > 0:
             dst = src.with_stem(f"{src.stem}_{stamp}")
             shutil.copy2(src, dst)
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LOG_PATH.write_text("")
-    if TRADES_CSV_PATH.exists():
-        TRADES_CSV_PATH.write_text("")
-    if PORTFOLIO_CSV_PATH.exists():
-        PORTFOLIO_CSV_PATH.write_text("")
+        if src.exists():
+            src.unlink()
 
 
 # ---------------------------------------------------------------------------
