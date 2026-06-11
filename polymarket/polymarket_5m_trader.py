@@ -937,7 +937,7 @@ def _target_from_history(market: CurrentMarket, history: deque[SpotState]) -> fl
         if item.price is None or item.received_ms is None:
             continue
         dist = abs(item.received_ms - start_ms)
-        if dist <= 2000 and (best is None or dist < best[0]):
+        if dist <= 300_000 and (best is None or dist < best[0]):
             best = (dist, item.price)
     return best[1] if best else None
 
