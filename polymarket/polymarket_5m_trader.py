@@ -28,6 +28,7 @@ import csv
 import json
 import math
 import os
+import shutil
 import signal
 import sys
 import time
@@ -1425,6 +1426,25 @@ async def evaluate_entry(
         })
         return
 
+    if ask_price <= 0.50:
+        counts.skipped += 1
+        reason = f"cost_filter: ask={fmt_pct(ask_price)} <= 0.50"
+        runtime.decision = TradeDecision(
+            status="skip", pred_class=pred_class, contracts=args.contracts,
+            dry_run=not args.live, reason=reason,
+        )
+        append_log(
+            f"ORDER SKIP {runtime.market.slug} {side} {reason} | "
+            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
+            prefix_timestamp=False,
+        )
+        append_trade_row({
+            **base_row, "selected_side": side, "pred_class": pred_class,
+            "pred_p_yes": float(probs[0]), "pred_p_no": float(probs[1]), "pred_p_skip": float(probs[2]),
+            "order_status": "skip", "reason": reason, "skipped_count": counts.skipped,
+        })
+        return
+
     price_rounded = round(round(ask_price * 100) / 100, 2)
     um_str2 = f"{up_mid:.4f}" if up_mid is not None else "--"
     append_log(
@@ -1572,10 +1592,30 @@ async def maybe_record_outcome(
 
 
 # ---------------------------------------------------------------------------
+# Session rotation — backup and clear history files on each run
+# ---------------------------------------------------------------------------
+
+def _rotate_session_files() -> None:
+    """Backup log and trades CSV from the previous session, then clear them."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    for src in (LOG_PATH, TRADES_CSV_PATH, PORTFOLIO_CSV_PATH):
+        if src.exists() and src.stat().st_size > 0:
+            dst = src.with_stem(f"{src.stem}_{stamp}")
+            shutil.copy2(src, dst)
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LOG_PATH.write_text("")
+    if TRADES_CSV_PATH.exists():
+        TRADES_CSV_PATH.write_text("")
+    if PORTFOLIO_CSV_PATH.exists():
+        PORTFOLIO_CSV_PATH.write_text("")
+
+
+# ---------------------------------------------------------------------------
 # Main trading loop
 # ---------------------------------------------------------------------------
 
 async def run(args: argparse.Namespace) -> None:
+    _rotate_session_files()
     append_log(
         f"START polymarket_5m_trader live={args.live} contracts={args.contracts} "
         f"entry_seconds={args.entry_seconds} tolerance={args.entry_tolerance}s "
@@ -1790,7 +1830,7 @@ async def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader (btc_d3 T=30 model).")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
-    parser.add_argument("--contracts", type=int, default=1, help="Contracts (shares) per trade. Default: 1.")
+    parser.add_argument("--contracts", type=int, default=2, help="Contracts (shares) per trade. Default: 2.")
     parser.add_argument("--entry-seconds", type=float, default=30.0, help="Entry time before close (seconds). Default: 30.")
     parser.add_argument("--entry-tolerance", type=float, default=5.0, help="Entry window tolerance (seconds). Default: 5.")
     parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH, help="Saved LightGBM model file. Default: btc_5m_lgb_model.txt.")
