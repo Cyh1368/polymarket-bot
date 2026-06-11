@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Polymarket BTC 5m Up/Down live trader — btc_d3 T=30 LightGBM model (p=0.0055).
+"""Polymarket SOL 5m Up/Down live trader — sol_t30 v2 LightGBM model.
 
 Features (15):
-  p_yes_mid, yes_mid_z_60, yes_mid_vol_60, mid_change_from_open, book_qty_log,
-  OBI, OBI_vol_60, OBI_z_60,
+  p_yes_mid, yes_mid_z_60, yes_mid_vol_60, yes_mid_z_20, yes_mid_vol_20,
+  mid_change_from_open, book_qty_log,
+  OBI, OBI_vol_60, OBI_z_60, OBI_vol_20,
   yes_book_imbalance_tau_{1c,5c,10c},
-  dir_bid_imbalance_tau_{1c,5c,10c},
   obi_depth_slope
 
 Decision at T=30s before close (configurable): LightGBM 3-class argmax.
@@ -53,13 +53,13 @@ GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 CLOB_BASE_URL = "https://clob.polymarket.com"
 CLOB_MARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 RTDS_WS_URL = "wss://ws-live-data.polymarket.com"
-SPOT_SYMBOL = "btc/usd"
+SPOT_SYMBOL = "sol/usd"
 SPOT_TOPIC = "crypto_prices_chainlink"
 SPOT_TOPIC_ALIASES: dict[str, set[str]] = {
     "crypto_prices": {"crypto_prices_chainlink"},
     "crypto_prices_chainlink": {"crypto_prices"},
 }
-COIN_SLUG_PREFIX = "btc"
+COIN_SLUG_PREFIX = "sol"
 FIVE_MINUTE_SECONDS = 5 * 60
 POLYMARKET_CHAIN_ID = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
 
@@ -67,24 +67,24 @@ FEATURES = [
     "p_yes_mid",
     "yes_mid_z_60",
     "yes_mid_vol_60",
+    "yes_mid_z_20",
+    "yes_mid_vol_20",
     "mid_change_from_open",
     "book_qty_log",
     "OBI",
     "OBI_vol_60",
     "OBI_z_60",
+    "OBI_vol_20",
     "yes_book_imbalance_tau_1c",
     "yes_book_imbalance_tau_5c",
     "yes_book_imbalance_tau_10c",
-    "dir_bid_imbalance_tau_1c",
-    "dir_bid_imbalance_tau_5c",
-    "dir_bid_imbalance_tau_10c",
     "obi_depth_slope",
 ]
 CLASS_YES = 0
 CLASS_NO = 1
 CLASS_SKIP = 2
 
-# LightGBM hyperparams (same as btc_d3 research)
+# LightGBM hyperparams (same as sol_t30 research)
 LGB_NUM_LEAVES = 7
 LGB_MAX_DEPTH = 3
 LGB_LAMBDA_L2 = 1.0
@@ -103,9 +103,9 @@ ORDER_RETRY_DELAY = 0.25      # seconds between retry attempts
 APP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = APP_DIR.parent
 
-DEFAULT_DATA_DIR = APP_DIR / "data_BTC_5m"
-DEFAULT_OUTCOMES_CSV = APP_DIR / "polymarket_btc_5m_official_outcomes.csv"
-DEFAULT_MODEL_PATH = APP_DIR / "btc_5m_lgb_model.txt"
+DEFAULT_DATA_DIR = APP_DIR / "data_SOL_5m"
+DEFAULT_OUTCOMES_CSV = APP_DIR / "polymarket_sol_5m_official_outcomes.csv"
+DEFAULT_MODEL_PATH = REPO_ROOT / "2026-06-11-research" / "sol_t30_report" / "sol_t30_best_seed6_depth3.lgb"
 LOG_PATH = Path(
     os.getenv("POLYMARKET_TRADER_LOG", str(APP_DIR / "polymarket_5m_trader.log"))
 )
@@ -309,7 +309,7 @@ def _build_candidates_from_csv(
     tolerance: float = TOLERANCE_SECONDS,
 ) -> list[dict[str, Any]]:
     slug_from_path = path.stem
-    for prefix in ("polymarket_data_BTC_5m_",):
+    for prefix in ("polymarket_data_SOL_5m_",):
         slug_from_path = slug_from_path.replace(prefix, "")
     try:
         df = pd.read_csv(path)
@@ -363,6 +363,11 @@ def _build_candidates_from_csv(
     )].copy()
     if history.empty:
         history = quote.to_frame().T
+    history_20 = df[df["_ts"].notna() & (df["_ts"] <= row_ts) & (
+        (row_ts - df["_ts"]).dt.total_seconds() <= 20.0
+    )].copy()
+    if history_20.empty:
+        history_20 = quote.to_frame().T
 
     # open mid from first valid row
     up_mid_open: float | None = None
@@ -380,6 +385,13 @@ def _build_candidates_from_csv(
         (u - d) / (u + d + 1e-9)
         for u, d in zip(up_bid_qty_hist, down_bid_qty_hist)
     ]
+    up_mid_hist_20 = pd.to_numeric(history_20.get("up_mid", pd.Series(dtype=float)), errors="coerce").dropna().tolist()
+    up_bid_qty_hist_20 = pd.to_numeric(history_20.get("up_best_bid_size", pd.Series(dtype=float)), errors="coerce").fillna(0.0).tolist()
+    down_bid_qty_hist_20 = pd.to_numeric(history_20.get("down_best_bid_size", pd.Series(dtype=float)), errors="coerce").fillna(0.0).tolist()
+    obi_hist_20 = [
+        (u - d) / (u + d + 1e-9)
+        for u, d in zip(up_bid_qty_hist_20, down_bid_qty_hist_20)
+    ]
 
     up_bid_qty = finite_float(quote.get("up_best_bid_size")) or 0.0
     down_bid_qty = finite_float(quote.get("down_best_bid_size")) or 0.0
@@ -387,15 +399,14 @@ def _build_candidates_from_csv(
 
     yes_mid_stats = _series_stats(up_mid_hist, up_mid)
     obi_stats = _series_stats(obi_hist, obi_current)
+    yes_mid_stats_20 = _series_stats(up_mid_hist_20, up_mid)
+    obi_stats_20 = _series_stats(obi_hist_20, obi_current)
 
     yes_book_1c = finite_float(quote.get("up_book_imbalance_tau_1c"))
     yes_book_5c = finite_float(quote.get("up_book_imbalance_tau_5c"))
     yes_book_10c = finite_float(quote.get("up_book_imbalance_tau_10c"))
-    dir_bid_1c = finite_float(quote.get("up_down_bid_imbalance_tau_1c"))
-    dir_bid_5c = finite_float(quote.get("up_down_bid_imbalance_tau_5c"))
-    dir_bid_10c = finite_float(quote.get("up_down_bid_imbalance_tau_10c"))
 
-    for v in (yes_book_1c, yes_book_5c, yes_book_10c, dir_bid_1c, dir_bid_5c, dir_bid_10c):
+    for v in (yes_book_1c, yes_book_5c, yes_book_10c):
         if v is None:
             return []
 
@@ -408,17 +419,17 @@ def _build_candidates_from_csv(
         "p_yes_mid": up_mid,
         "yes_mid_z_60": yes_mid_stats["z"],
         "yes_mid_vol_60": yes_mid_stats["vol"],
+        "yes_mid_z_20": yes_mid_stats_20["z"],
+        "yes_mid_vol_20": yes_mid_stats_20["vol"],
         "mid_change_from_open": (up_mid - up_mid_open) if up_mid_open is not None else float("nan"),
         "book_qty_log": math.log1p(up_bid_qty + down_bid_qty),
         "OBI": obi_current,
         "OBI_vol_60": obi_stats["vol"],
         "OBI_z_60": obi_stats["z"],
+        "OBI_vol_20": obi_stats_20["vol"],
         "yes_book_imbalance_tau_1c": yes_book_1c,
         "yes_book_imbalance_tau_5c": yes_book_5c,
         "yes_book_imbalance_tau_10c": yes_book_10c,
-        "dir_bid_imbalance_tau_1c": dir_bid_1c,
-        "dir_bid_imbalance_tau_5c": dir_bid_5c,
-        "dir_bid_imbalance_tau_10c": dir_bid_10c,
         "obi_depth_slope": yes_book_1c - yes_book_10c,  # type: ignore[operator]
     }
     if any(not math.isfinite(float(row_data.get(f, float("nan")))) for f in FEATURES):
@@ -623,9 +634,6 @@ class QuoteSnapshot:
     up_book_imb_1c: float
     up_book_imb_5c: float
     up_book_imb_10c: float
-    dir_bid_imb_1c: float
-    dir_bid_imb_5c: float
-    dir_bid_imb_10c: float
 
 
 @dataclass
@@ -685,15 +693,6 @@ def _parse_levels(value: Any) -> dict[float, float]:
     return levels
 
 
-def _dir_bid_imbalance(up_book: TokenBook, down_book: TokenBook, tau: float) -> float | None:
-    ud = up_book.depth_within_tau(tau, side="bid")
-    dd = down_book.depth_within_tau(tau, side="bid")
-    total = ud + dd
-    if total <= 0:
-        return None
-    return (ud - dd) / total
-
-
 # ---------------------------------------------------------------------------
 # Feature extraction from live rolling history
 # ---------------------------------------------------------------------------
@@ -719,19 +718,28 @@ def extract_features(
     down_bid_q = down_bid_qty or 0.0
     obi_current = (up_bid_q - down_bid_q) / (up_bid_q + down_bid_q + 1e-9)
 
-    # rolling 60s history
+    # rolling 60s and 20s history
     now = time.time()
-    cutoff = now - INDICATOR_WINDOW_SECONDS
-    window = [snap for snap in runtime.history if snap.timestamp >= cutoff]
+    cutoff_60 = now - INDICATOR_WINDOW_SECONDS
+    cutoff_20 = now - 20.0
+    window_60 = [snap for snap in runtime.history if snap.timestamp >= cutoff_60]
+    window_20 = [snap for snap in runtime.history if snap.timestamp >= cutoff_20]
 
-    up_mid_hist = [snap.up_mid for snap in window]
+    up_mid_hist = [snap.up_mid for snap in window_60]
     obi_hist = [
         (snap.up_bid_qty - snap.down_bid_qty) / (snap.up_bid_qty + snap.down_bid_qty + 1e-9)
-        for snap in window
+        for snap in window_60
+    ]
+    up_mid_hist_20 = [snap.up_mid for snap in window_20]
+    obi_hist_20 = [
+        (snap.up_bid_qty - snap.down_bid_qty) / (snap.up_bid_qty + snap.down_bid_qty + 1e-9)
+        for snap in window_20
     ]
 
     yes_mid_stats = _series_stats(up_mid_hist, up_mid)
     obi_stats = _series_stats(obi_hist, obi_current)
+    yes_mid_stats_20 = _series_stats(up_mid_hist_20, up_mid)
+    obi_stats_20 = _series_stats(obi_hist_20, obi_current)
 
     mid_change_from_open = (
         up_mid - runtime.up_mid_open
@@ -742,11 +750,8 @@ def extract_features(
     yes_book_1c = up_book.book_imbalance(0.01)
     yes_book_5c = up_book.book_imbalance(0.05)
     yes_book_10c = up_book.book_imbalance(0.10)
-    dir_bid_1c = _dir_bid_imbalance(up_book, down_book, 0.01)
-    dir_bid_5c = _dir_bid_imbalance(up_book, down_book, 0.05)
-    dir_bid_10c = _dir_bid_imbalance(up_book, down_book, 0.10)
 
-    for v in (yes_book_1c, yes_book_5c, yes_book_10c, dir_bid_1c, dir_bid_5c, dir_bid_10c):
+    for v in (yes_book_1c, yes_book_5c, yes_book_10c):
         if v is None:
             return None
 
@@ -754,17 +759,17 @@ def extract_features(
         "p_yes_mid": up_mid,
         "yes_mid_z_60": yes_mid_stats["z"],
         "yes_mid_vol_60": yes_mid_stats["vol"],
+        "yes_mid_z_20": yes_mid_stats_20["z"],
+        "yes_mid_vol_20": yes_mid_stats_20["vol"],
         "mid_change_from_open": mid_change_from_open,
         "book_qty_log": math.log1p(up_bid_q + down_bid_q),
         "OBI": obi_current,
         "OBI_vol_60": obi_stats["vol"],
         "OBI_z_60": obi_stats["z"],
+        "OBI_vol_20": obi_stats_20["vol"],
         "yes_book_imbalance_tau_1c": yes_book_1c,
         "yes_book_imbalance_tau_5c": yes_book_5c,
         "yes_book_imbalance_tau_10c": yes_book_10c,
-        "dir_bid_imbalance_tau_1c": dir_bid_1c,
-        "dir_bid_imbalance_tau_5c": dir_bid_5c,
-        "dir_bid_imbalance_tau_10c": dir_bid_10c,
         "obi_depth_slope": yes_book_1c - yes_book_10c,  # type: ignore[operator]
     }
     if any(not math.isfinite(features[f]) for f in FEATURES):
@@ -1431,9 +1436,9 @@ async def evaluate_entry(
         })
         return
 
-    if ask_price <= 0.50:
+    if not (0.10 <= ask_price <= 0.90):
         counts.skipped += 1
-        reason = f"cost_filter: ask={fmt_pct(ask_price)} <= 0.50"
+        reason = f"price_filter: ask={fmt_pct(ask_price)} outside [0.10, 0.90]"
         runtime.decision = TradeDecision(
             status="skip", pred_class=pred_class, contracts=args.contracts,
             dry_run=not args.live, reason=reason,
@@ -1471,7 +1476,7 @@ async def evaluate_entry(
             cur_book = state.books.get(token_id)
         if cur_book is not None:
             fresh_ask, _ = cur_book.best_ask()
-            if fresh_ask is not None and 0.0 < fresh_ask < 1.0 and fresh_ask > 0.50:
+            if fresh_ask is not None and 0.0 < fresh_ask < 1.0:
                 ask_price = fresh_ask
         price_rounded = round(round(ask_price * 100) / 100, 2)
         if attempt > 1:
@@ -1783,9 +1788,6 @@ async def run(args: argparse.Namespace) -> None:
                             up_book_imb_1c=up_book.book_imbalance(0.01) or 0.0,
                             up_book_imb_5c=up_book.book_imbalance(0.05) or 0.0,
                             up_book_imb_10c=up_book.book_imbalance(0.10) or 0.0,
-                            dir_bid_imb_1c=_dir_bid_imbalance(up_book, down_book, 0.01) or 0.0,
-                            dir_bid_imb_5c=_dir_bid_imbalance(up_book, down_book, 0.05) or 0.0,
-                            dir_bid_imb_10c=_dir_bid_imbalance(up_book, down_book, 0.10) or 0.0,
                         )
                         runtime.history.append(snap)
 
@@ -1865,12 +1867,12 @@ async def run(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader (btc_d3 T=30 model).")
+    parser = argparse.ArgumentParser(description="Polymarket SOL 5m Up/Down live trader (sol_t30 v2 model, price filter [0.10, 0.90]).")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
     parser.add_argument("--contracts", type=int, default=2, help="Contracts (shares) per trade. Default: 2.")
     parser.add_argument("--entry-seconds", type=float, default=30.0, help="Entry time before close (seconds). Default: 30.")
     parser.add_argument("--entry-tolerance", type=float, default=5.0, help="Entry window tolerance (seconds). Default: 5.")
-    parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH, help="Saved LightGBM model file. Default: btc_5m_lgb_model.txt.")
+    parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH, help="Saved LightGBM model file. Default: sol_t30_best_seed6_depth3.lgb.")
     parser.add_argument("--retrain", action="store_true", help="Force retrain even if model file exists.")
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR, help="Historical CSV directory (only used when retraining).")
     parser.add_argument("--outcomes-csv", type=Path, default=DEFAULT_OUTCOMES_CSV, help="Official outcomes CSV (only used when retraining).")
