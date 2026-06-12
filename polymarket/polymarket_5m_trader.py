@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Polymarket SOL 5m Up/Down live trader — sol_t30 best model (idea12_highreg_120rnd).
+"""Polymarket SOL 5m Up/Down live trader — sol_t240 model (λ=0.5, mc=8, 200rnd).
 
 Features (15):
   p_yes_mid, yes_mid_z_60, yes_mid_vol_60, yes_mid_z_20, yes_mid_vol_20,
@@ -8,10 +8,16 @@ Features (15):
   yes_book_imbalance_tau_{1c,5c,10c},
   obi_depth_slope
 
-Decision at T=30s before close (configurable): LightGBM 3-class argmax.
+Decision at T=240s before close: LightGBM 3-class argmax.
   CLASS_YES (0) → buy Up token
   CLASS_NO  (1) → buy Down token
   CLASS_SKIP(2) → skip
+
+Post-hoc cost filter (applied after model decision):
+  Only execute if entry_ask ∈ [0.10, 0.20) ∪ [0.40, 0.50).
+  Source: 200-seed OOS bin search (2026-06-12); only filter Bonferroni-significant
+  across 37 candidates (α/37=0.0014, CI95=[+0.00167,+0.00662], mean EV/all=+0.00421,
+  57% positive seeds, avg 14.5 trades/seed).
 
 Usage:
   python polymarket_5m_trader.py                   # dry run
@@ -84,17 +90,22 @@ CLASS_YES = 0
 CLASS_NO = 1
 CLASS_SKIP = 2
 
-# LightGBM hyperparams (same as sol_t30 research)
+# LightGBM hyperparams (sol_t240: λ=0.5, mc=8, 200 rounds, depth=3)
 LGB_NUM_LEAVES = 7
 LGB_MAX_DEPTH = 3
-LGB_LAMBDA_L2 = 5.0
-LGB_NUM_BOOST_ROUNDS = 120
+LGB_LAMBDA_L2 = 0.5
+LGB_MIN_CHILD_SAMPLES = 8
+LGB_NUM_BOOST_ROUNDS = 200
 MIN_TRAIN_ROWS = 30
 INDICATOR_WINDOW_SECONDS = 60.0
 TOLERANCE_SECONDS = 5.0       # entry window: [T-5, T]
 OUTCOME_POLL_INTERVAL = 15.0
 OUTCOME_WAIT_LOG_INTERVAL = 30.0
 OUTCOME_DELAY_SECONDS = -270.0  # check outcome 4.5 min after close; observed resolution ~5.5 min
+# Post-hoc cost filter: only execute if entry ask ∈ [0.10, 0.20) ∪ [0.40, 0.50).
+# Bonferroni-significant across 37 tested bins (200-seed OOS, 2026-06-12 bin search).
+COST_FILTER_BANDS: tuple[tuple[float, float], ...] = ((0.10, 0.20), (0.40, 0.50))
+
 COST_ADD = 0.01               # spread penalty per leg
 MAX_ORDER_ATTEMPTS = 10       # FOK retry limit; each attempt uses fresh best-ask from book
 ORDER_RETRY_DELAY = 0.25      # seconds between retry attempts
@@ -105,7 +116,7 @@ REPO_ROOT = APP_DIR.parent
 
 DEFAULT_DATA_DIR = APP_DIR / "data_SOL_5m"
 DEFAULT_OUTCOMES_CSV = APP_DIR / "polymarket_sol_5m_official_outcomes.csv"
-DEFAULT_MODEL_PATH = REPO_ROOT / "2026-06-11-research" / "sol_t30_best_report" / "sol_t30_best_seed6.lgb"
+DEFAULT_MODEL_PATH = REPO_ROOT / "2026-06-12-research" / "sol_t240_model.lgb"
 LOG_PATH = Path(
     os.getenv("POLYMARKET_TRADER_LOG", str(APP_DIR / "polymarket_5m_trader.log"))
 )
@@ -275,7 +286,7 @@ def _lgb_params(seed: int = 42) -> dict[str, Any]:
         "num_class": 3,
         "num_leaves": LGB_NUM_LEAVES,
         "max_depth": LGB_MAX_DEPTH,
-        "min_child_samples": 32,
+        "min_child_samples": LGB_MIN_CHILD_SAMPLES,
         "subsample": 0.90,
         "feature_fraction": 0.90,
         "lambda_l2": LGB_LAMBDA_L2,
@@ -305,7 +316,7 @@ def _effective_cost(ask: float) -> float:
 def _build_candidates_from_csv(
     path: Path,
     outcomes: dict[str, dict[str, Any]],
-    horizon: int = 30,
+    horizon: int = 240,
     tolerance: float = TOLERANCE_SECONDS,
 ) -> list[dict[str, Any]]:
     slug_from_path = path.stem
@@ -1489,6 +1500,26 @@ async def evaluate_entry(
         })
         return
 
+    if not any(lo <= ask_price < hi for lo, hi in COST_FILTER_BANDS):
+        counts.skipped += 1
+        bands_str = "∪".join(f"[{lo:.2f},{hi:.2f})" for lo, hi in COST_FILTER_BANDS)
+        reason = f"cost_filter: ask={fmt_pct(ask_price)} not in {bands_str}"
+        runtime.decision = TradeDecision(
+            status="skip", pred_class=pred_class, contracts=args.contracts,
+            dry_run=not args.live, reason=reason,
+        )
+        append_log(
+            f"ORDER SKIP {runtime.market.slug} {side} {reason} | "
+            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
+            prefix_timestamp=False,
+        )
+        append_trade_row({
+            **base_row, "selected_side": side, "pred_class": pred_class,
+            "pred_p_yes": float(probs[0]), "pred_p_no": float(probs[1]), "pred_p_skip": float(probs[2]),
+            "order_status": "skip", "reason": reason, "skipped_count": counts.skipped,
+        })
+        return
+
     # Polymarket minimum marketable order is $1.00. Reject before attempting if
     # ask_price × contracts would be below that (avoids repeated ORDER RETRY + error).
     order_value = ask_price * args.contracts
@@ -1923,12 +1954,12 @@ async def run(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Polymarket SOL 5m Up/Down live trader (sol_t30 v2 model, price filter [0.10, 0.90]).")
+    parser = argparse.ArgumentParser(description="Polymarket SOL 5m Up/Down live trader (sol_t240 model, cost filter [0.10,0.20)∪[0.40,0.50)).")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
     parser.add_argument("--contracts", type=int, default=2, help="Contracts (shares) per trade. Default: 2.")
-    parser.add_argument("--entry-seconds", type=float, default=30.0, help="Entry time before close (seconds). Default: 30.")
+    parser.add_argument("--entry-seconds", type=float, default=240.0, help="Entry time before close (seconds). Default: 240.")
     parser.add_argument("--entry-tolerance", type=float, default=5.0, help="Entry window tolerance (seconds). Default: 5.")
-    parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH, help="Saved LightGBM model file. Default: sol_t30_best_seed6_depth3.lgb.")
+    parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH, help="Saved LightGBM model file. Default: sol_t240_model.lgb.")
     parser.add_argument("--retrain", action="store_true", help="Force retrain even if model file exists.")
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR, help="Historical CSV directory (only used when retraining).")
     parser.add_argument("--outcomes-csv", type=Path, default=DEFAULT_OUTCOMES_CSV, help="Official outcomes CSV (only used when retraining).")
