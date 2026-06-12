@@ -1340,7 +1340,7 @@ async def evaluate_entry(
         "close_time": close_time,
         "remaining_seconds": f"{remaining:.3f}",
         "entry_seconds": args.entry_seconds,
-        "contracts": args.contracts,
+        "contracts": "",
         "dry_run": int(not args.live),
         "successful_count": counts.successful,
         "unsuccessful_count": counts.unsuccessful,
@@ -1349,7 +1349,7 @@ async def evaluate_entry(
 
     if up_book is None or down_book is None:
         counts.skipped += 1
-        runtime.decision = TradeDecision(status="skip", contracts=args.contracts, dry_run=not args.live, reason="no book data")
+        runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason="no book data")
         append_log(
             f"STATUS T={remaining:.1f}s {runtime.market.slug} | decision=SKIP reason=no book data | "
             f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
@@ -1374,7 +1374,7 @@ async def evaluate_entry(
 
     if model is None:
         counts.skipped += 1
-        runtime.decision = TradeDecision(status="skip", contracts=args.contracts, dry_run=not args.live, reason="no model")
+        runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason="no model")
         append_log(
             f"STATUS T={remaining:.1f}s {runtime.market.slug} | decision=SKIP reason=no model | "
             f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
@@ -1394,7 +1394,7 @@ async def evaluate_entry(
         counts.skipped += 1
         reason = f"price_filter_mid: up_mid={fmt_pct(up_mid)} outside (0.10, 0.90)"
         runtime.decision = TradeDecision(
-            status="skip", contracts=args.contracts, dry_run=not args.live, reason=reason,
+            status="skip", contracts=0, dry_run=not args.live, reason=reason,
         )
         append_log(
             f"ORDER SKIP {runtime.market.slug} price_filter_mid: up_mid={fmt_pct(up_mid)} outside (0.10, 0.90) | "
@@ -1407,7 +1407,7 @@ async def evaluate_entry(
     features, feat_fail_reason = extract_features(runtime, up_book, down_book)
     if features is None:
         counts.skipped += 1
-        runtime.decision = TradeDecision(status="skip", contracts=args.contracts, dry_run=not args.live, reason="feature_extraction_failed")
+        runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason="feature_extraction_failed")
         append_log(
             f"FEATURES_FAILED T={remaining:.1f}s {runtime.market.slug} | {feat_fail_reason} | "
             f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
@@ -1433,7 +1433,7 @@ async def evaluate_entry(
         runtime.decision = TradeDecision(
             status="skip", pred_class=CLASS_SKIP, pred_p_yes=float(probs[0]),
             pred_p_no=float(probs[1]), pred_p_skip=float(probs[2]),
-            contracts=args.contracts, dry_run=not args.live, reason="model_skip",
+            contracts=0, dry_run=not args.live, reason="model_skip",
         )
         um_str = f"{up_mid:.4f}" if up_mid is not None else "--"
         append_log(
@@ -1466,7 +1466,7 @@ async def evaluate_entry(
         counts.skipped += 1
         reason = f"{side}_ask missing or out of range: {ask_price}"
         runtime.decision = TradeDecision(
-            status="skip", pred_class=pred_class, contracts=args.contracts,
+            status="skip", pred_class=pred_class, contracts=0,
             dry_run=not args.live, reason=reason,
         )
         append_log(
@@ -1485,7 +1485,7 @@ async def evaluate_entry(
         counts.skipped += 1
         reason = f"price_filter: ask={fmt_pct(ask_price)} outside [0.10, 0.90]"
         runtime.decision = TradeDecision(
-            status="skip", pred_class=pred_class, contracts=args.contracts,
+            status="skip", pred_class=pred_class, contracts=0,
             dry_run=not args.live, reason=reason,
         )
         append_log(
@@ -1505,7 +1505,7 @@ async def evaluate_entry(
         bands_str = "∪".join(f"[{lo:.2f},{hi:.2f})" for lo, hi in COST_FILTER_BANDS)
         reason = f"cost_filter: ask={fmt_pct(ask_price)} not in {bands_str}"
         runtime.decision = TradeDecision(
-            status="skip", pred_class=pred_class, contracts=args.contracts,
+            status="skip", pred_class=pred_class, contracts=0,
             dry_run=not args.live, reason=reason,
         )
         append_log(
@@ -1520,33 +1520,15 @@ async def evaluate_entry(
         })
         return
 
-    # Polymarket minimum marketable order is $1.00. Reject before attempting if
-    # ask_price × contracts would be below that (avoids repeated ORDER RETRY + error).
-    order_value = ask_price * args.contracts
-    if order_value < 1.0:
-        counts.skipped += 1
-        reason = f"min_order_size: {fmt_pct(ask_price)} × {args.contracts} = ${order_value:.2f} < $1.00"
-        runtime.decision = TradeDecision(
-            status="skip", pred_class=pred_class, contracts=args.contracts,
-            dry_run=not args.live, reason=reason,
-        )
-        append_log(
-            f"ORDER SKIP {runtime.market.slug} {side} {reason} | "
-            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
-            prefix_timestamp=False,
-        )
-        append_trade_row({
-            **base_row, "selected_side": side, "pred_class": pred_class,
-            "pred_p_yes": float(probs[0]), "pred_p_no": float(probs[1]), "pred_p_skip": float(probs[2]),
-            "order_status": "skip", "reason": reason, "skipped_count": counts.skipped,
-        })
-        return
+    # Fixed-value sizing: spend ~$contract_value per trade regardless of ask price.
+    n_contracts = max(1, round(args.contract_value / ask_price))
+    base_row["contracts"] = n_contracts
 
     um_str2 = f"{up_mid:.4f}" if up_mid is not None else "--"
     append_log(
         f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str2} "
         f"pred={side} pred_yes={probs[0]:.3f} pred_no={probs[1]:.3f} pred_skip={probs[2]:.3f} "
-        f"ask={fmt_pct(ask_price)} contracts={args.contracts}",
+        f"ask={fmt_pct(ask_price)} n={n_contracts} val=${args.contract_value:.2f}",
         prefix_timestamp=False,
     )
 
@@ -1565,15 +1547,16 @@ async def evaluate_entry(
             fresh_ask, _ = cur_book.best_ask()
             if fresh_ask is not None and 0.0 < fresh_ask < 1.0:
                 ask_price = fresh_ask
+                n_contracts = max(1, round(args.contract_value / ask_price))
         price_rounded = round(round(ask_price * 100) / 100, 2)
         if attempt > 1:
             append_log(
                 f"ORDER RETRY {attempt}/{MAX_ORDER_ATTEMPTS} {runtime.market.slug} {side} "
-                f"ask={fmt_pct(ask_price)}",
+                f"ask={fmt_pct(ask_price)} n={n_contracts}",
                 prefix_timestamp=False,
             )
-        resp = await asyncio.to_thread(place_order, token_id, price_rounded, args.contracts, dry_run=not args.live)
-        order_status, order_reason, fill_price, filled_size = _response_status(resp, args.contracts)
+        resp = await asyncio.to_thread(place_order, token_id, price_rounded, n_contracts, dry_run=not args.live)
+        order_status, order_reason, fill_price, filled_size = _response_status(resp, n_contracts)
         if order_status in ("filled", "dry_run", "partial"):
             break
         if attempt < MAX_ORDER_ATTEMPTS:
@@ -1582,7 +1565,7 @@ async def evaluate_entry(
     order_id = str(resp.get("id") or resp.get("order_id") or "")
     if order_status in ("dry_run",):
         order_id = str(resp.get("order_id", ""))
-    outcome_eligible = order_status in ("dry_run", "filled") and filled_size >= args.contracts
+    outcome_eligible = order_status in ("dry_run", "filled") and filled_size >= n_contracts
 
     runtime.decision = TradeDecision(
         status=order_status,
@@ -1594,7 +1577,7 @@ async def evaluate_entry(
         pred_p_skip=float(probs[2]),
         selected_ask=ask_price,
         selected_ask_qty=ask_qty,
-        contracts=args.contracts,
+        contracts=n_contracts,
         dry_run=not args.live,
         order_id=order_id,
         fill_price=fill_price,
@@ -1740,7 +1723,7 @@ def _rotate_session_files() -> None:
 async def run(args: argparse.Namespace) -> None:
     _rotate_session_files()
     append_log(
-        f"START polymarket_5m_trader live={args.live} contracts={args.contracts} "
+        f"START polymarket_5m_trader live={args.live} contract_value=${args.contract_value:.2f} "
         f"entry_seconds={args.entry_seconds} tolerance={args.entry_tolerance}s "
         f"outcome_delay={args.outcome_delay_seconds}s "
         f"stop_loss={fmt_money(args.stop_loss)} model={args.model_path}"
@@ -1919,7 +1902,7 @@ async def run(args: argparse.Namespace) -> None:
                     reason = f"missed entry window ({lower:.0f}<=T<={upper:.0f}s); T={remaining:.1f}s"
                     counts.skipped += 1
                     runtime.decision = TradeDecision(
-                        status="skip", contracts=args.contracts, dry_run=not args.live, reason=reason
+                        status="skip", contracts=0, dry_run=not args.live, reason=reason
                     )
                     append_log(
                         f"ENTRY MISS {runtime.market.slug} | {reason} | "
@@ -1956,7 +1939,7 @@ async def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Polymarket SOL 5m Up/Down live trader (sol_t240 model, cost filter [0.10,0.20)∪[0.40,0.50)).")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
-    parser.add_argument("--contracts", type=int, default=2, help="Contracts (shares) per trade. Default: 2.")
+    parser.add_argument("--contract-value", type=float, default=2.0, help="Dollar value to spend per trade. Contracts = round(value / ask_price). Default: 2.")
     parser.add_argument("--entry-seconds", type=float, default=240.0, help="Entry time before close (seconds). Default: 240.")
     parser.add_argument("--entry-tolerance", type=float, default=5.0, help="Entry window tolerance (seconds). Default: 5.")
     parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH, help="Saved LightGBM model file. Default: sol_t240_model.lgb.")
@@ -1969,7 +1952,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--outcome-delay-seconds", type=float, default=OUTCOME_DELAY_SECONDS,
                         help="Check outcome this many seconds after close. Default: -270 (4.5 min; observed resolution ~5.5 min).")
     args = parser.parse_args()
-    args.contracts = max(1, args.contracts)
+    args.contract_value = max(1.0, args.contract_value)
     args.entry_tolerance = max(0.0, args.entry_tolerance)
     args.poll_interval = max(0.1, args.poll_interval)
     return args
