@@ -701,17 +701,18 @@ def extract_features(
     runtime: ContractRuntime,
     up_book: TokenBook,
     down_book: TokenBook,
-) -> dict[str, float] | None:
-    """Return feature dict (15 values) or None if data is insufficient."""
+) -> tuple[dict[str, float] | None, str]:
+    """Return (feature dict, "") on success, or (None, reason) on failure."""
     up_bid, up_bid_qty = up_book.best_bid()
     up_ask, up_ask_qty = up_book.best_ask()
     down_bid, down_bid_qty = down_book.best_bid()
     down_ask, down_ask_qty = down_book.best_ask()
 
     if any(v is None for v in (up_bid, up_ask, down_bid, down_ask)):
-        return None
+        missing = [n for n, v in [("up_bid", up_bid), ("up_ask", up_ask), ("down_bid", down_bid), ("down_ask", down_ask)] if v is None]
+        return None, f"missing book prices: {missing}"
     if not (0.0 < up_ask < 1.0 and 0.0 < down_ask < 1.0):  # type: ignore[operator]
-        return None
+        return None, f"asks out of range: up_ask={up_ask} down_ask={down_ask}"
 
     up_mid = (up_bid + up_ask) / 2.0  # type: ignore[operator]
     up_bid_q = up_bid_qty or 0.0
@@ -751,11 +752,8 @@ def extract_features(
     yes_book_5c = up_book.book_imbalance(0.05)
     yes_book_10c = up_book.book_imbalance(0.10)
 
-    for v in (yes_book_1c, yes_book_5c, yes_book_10c):
-        if v is None:
-            return None
-
-    features = {
+    # Build partial features for diagnostics even when book imbalance is unavailable
+    partial: dict[str, Any] = {
         "p_yes_mid": up_mid,
         "yes_mid_z_60": yes_mid_stats["z"],
         "yes_mid_vol_60": yes_mid_stats["vol"],
@@ -770,11 +768,23 @@ def extract_features(
         "yes_book_imbalance_tau_1c": yes_book_1c,
         "yes_book_imbalance_tau_5c": yes_book_5c,
         "yes_book_imbalance_tau_10c": yes_book_10c,
-        "obi_depth_slope": yes_book_1c - yes_book_10c,  # type: ignore[operator]
+        "obi_depth_slope": (yes_book_1c - yes_book_10c) if yes_book_1c is not None and yes_book_10c is not None else None,
     }
-    if any(not math.isfinite(features[f]) for f in FEATURES):
-        return None
-    return features
+
+    null_imb = [k for k in ("yes_book_imbalance_tau_1c", "yes_book_imbalance_tau_5c", "yes_book_imbalance_tau_10c") if partial[k] is None]
+    if null_imb:
+        diag = "  ".join(f"{f}={partial[f]:.4f}" if isinstance(partial[f], float) else f"{f}=None" for f in FEATURES)
+        return None, f"book_imbalance=None for {null_imb} (zero depth on one side)  ||  {diag}"
+
+    features: dict[str, float] = {k: v for k, v in partial.items() if k in FEATURES}  # type: ignore[assignment]
+    features["obi_depth_slope"] = yes_book_1c - yes_book_10c  # type: ignore[operator]
+
+    bad = [f for f in FEATURES if not math.isfinite(features[f])]
+    if bad:
+        diag = "  ".join(f"{f}={features[f]:.4f}" for f in FEATURES)
+        return None, f"non-finite features: {bad}  ||  {diag}"
+
+    return features, ""
 
 
 # ---------------------------------------------------------------------------
@@ -1136,7 +1146,10 @@ def _response_status(resp: dict[str, Any], contracts: int) -> tuple[str, str, fl
     verified = resp.get("verified_order") or resp
     status = str(verified.get("status") or resp.get("status") or "unknown").lower()
     filled = float(verified.get("size_matched") or verified.get("amount_filled") or verified.get("filledAmount") or 0.0)
-    fill_price = finite_float(verified.get("average_price") or verified.get("avgPrice") or resp.get("price"))
+    fill_price = finite_float(
+        verified.get("average_price") or verified.get("avgPrice")
+        or verified.get("price") or resp.get("price")
+    )
     order_id = str(resp.get("id") or resp.get("order_id") or "")
     # FOK orders on Polymarket return status="matched" when fully filled; size_matched may be absent.
     if status == "matched" and filled == 0.0:
@@ -1380,16 +1393,16 @@ async def evaluate_entry(
         append_trade_row({**base_row, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
         return
 
-    features = extract_features(runtime, up_book, down_book)
+    features, feat_fail_reason = extract_features(runtime, up_book, down_book)
     if features is None:
         counts.skipped += 1
         runtime.decision = TradeDecision(status="skip", contracts=args.contracts, dry_run=not args.live, reason="feature_extraction_failed")
         append_log(
-            f"STATUS T={remaining:.1f}s {runtime.market.slug} | decision=SKIP reason=features_failed | "
+            f"FEATURES_FAILED T={remaining:.1f}s {runtime.market.slug} | {feat_fail_reason} | "
             f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
             prefix_timestamp=False,
         )
-        append_trade_row({**base_row, "order_status": "skip", "reason": "features_failed", "skipped_count": counts.skipped})
+        append_trade_row({**base_row, "order_status": "skip", "reason": f"features_failed: {feat_fail_reason}", "skipped_count": counts.skipped})
         return
 
     # Log and save all feature values before evaluation
