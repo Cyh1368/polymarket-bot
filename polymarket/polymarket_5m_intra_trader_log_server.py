@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Flask dashboard for polymarket_5m_intra_trader — serves at 0.0.0.0:8100."""
+"""Flask dashboard for polymarket_5m_intra_trader (BTC) — serves at 0.0.0.0:8099."""
 from __future__ import annotations
 
 import csv
@@ -13,9 +13,9 @@ from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
 APP_DIR = Path(__file__).resolve().parent
-LOG_PATH = Path(os.getenv("POLYMARKET_INTRA_TRADER_LOG", str(APP_DIR / "polymarket_5m_intra_trader.log")))
-TRADES_CSV = Path(os.getenv("POLYMARKET_INTRA_TRADER_TRADES_CSV", str(APP_DIR / "polymarket_5m_intra_trader_trades.csv")))
-PORTFOLIO_CSV = Path(os.getenv("POLYMARKET_INTRA_TRADER_PORTFOLIO_CSV", str(APP_DIR / "polymarket_5m_intra_trader_portfolio.csv")))
+LOG_PATH = Path(os.getenv("POLYMARKET_INTRA_TRADER_LOG", str(APP_DIR / "polymarket_5m_btc_intra_trader.log")))
+TRADES_CSV = Path(os.getenv("POLYMARKET_INTRA_TRADER_TRADES_CSV", str(APP_DIR / "polymarket_5m_btc_intra_trader_trades.csv")))
+PORTFOLIO_CSV = Path(os.getenv("POLYMARKET_INTRA_TRADER_PORTFOLIO_CSV", str(APP_DIR / "polymarket_5m_btc_intra_trader_portfolio.csv")))
 
 app = Flask(__name__)
 CORS(app)
@@ -161,7 +161,7 @@ def index() -> Response:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Polymarket XRP Intra-Period Trader</title>
+<title>Polymarket BTC Intra-Period Trader</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0f0f14; color: #d0d0e0; font-family: 'Fira Mono', 'Consolas', monospace; font-size: 12.5px; min-height: 100vh; }
@@ -207,7 +207,7 @@ def index() -> Response:
 <body>
 <header>
   <div class="dot" id="dot"></div>
-  <h1>POLYMARKET XRP INTRA-PERIOD TRADER (T1=180s → T2=30s)</h1>
+  <h1>POLYMARKET BTC INTRA-PERIOD TRADER (T1=180s → T2=20s)</h1>
   <span id="header-status" style="margin-left:auto;font-size:11px;color:#606090;">loading...</span>
 </header>
 
@@ -463,5 +463,5 @@ if __name__ == "__main__":
     p.add_argument("--port", type=int, default=8099)
     p.add_argument("--host", default="0.0.0.0")
     a = p.parse_args()
-    print(f"Starting XRP intra-period trader dashboard at http://{a.host}:{a.port}")
+    print(f"Starting BTC intra-period trader dashboard at http://{a.host}:{a.port}")
     app.run(host=a.host, port=a.port, debug=False, use_reloader=False)
