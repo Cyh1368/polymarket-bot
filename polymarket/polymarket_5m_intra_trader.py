@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Polymarket XRP 5m intra-period live trader — naive extreme-price strategy.
+"""Polymarket BTC 5m intra-period live trader — naive extreme-price strategy.
 
 Entry at T1=180s before close:
-  p_yes_mid < 0.20  →  buy Up   (YES) token at ask
-  p_yes_mid > 0.80  →  buy Down (NO)  token at ask
+  p_yes_mid < 0.25  →  buy Up   (YES) token at ask
+  p_yes_mid > 0.75  →  buy Down (NO)  token at ask
   else              →  skip
 
-Exit at T2=30s before close: sell held token at bid (FOK).
+Exit at T2=20s before close: sell held token at bid (FOK). If unfilled, keep
+retrying at best bid until T=0 (contract expiry).
 
-No model. Edge is structural: extreme prices at T1 drift back toward centre by T2.
-Baseline test (2026-06-12): EV/avail=+0.237, CI95=[+0.214,+0.261], 93% positive seeds.
+No model. Edge is structural mean-reversion in thin Polymarket 5m markets.
+Multi-coin sweep (2026-06-12): BTC CI95 lower = +14.66 (best of 7 coins).
 
 Usage:
   python polymarket_5m_intra_trader.py             # dry run
@@ -46,14 +47,14 @@ import websockets
 GAMMA_BASE_URL     = "https://gamma-api.polymarket.com"
 CLOB_BASE_URL      = "https://clob.polymarket.com"
 CLOB_MARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-COIN_SLUG_PREFIX   = "xrp"
+COIN_SLUG_PREFIX   = "btc"
 FIVE_MINUTE_SECONDS = 5 * 60
 POLYMARKET_CHAIN_ID = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
 
 T1_SECONDS    = 180.0   # entry time before close
-T2_SECONDS    = 30.0    # exit time before close
-EXTREME_LOW   = 0.20    # buy YES (up) if p_yes_mid < EXTREME_LOW
-EXTREME_HIGH  = 0.80    # buy NO (down) if p_yes_mid > EXTREME_HIGH
+T2_SECONDS    = 20.0    # exit time before close
+EXTREME_LOW   = 0.25    # buy YES (up) if p_yes_mid < EXTREME_LOW
+EXTREME_HIGH  = 0.75    # buy NO (down) if p_yes_mid > EXTREME_HIGH
 
 COST_ADD         = 0.01
 MAX_ORDER_ATTEMPTS = 10
@@ -64,15 +65,15 @@ REPO_ROOT = APP_DIR.parent
 
 LOG_PATH = Path(
     os.getenv("POLYMARKET_INTRA_TRADER_LOG",
-              str(APP_DIR / "polymarket_5m_intra_trader.log"))
+              str(APP_DIR / "polymarket_5m_btc_intra_trader.log"))
 )
 TRADES_CSV_PATH = Path(
     os.getenv("POLYMARKET_INTRA_TRADER_TRADES_CSV",
-              str(APP_DIR / "polymarket_5m_intra_trader_trades.csv"))
+              str(APP_DIR / "polymarket_5m_btc_intra_trader_trades.csv"))
 )
 PORTFOLIO_CSV_PATH = Path(
     os.getenv("POLYMARKET_INTRA_TRADER_PORTFOLIO_CSV",
-              str(APP_DIR / "polymarket_5m_intra_trader_portfolio.csv"))
+              str(APP_DIR / "polymarket_5m_btc_intra_trader_portfolio.csv"))
 )
 
 TRADE_FIELDS = [
@@ -864,7 +865,14 @@ async def evaluate_exit(
     filled_size: float = 0.0
     resp: dict[str, Any] = {}
 
-    for attempt in range(1, MAX_ORDER_ATTEMPTS + 1):
+    attempt = 0
+    while True:
+        attempt += 1
+        remaining_now = runtime.market.end_ts - time.time()
+        if remaining_now <= 0:
+            exit_status = "timeout"
+            exit_reason = f"contract expired after {attempt - 1} exit attempts"
+            break
         async with state.lock:
             cur_book = state.books.get(token_id)
         if cur_book is not None:
@@ -874,7 +882,7 @@ async def evaluate_exit(
         price_rounded = round(round(bid_price * 100) / 100, 2)
         if attempt > 1:
             append_log(
-                f"EXIT RETRY {attempt}/{MAX_ORDER_ATTEMPTS} {runtime.market.slug} "
+                f"EXIT RETRY {attempt} T={remaining_now:.1f}s {runtime.market.slug} "
                 f"bid={fmt_pct(bid_price)} n={n_contracts}",
                 prefix_timestamp=False,
             )
@@ -885,8 +893,7 @@ async def evaluate_exit(
         exit_status, exit_reason, fill_price, filled_size = _response_status(resp, n_contracts)
         if exit_status in ("filled", "dry_run", "partial"):
             break
-        if attempt < MAX_ORDER_ATTEMPTS:
-            await asyncio.sleep(ORDER_RETRY_DELAY)
+        await asyncio.sleep(ORDER_RETRY_DELAY)
 
     exit_order_id      = str(resp.get("id") or resp.get("order_id") or "")
     exit_price_for_pnl = fill_price or bid_price
@@ -1107,15 +1114,15 @@ async def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Polymarket XRP 5m intra-period trader. "
+            "Polymarket BTC 5m intra-period trader. "
             f"Buys less likely side when p_yes_mid < {EXTREME_LOW} or > {EXTREME_HIGH} "
-            f"at T1={T1_SECONDS:.0f}s, exits at T2={T2_SECONDS:.0f}s."
+            f"at T1={T1_SECONDS:.0f}s, exits at T2={T2_SECONDS:.0f}s (retries until T=0)."
         )
     )
     parser.add_argument("--live", action="store_true",
                         help="Submit real orders. Omit for dry-run.")
-    parser.add_argument("--contract-value", type=float, default=2.0,
-                        help="Dollar value per trade. Default: 2.")
+    parser.add_argument("--contract-value", type=float, default=1.05,
+                        help="Dollar value per trade. Default: 1.05.")
     parser.add_argument("--entry-seconds", type=float, default=T1_SECONDS,
                         help=f"Entry time before close (s). Default: {T1_SECONDS}.")
     parser.add_argument("--exit-seconds", type=float, default=T2_SECONDS,
@@ -1129,7 +1136,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stop-loss", type=float, default=5.0,
                         help="Stop if balance drops this many USD. Default: 5.")
     args = parser.parse_args()
-    args.contract_value  = max(1.0, args.contract_value)
+    args.contract_value  = max(0.01, args.contract_value)
     args.entry_tolerance = max(0.0, args.entry_tolerance)
     args.poll_interval   = max(0.1, args.poll_interval)
     return args
