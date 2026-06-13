@@ -1133,8 +1133,8 @@ def parse_args() -> argparse.Namespace:
                         help="Poll interval (s). Default: 0.5.")
     parser.add_argument("--log-interval", type=float, default=30.0,
                         help="Seconds between status log lines. Default: 30.")
-    parser.add_argument("--stop-loss", type=float, default=5.0,
-                        help="Stop if balance drops this many USD. Default: 5.")
+    parser.add_argument("--stop-loss", type=float, default=20.0,
+                        help="Stop if balance drops this many USD. Default: 20.")
     args = parser.parse_args()
     args.contract_value  = max(0.01, args.contract_value)
     args.entry_tolerance = max(0.0, args.entry_tolerance)
