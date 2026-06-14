@@ -1,23 +1,11 @@
 #!/usr/bin/env python3
-"""Polymarket SOL 5m Up/Down live trader — sol_t240 model (λ=0.5, mc=8, 200rnd).
+"""Polymarket BTC 5m Up/Down live trader — simple DOWN-side threshold rule.
 
-Features (15):
-  p_yes_mid, yes_mid_z_60, yes_mid_vol_60, yes_mid_z_20, yes_mid_vol_20,
-  mid_change_from_open, book_qty_log,
-  OBI, OBI_vol_60, OBI_z_60, OBI_vol_20,
-  yes_book_imbalance_tau_{1c,5c,10c},
-  obi_depth_slope
+Entry rule (2026-06-14 research):
+  At T=180s before close: if up_mid < 0.15, buy DOWN token and hold to settlement.
+  Backtest (Jun 8–14, n=154): 97.4% win rate, EV/available=+0.00573.
 
-Decision at T=240s before close: LightGBM 3-class argmax.
-  CLASS_YES (0) → buy Up token
-  CLASS_NO  (1) → buy Down token
-  CLASS_SKIP(2) → skip
-
-Post-hoc cost filter (applied after model decision):
-  Only execute if entry_ask ∈ [0.10, 0.20) ∪ [0.40, 0.50).
-  Source: 200-seed OOS bin search (2026-06-12); only filter Bonferroni-significant
-  across 37 candidates (α/37=0.0014, CI95=[+0.00167,+0.00662], mean EV/all=+0.00421,
-  57% positive seeds, avg 14.5 trades/seed).
+No exit: hold to official settlement outcome.
 
 Usage:
   python polymarket_5m_trader.py                   # dry run
@@ -59,54 +47,23 @@ GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 CLOB_BASE_URL = "https://clob.polymarket.com"
 CLOB_MARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 RTDS_WS_URL = "wss://ws-live-data.polymarket.com"
-SPOT_SYMBOL = "sol/usd"
+SPOT_SYMBOL = "btc/usd"
 SPOT_TOPIC = "crypto_prices_chainlink"
 SPOT_TOPIC_ALIASES: dict[str, set[str]] = {
     "crypto_prices": {"crypto_prices_chainlink"},
     "crypto_prices_chainlink": {"crypto_prices"},
 }
-COIN_SLUG_PREFIX = "sol"
+COIN_SLUG_PREFIX = "btc"
 FIVE_MINUTE_SECONDS = 5 * 60
 POLYMARKET_CHAIN_ID = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
 
-FEATURES = [
-    "p_yes_mid",
-    "yes_mid_z_60",
-    "yes_mid_vol_60",
-    "yes_mid_z_20",
-    "yes_mid_vol_20",
-    "mid_change_from_open",
-    "book_qty_log",
-    "OBI",
-    "OBI_vol_60",
-    "OBI_z_60",
-    "OBI_vol_20",
-    "yes_book_imbalance_tau_1c",
-    "yes_book_imbalance_tau_5c",
-    "yes_book_imbalance_tau_10c",
-    "obi_depth_slope",
-]
-CLASS_YES = 0
-CLASS_NO = 1
-CLASS_SKIP = 2
-
-# LightGBM hyperparams (sol_t240: λ=0.5, mc=8, 200 rounds, depth=3)
-LGB_NUM_LEAVES = 7
-LGB_MAX_DEPTH = 3
-LGB_LAMBDA_L2 = 0.5
-LGB_MIN_CHILD_SAMPLES = 8
-LGB_NUM_BOOST_ROUNDS = 200
-MIN_TRAIN_ROWS = 30
-INDICATOR_WINDOW_SECONDS = 60.0
+# Entry rule: buy DOWN when up_mid < this threshold at T=ENTRY_SECONDS
+ENTRY_THRESHOLD = 0.15
 TOLERANCE_SECONDS = 5.0       # entry window: [T-5, T]
 OUTCOME_POLL_INTERVAL = 15.0
 OUTCOME_WAIT_LOG_INTERVAL = 30.0
 OUTCOME_DELAY_SECONDS = -270.0  # check outcome 4.5 min after close; observed resolution ~5.5 min
-# Post-hoc cost filter: only execute if entry ask ∈ [0.10, 0.20) ∪ [0.40, 0.50).
-# Bonferroni-significant across 37 tested bins (200-seed OOS, 2026-06-12 bin search).
-COST_FILTER_BANDS: tuple[tuple[float, float], ...] = ((0.10, 0.20), (0.40, 0.50))
 
-COST_ADD = 0.01               # spread penalty per leg
 MAX_ORDER_ATTEMPTS = 10       # FOK retry limit; each attempt uses fresh best-ask from book
 ORDER_RETRY_DELAY = 0.25      # seconds between retry attempts
 
@@ -114,9 +71,8 @@ ORDER_RETRY_DELAY = 0.25      # seconds between retry attempts
 APP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = APP_DIR.parent
 
-DEFAULT_DATA_DIR = APP_DIR / "data_SOL_5m"
-DEFAULT_OUTCOMES_CSV = APP_DIR / "polymarket_sol_5m_official_outcomes.csv"
-DEFAULT_MODEL_PATH = REPO_ROOT / "2026-06-12-research" / "sol_t240_model.lgb"
+DEFAULT_DATA_DIR = APP_DIR / "data_BTC_5m"
+DEFAULT_OUTCOMES_CSV = APP_DIR / "polymarket_btc_5m_official_outcomes.csv"
 LOG_PATH = Path(
     os.getenv("POLYMARKET_TRADER_LOG", str(APP_DIR / "polymarket_5m_trader.log"))
 )
@@ -126,9 +82,6 @@ TRADES_CSV_PATH = Path(
 PORTFOLIO_CSV_PATH = Path(
     os.getenv("POLYMARKET_TRADER_PORTFOLIO_CSV", str(APP_DIR / "polymarket_5m_trader_portfolio.csv"))
 )
-FEATURES_CSV_PATH = Path(
-    os.getenv("POLYMARKET_TRADER_FEATURES_CSV", str(APP_DIR / "polymarket_5m_trader_features.csv"))
-)
 
 TRADE_FIELDS = [
     "timestamp_utc", "event", "contract_id", "close_time", "remaining_seconds",
@@ -136,7 +89,6 @@ TRADE_FIELDS = [
     "selected_side", "selected_token_id", "selected_ask", "selected_ask_qty",
     "contracts", "dry_run", "order_status", "order_id", "fill_price", "filled_size",
     "actual_side", "actual_label", "correct", "official_outcome_source",
-    "pred_class", "pred_p_yes", "pred_p_no", "pred_p_skip",
     "successful_count", "unsuccessful_count", "skipped_count", "reason",
 ]
 PORTFOLIO_FIELDS = [
@@ -236,301 +188,6 @@ def load_dotenv(*paths: Path) -> None:
 load_dotenv(REPO_ROOT / "kalshi" / ".env", APP_DIR / ".env", REPO_ROOT / ".env")
 
 
-# ---------------------------------------------------------------------------
-# LightGBM model — training
-# ---------------------------------------------------------------------------
-
-def _series_stats(values: list[float], last_value: float | None = None) -> dict[str, float]:
-    clean = [v for v in values if math.isfinite(v)]
-    if not clean:
-        return {"mean": float("nan"), "z": float("nan"), "vol": float("nan"), "change": float("nan")}
-    last = float(clean[-1] if last_value is None else last_value)
-    mean = sum(clean) / len(clean)
-    if len(clean) > 1:
-        vol = math.sqrt(sum((x - mean) ** 2 for x in clean) / len(clean))
-    else:
-        vol = 0.0
-    z = (last - mean) / vol if vol > 1e-12 else 0.0
-    change = last - clean[0]
-    return {"mean": mean, "z": z, "vol": vol, "change": change}
-
-
-def _softmax(x: np.ndarray) -> np.ndarray:
-    e = np.exp(x - x.max(axis=1, keepdims=True))
-    return e / e.sum(axis=1, keepdims=True)
-
-
-def _make_profit_objective(c_yes: np.ndarray, c_no: np.ndarray):
-    def fobj(y_pred: np.ndarray, dataset) -> tuple[np.ndarray, np.ndarray]:
-        n = len(dataset.get_label())
-        raw = y_pred.reshape(n, 3)
-        q = _softmax(raw)
-        y = dataset.get_label().astype(float)
-        q_yes, q_no, q_skip = q[:, 0], q[:, 1], q[:, 2]
-        profit_yes = y - c_yes
-        profit_no = (1 - y) - c_no
-        p_yes_term = profit_yes * q_yes * (1 - q_yes) - profit_no * q_no * q_yes
-        p_no_term = profit_no * q_no * (1 - q_no) - profit_yes * q_yes * q_no
-        p_skip_term = -profit_yes * q_yes * q_skip - profit_no * q_no * q_skip
-        grad = -np.column_stack([p_yes_term, p_no_term, p_skip_term]).ravel() / n
-        raw2 = raw - raw.mean(axis=1, keepdims=True)
-        q2 = _softmax(raw2)
-        hess = np.column_stack([q2[:, k] * (1 - q2[:, k]) for k in range(3)]).ravel() / n + 1e-6
-        return grad, hess
-    return fobj
-
-
-def _lgb_params(seed: int = 42) -> dict[str, Any]:
-    return {
-        "objective": "none",
-        "num_class": 3,
-        "num_leaves": LGB_NUM_LEAVES,
-        "max_depth": LGB_MAX_DEPTH,
-        "min_child_samples": LGB_MIN_CHILD_SAMPLES,
-        "subsample": 0.90,
-        "feature_fraction": 0.90,
-        "lambda_l2": LGB_LAMBDA_L2,
-        "learning_rate": 0.06,
-        "num_threads": 4,
-        "seed": seed,
-        "verbose": -1,
-    }
-
-
-def _load_outcomes(outcomes_csv: Path) -> dict[str, dict[str, Any]]:
-    outcomes: dict[str, dict[str, Any]] = {}
-    if not outcomes_csv.exists():
-        return outcomes
-    with outcomes_csv.open(newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            slug = row.get("market_slug", "").strip()
-            if slug:
-                outcomes[slug] = row
-    return outcomes
-
-
-def _effective_cost(ask: float) -> float:
-    return ask + COST_ADD
-
-
-def _build_candidates_from_csv(
-    path: Path,
-    outcomes: dict[str, dict[str, Any]],
-    horizon: int = 240,
-    tolerance: float = TOLERANCE_SECONDS,
-) -> list[dict[str, Any]]:
-    slug_from_path = path.stem
-    for prefix in ("polymarket_data_SOL_5m_",):
-        slug_from_path = slug_from_path.replace(prefix, "")
-    try:
-        df = pd.read_csv(path)
-    except Exception:
-        return []
-    if df.empty:
-        return []
-    slug_col = df["market_slug"].dropna() if "market_slug" in df.columns else pd.Series(dtype=object)
-    slug = str(slug_col.iloc[0]).strip() if not slug_col.empty else slug_from_path
-    outcome = outcomes.get(slug)
-    if not outcome:
-        return []
-    winning = str(outcome.get("winning_outcome", "")).strip()
-    if winning not in ("Up", "Down"):
-        return []
-    actual_label = 1 if winning == "Up" else 0
-    close_time_str = str(outcome.get("event_end_utc") or "").strip()
-    try:
-        close_ts = pd.to_datetime(close_time_str, utc=True)
-    except Exception:
-        return []
-
-    df["_ts"] = pd.to_datetime(df["timestamp_utc"], utc=True, errors="coerce")
-    if "seconds_to_close" in df.columns:
-        df["_rem"] = pd.to_numeric(df["seconds_to_close"], errors="coerce")
-    else:
-        df["_rem"] = (close_ts - df["_ts"]).dt.total_seconds()
-    df = df[df["_rem"].notna() & (df["_rem"] >= 0)].copy()
-    if df.empty:
-        return []
-
-    candidates = df[(df["_rem"] - horizon).abs() <= tolerance]
-    if candidates.empty:
-        return []
-    idx = (candidates["_rem"] - horizon).abs().idxmin()
-    quote = candidates.loc[idx]
-
-    up_bid = finite_float(quote.get("up_best_bid"))
-    up_ask = finite_float(quote.get("up_best_ask"))
-    down_bid = finite_float(quote.get("down_best_bid"))
-    down_ask = finite_float(quote.get("down_best_ask"))
-    if any(v is None for v in (up_bid, up_ask, down_bid, down_ask)):
-        return []
-    if not (0.0 < up_ask < 1.0 and 0.0 < down_ask < 1.0):
-        return []
-    up_mid = (up_bid + up_ask) / 2.0
-
-    row_ts = quote["_ts"]
-    history = df[df["_ts"].notna() & (df["_ts"] <= row_ts) & (
-        (row_ts - df["_ts"]).dt.total_seconds() <= INDICATOR_WINDOW_SECONDS
-    )].copy()
-    if history.empty:
-        history = quote.to_frame().T
-    history_20 = df[df["_ts"].notna() & (df["_ts"] <= row_ts) & (
-        (row_ts - df["_ts"]).dt.total_seconds() <= 20.0
-    )].copy()
-    if history_20.empty:
-        history_20 = quote.to_frame().T
-
-    # open mid from first valid row
-    up_mid_open: float | None = None
-    for _, r in df.sort_values("_ts").iterrows():
-        ub = finite_float(r.get("up_best_bid"))
-        ua = finite_float(r.get("up_best_ask"))
-        if ub is not None and ua is not None and 0.0 < ua < 1.0:
-            up_mid_open = (ub + ua) / 2.0
-            break
-
-    up_mid_hist = pd.to_numeric(history.get("up_mid", pd.Series(dtype=float)), errors="coerce").dropna().tolist()
-    up_bid_qty_hist = pd.to_numeric(history.get("up_best_bid_size", pd.Series(dtype=float)), errors="coerce").fillna(0.0).tolist()
-    down_bid_qty_hist = pd.to_numeric(history.get("down_best_bid_size", pd.Series(dtype=float)), errors="coerce").fillna(0.0).tolist()
-    obi_hist = [
-        (u - d) / (u + d + 1e-9)
-        for u, d in zip(up_bid_qty_hist, down_bid_qty_hist)
-    ]
-    up_mid_hist_20 = pd.to_numeric(history_20.get("up_mid", pd.Series(dtype=float)), errors="coerce").dropna().tolist()
-    up_bid_qty_hist_20 = pd.to_numeric(history_20.get("up_best_bid_size", pd.Series(dtype=float)), errors="coerce").fillna(0.0).tolist()
-    down_bid_qty_hist_20 = pd.to_numeric(history_20.get("down_best_bid_size", pd.Series(dtype=float)), errors="coerce").fillna(0.0).tolist()
-    obi_hist_20 = [
-        (u - d) / (u + d + 1e-9)
-        for u, d in zip(up_bid_qty_hist_20, down_bid_qty_hist_20)
-    ]
-
-    up_bid_qty = finite_float(quote.get("up_best_bid_size")) or 0.0
-    down_bid_qty = finite_float(quote.get("down_best_bid_size")) or 0.0
-    obi_current = (up_bid_qty - down_bid_qty) / (up_bid_qty + down_bid_qty + 1e-9)
-
-    yes_mid_stats = _series_stats(up_mid_hist, up_mid)
-    obi_stats = _series_stats(obi_hist, obi_current)
-    yes_mid_stats_20 = _series_stats(up_mid_hist_20, up_mid)
-    obi_stats_20 = _series_stats(obi_hist_20, obi_current)
-
-    yes_book_1c = finite_float(quote.get("up_book_imbalance_tau_1c"))
-    yes_book_5c = finite_float(quote.get("up_book_imbalance_tau_5c"))
-    yes_book_10c = finite_float(quote.get("up_book_imbalance_tau_10c"))
-
-    for v in (yes_book_1c, yes_book_5c, yes_book_10c):
-        if v is None:
-            return []
-
-    row_data = {
-        "actual_label": actual_label,
-        "yes_cost": up_ask,
-        "no_cost": down_ask,
-        "yes_effective_cost": _effective_cost(up_ask),
-        "no_effective_cost": _effective_cost(down_ask),
-        "p_yes_mid": up_mid,
-        "yes_mid_z_60": yes_mid_stats["z"],
-        "yes_mid_vol_60": yes_mid_stats["vol"],
-        "yes_mid_z_20": yes_mid_stats_20["z"],
-        "yes_mid_vol_20": yes_mid_stats_20["vol"],
-        "mid_change_from_open": (up_mid - up_mid_open) if up_mid_open is not None else float("nan"),
-        "book_qty_log": math.log1p(up_bid_qty + down_bid_qty),
-        "OBI": obi_current,
-        "OBI_vol_60": obi_stats["vol"],
-        "OBI_z_60": obi_stats["z"],
-        "OBI_vol_20": obi_stats_20["vol"],
-        "yes_book_imbalance_tau_1c": yes_book_1c,
-        "yes_book_imbalance_tau_5c": yes_book_5c,
-        "yes_book_imbalance_tau_10c": yes_book_10c,
-        "obi_depth_slope": yes_book_1c - yes_book_10c,  # type: ignore[operator]
-    }
-    if any(not math.isfinite(float(row_data.get(f, float("nan")))) for f in FEATURES):
-        return []
-    return [row_data]
-
-
-def train_model(data_dir: Path, outcomes_csv: Path, save_path: Path | None = None) -> Any | None:
-    """Train LightGBM on all historical BTC 5m data. Returns booster or None.
-
-    If save_path is given, saves the model as a LightGBM text file after training.
-    """
-    import lightgbm as lgb
-
-    outcomes = _load_outcomes(outcomes_csv)
-    if not outcomes:
-        append_log(f"MODEL: no outcomes in {outcomes_csv}")
-        return None
-
-    all_rows: list[dict[str, Any]] = []
-    csv_files = sorted(data_dir.glob("*.csv"))
-    for path in csv_files:
-        rows = _build_candidates_from_csv(path, outcomes)
-        all_rows.extend(rows)
-
-    if len(all_rows) < MIN_TRAIN_ROWS:
-        append_log(f"MODEL: only {len(all_rows)} training rows (need {MIN_TRAIN_ROWS}); skipping model")
-        return None
-
-    df = pd.DataFrame(all_rows)
-    y = df["actual_label"].to_numpy().astype(float)
-    if len(np.unique(y.astype(int))) < 2:
-        append_log("MODEL: training data has only one class; skipping model")
-        return None
-
-    c_yes = df["yes_effective_cost"].to_numpy().astype(float)
-    c_no = df["no_effective_cost"].to_numpy().astype(float)
-    X = df[FEATURES].to_numpy().astype(float)
-
-    dtrain = lgb.Dataset(X, label=y, free_raw_data=False)
-    dtrain.construct()
-    fobj = _make_profit_objective(c_yes, c_no)
-    model = lgb.Booster(params=_lgb_params(), train_set=dtrain)
-    try:
-        for _ in range(LGB_NUM_BOOST_ROUNDS):
-            model.update(fobj=fobj)
-    except Exception as exc:
-        append_log(f"MODEL: training error {exc}")
-        return None
-
-    label_counts = {int(v): int((y == v).sum()) for v in np.unique(y)}
-    append_log(
-        f"MODEL trained: {len(all_rows)} rows from {len(csv_files)} contracts "
-        f"label_dist={label_counts}"
-    )
-    if save_path is not None:
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        model.save_model(str(save_path))
-        append_log(f"MODEL saved → {save_path}")
-    return model
-
-
-def load_or_train_model(
-    model_path: Path,
-    data_dir: Path,
-    outcomes_csv: Path,
-    retrain: bool = False,
-) -> Any | None:
-    """Load model from file if it exists, otherwise train and save it."""
-    import lightgbm as lgb
-
-    if not retrain and model_path.exists():
-        try:
-            model = lgb.Booster(model_file=str(model_path))
-            append_log(f"MODEL loaded from {model_path}")
-            return model
-        except Exception as exc:
-            append_log(f"MODEL load error ({exc}); retraining...")
-
-    append_log(f"MODEL training from {data_dir} + {outcomes_csv}...")
-    return train_model(data_dir, outcomes_csv, save_path=model_path)
-
-
-def predict(model: Any, features: dict[str, float]) -> tuple[int, np.ndarray]:
-    """Return (pred_class, probs[3]). pred_class: CLASS_YES/NO/SKIP."""
-    X = np.array([[features[f] for f in FEATURES]], dtype=float)
-    raw = np.asarray(model.predict(X)).reshape(1, 3)
-    probs = _softmax(raw)[0]
-    pred_class = int(np.argmax(probs))
-    return pred_class, probs
 
 
 # ---------------------------------------------------------------------------
@@ -640,11 +297,6 @@ class CollectorState:
 class QuoteSnapshot:
     timestamp: float
     up_mid: float
-    up_bid_qty: float
-    down_bid_qty: float
-    up_book_imb_1c: float
-    up_book_imb_5c: float
-    up_book_imb_10c: float
 
 
 @dataclass
@@ -659,10 +311,6 @@ class TradeDecision:
     status: str = ""
     side: str = ""
     token_id: str = ""
-    pred_class: int = CLASS_SKIP
-    pred_p_yes: float = 0.0
-    pred_p_no: float = 0.0
-    pred_p_skip: float = 1.0
     selected_ask: float | None = None
     selected_ask_qty: float | None = None
     contracts: int = 0
@@ -702,100 +350,6 @@ def _parse_levels(value: Any) -> dict[float, float]:
         if price is not None and size is not None and size > 0:
             levels[price] = size
     return levels
-
-
-# ---------------------------------------------------------------------------
-# Feature extraction from live rolling history
-# ---------------------------------------------------------------------------
-
-def extract_features(
-    runtime: ContractRuntime,
-    up_book: TokenBook,
-    down_book: TokenBook,
-) -> tuple[dict[str, float] | None, str]:
-    """Return (feature dict, "") on success, or (None, reason) on failure."""
-    up_bid, up_bid_qty = up_book.best_bid()
-    up_ask, up_ask_qty = up_book.best_ask()
-    down_bid, down_bid_qty = down_book.best_bid()
-    down_ask, down_ask_qty = down_book.best_ask()
-
-    if any(v is None for v in (up_bid, up_ask, down_bid, down_ask)):
-        missing = [n for n, v in [("up_bid", up_bid), ("up_ask", up_ask), ("down_bid", down_bid), ("down_ask", down_ask)] if v is None]
-        return None, f"missing book prices: {missing}"
-    if not (0.0 < up_ask < 1.0 and 0.0 < down_ask < 1.0):  # type: ignore[operator]
-        return None, f"asks out of range: up_ask={up_ask} down_ask={down_ask}"
-
-    up_mid = (up_bid + up_ask) / 2.0  # type: ignore[operator]
-    up_bid_q = up_bid_qty or 0.0
-    down_bid_q = down_bid_qty or 0.0
-    obi_current = (up_bid_q - down_bid_q) / (up_bid_q + down_bid_q + 1e-9)
-
-    # rolling 60s and 20s history
-    now = time.time()
-    cutoff_60 = now - INDICATOR_WINDOW_SECONDS
-    cutoff_20 = now - 20.0
-    window_60 = [snap for snap in runtime.history if snap.timestamp >= cutoff_60]
-    window_20 = [snap for snap in runtime.history if snap.timestamp >= cutoff_20]
-
-    up_mid_hist = [snap.up_mid for snap in window_60]
-    obi_hist = [
-        (snap.up_bid_qty - snap.down_bid_qty) / (snap.up_bid_qty + snap.down_bid_qty + 1e-9)
-        for snap in window_60
-    ]
-    up_mid_hist_20 = [snap.up_mid for snap in window_20]
-    obi_hist_20 = [
-        (snap.up_bid_qty - snap.down_bid_qty) / (snap.up_bid_qty + snap.down_bid_qty + 1e-9)
-        for snap in window_20
-    ]
-
-    yes_mid_stats = _series_stats(up_mid_hist, up_mid)
-    obi_stats = _series_stats(obi_hist, obi_current)
-    yes_mid_stats_20 = _series_stats(up_mid_hist_20, up_mid)
-    obi_stats_20 = _series_stats(obi_hist_20, obi_current)
-
-    mid_change_from_open = (
-        up_mid - runtime.up_mid_open
-        if runtime.up_mid_open is not None
-        else 0.0
-    )
-
-    yes_book_1c = up_book.book_imbalance(0.01)
-    yes_book_5c = up_book.book_imbalance(0.05)
-    yes_book_10c = up_book.book_imbalance(0.10)
-
-    # Build partial features for diagnostics even when book imbalance is unavailable
-    partial: dict[str, Any] = {
-        "p_yes_mid": up_mid,
-        "yes_mid_z_60": yes_mid_stats["z"],
-        "yes_mid_vol_60": yes_mid_stats["vol"],
-        "yes_mid_z_20": yes_mid_stats_20["z"],
-        "yes_mid_vol_20": yes_mid_stats_20["vol"],
-        "mid_change_from_open": mid_change_from_open,
-        "book_qty_log": math.log1p(up_bid_q + down_bid_q),
-        "OBI": obi_current,
-        "OBI_vol_60": obi_stats["vol"],
-        "OBI_z_60": obi_stats["z"],
-        "OBI_vol_20": obi_stats_20["vol"],
-        "yes_book_imbalance_tau_1c": yes_book_1c,
-        "yes_book_imbalance_tau_5c": yes_book_5c,
-        "yes_book_imbalance_tau_10c": yes_book_10c,
-        "obi_depth_slope": (yes_book_1c - yes_book_10c) if yes_book_1c is not None and yes_book_10c is not None else None,
-    }
-
-    null_imb = [k for k in ("yes_book_imbalance_tau_1c", "yes_book_imbalance_tau_5c", "yes_book_imbalance_tau_10c") if partial[k] is None]
-    if null_imb:
-        diag = "  ".join(f"{f}={partial[f]:.4f}" if isinstance(partial[f], float) else f"{f}=None" for f in FEATURES)
-        return None, f"book_imbalance=None for {null_imb} (zero depth on one side)  ||  {diag}"
-
-    features: dict[str, float] = {k: v for k, v in partial.items() if k in FEATURES}  # type: ignore[assignment]
-    features["obi_depth_slope"] = yes_book_1c - yes_book_10c  # type: ignore[operator]
-
-    bad = [f for f in FEATURES if not math.isfinite(features[f])]
-    if bad:
-        diag = "  ".join(f"{f}={features[f]:.4f}" for f in FEATURES)
-        return None, f"non-finite features: {bad}  ||  {diag}"
-
-    return features, ""
 
 
 # ---------------------------------------------------------------------------
@@ -1266,19 +820,6 @@ def append_portfolio_row(row: dict[str, Any]) -> None:
         writer.writerow({k: row.get(k, "") for k in PORTFOLIO_FIELDS})
 
 
-FEATURES_FIELDS = ["timestamp_utc", "contract_id", "remaining_seconds"] + FEATURES
-
-
-def append_features_row(row: dict[str, Any]) -> None:
-    FEATURES_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    exists = FEATURES_CSV_PATH.exists()
-    with FEATURES_CSV_PATH.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=FEATURES_FIELDS)
-        if not exists:
-            writer.writeheader()
-        writer.writerow({k: row.get(k, "") for k in FEATURES_FIELDS})
-
-
 # ---------------------------------------------------------------------------
 # Trading actions
 # ---------------------------------------------------------------------------
@@ -1322,7 +863,6 @@ async def log_balance(
 async def evaluate_entry(
     runtime: ContractRuntime,
     state: CollectorState,
-    model: Any,
     counts: Counts,
     args: argparse.Namespace,
     remaining: float,
@@ -1372,163 +912,46 @@ async def evaluate_entry(
         "down_bid_qty": down_bid_q,
     })
 
-    if model is None:
-        counts.skipped += 1
-        runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason="no model")
-        append_log(
-            f"STATUS T={remaining:.1f}s {runtime.market.slug} | decision=SKIP reason=no model | "
-            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
-            prefix_timestamp=False,
-        )
-        append_trade_row({**base_row, "order_status": "skip", "reason": "no model", "skipped_count": counts.skipped})
-        return
+    um_str = f"{up_mid:.4f}" if up_mid is not None else "--"
 
-    # Pre-filter on mid price before attempting feature extraction.
-    # Catches two problems at once:
-    #   (1) features_failed — at extreme prices (e.g. up_mid=0.995) the orderbook is
-    #       lopsided and book_imbalance(tau) returns None (zero depth on one side), which
-    #       propagates to features=None. These rows were excluded from training too.
-    #   (2) The traded-side ask filter misses edge cases like pred=NO with up_mid=0.905
-    #       because down_ask=0.10 is exactly on the [0.10,0.90] boundary and passes through.
-    if up_mid is not None and not (0.10 < up_mid < 0.90):
+    # Simple threshold rule: buy DOWN when up_mid < ENTRY_THRESHOLD
+    if up_mid is None or up_mid >= ENTRY_THRESHOLD:
         counts.skipped += 1
-        reason = f"price_filter_mid: up_mid={fmt_pct(up_mid)} outside (0.10, 0.90)"
-        runtime.decision = TradeDecision(
-            status="skip", contracts=0, dry_run=not args.live, reason=reason,
-        )
+        reason = f"threshold: up_mid={um_str} >= {ENTRY_THRESHOLD}"
+        runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
         append_log(
-            f"ORDER SKIP {runtime.market.slug} price_filter_mid: up_mid={fmt_pct(up_mid)} outside (0.10, 0.90) | "
+            f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} decision=SKIP {reason} | "
             f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
             prefix_timestamp=False,
         )
         append_trade_row({**base_row, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
         return
 
-    features, feat_fail_reason = extract_features(runtime, up_book, down_book)
-    if features is None:
-        counts.skipped += 1
-        runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason="feature_extraction_failed")
-        append_log(
-            f"FEATURES_FAILED T={remaining:.1f}s {runtime.market.slug} | {feat_fail_reason} | "
-            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
-            prefix_timestamp=False,
-        )
-        append_trade_row({**base_row, "order_status": "skip", "reason": f"features_failed: {feat_fail_reason}", "skipped_count": counts.skipped})
-        return
-
-    # Log and save all feature values before evaluation
-    feat_parts = "  ".join(f"{f}={features[f]:.4f}" for f in FEATURES)
-    append_log(f"FEATURES T={remaining:.1f}s {runtime.market.slug} | {feat_parts}", prefix_timestamp=False)
-    append_features_row({
-        "timestamp_utc": iso_utc(),
-        "contract_id": runtime.market.slug,
-        "remaining_seconds": f"{remaining:.3f}",
-        **{f: features[f] for f in FEATURES},
-    })
-
-    pred_class, probs = predict(model, features)
-
-    if pred_class == CLASS_SKIP:
-        counts.skipped += 1
-        runtime.decision = TradeDecision(
-            status="skip", pred_class=CLASS_SKIP, pred_p_yes=float(probs[0]),
-            pred_p_no=float(probs[1]), pred_p_skip=float(probs[2]),
-            contracts=0, dry_run=not args.live, reason="model_skip",
-        )
-        um_str = f"{up_mid:.4f}" if up_mid is not None else "--"
-        append_log(
-            f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} "
-            f"pred_yes={probs[0]:.3f} pred_no={probs[1]:.3f} pred_skip={probs[2]:.3f} decision=SKIP | "
-            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
-            prefix_timestamp=False,
-        )
-        append_trade_row({
-            **base_row,
-            "pred_class": pred_class, "pred_p_yes": float(probs[0]),
-            "pred_p_no": float(probs[1]), "pred_p_skip": float(probs[2]),
-            "order_status": "skip", "reason": "model_skip", "skipped_count": counts.skipped,
-        })
-        return
-
-    # YES → buy Up token; NO → buy Down token
-    if pred_class == CLASS_YES:
-        side = "YES"
-        token_id = runtime.market.up_token_id
-        ask_price = up_ask_p
-        ask_qty = up_ask_q
-    else:
-        side = "NO"
-        token_id = runtime.market.down_token_id
-        ask_price = down_ask_p
-        ask_qty = down_ask_q
+    # Buy DOWN token
+    side = "NO"
+    token_id = runtime.market.down_token_id
+    ask_price = down_ask_p
+    ask_qty = down_ask_q
 
     if ask_price is None or not (0.0 < ask_price < 1.0):
         counts.skipped += 1
-        reason = f"{side}_ask missing or out of range: {ask_price}"
-        runtime.decision = TradeDecision(
-            status="skip", pred_class=pred_class, contracts=0,
-            dry_run=not args.live, reason=reason,
-        )
+        reason = f"down_ask missing or out of range: {ask_price}"
+        runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
         append_log(
             f"ORDER SKIP {runtime.market.slug} {side} {reason} | "
             f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
             prefix_timestamp=False,
         )
-        append_trade_row({
-            **base_row, "selected_side": side, "pred_class": pred_class,
-            "pred_p_yes": float(probs[0]), "pred_p_no": float(probs[1]), "pred_p_skip": float(probs[2]),
-            "order_status": "skip", "reason": reason, "skipped_count": counts.skipped,
-        })
-        return
-
-    if not (0.10 <= ask_price <= 0.90):
-        counts.skipped += 1
-        reason = f"price_filter: ask={fmt_pct(ask_price)} outside [0.10, 0.90]"
-        runtime.decision = TradeDecision(
-            status="skip", pred_class=pred_class, contracts=0,
-            dry_run=not args.live, reason=reason,
-        )
-        append_log(
-            f"ORDER SKIP {runtime.market.slug} {side} {reason} | "
-            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
-            prefix_timestamp=False,
-        )
-        append_trade_row({
-            **base_row, "selected_side": side, "pred_class": pred_class,
-            "pred_p_yes": float(probs[0]), "pred_p_no": float(probs[1]), "pred_p_skip": float(probs[2]),
-            "order_status": "skip", "reason": reason, "skipped_count": counts.skipped,
-        })
-        return
-
-    if not any(lo <= ask_price < hi for lo, hi in COST_FILTER_BANDS):
-        counts.skipped += 1
-        bands_str = "∪".join(f"[{lo:.2f},{hi:.2f})" for lo, hi in COST_FILTER_BANDS)
-        reason = f"cost_filter: ask={fmt_pct(ask_price)} not in {bands_str}"
-        runtime.decision = TradeDecision(
-            status="skip", pred_class=pred_class, contracts=0,
-            dry_run=not args.live, reason=reason,
-        )
-        append_log(
-            f"ORDER SKIP {runtime.market.slug} {side} {reason} | "
-            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
-            prefix_timestamp=False,
-        )
-        append_trade_row({
-            **base_row, "selected_side": side, "pred_class": pred_class,
-            "pred_p_yes": float(probs[0]), "pred_p_no": float(probs[1]), "pred_p_skip": float(probs[2]),
-            "order_status": "skip", "reason": reason, "skipped_count": counts.skipped,
-        })
+        append_trade_row({**base_row, "selected_side": side, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
         return
 
     # Fixed-value sizing: spend ~$contract_value per trade regardless of ask price.
     n_contracts = max(1, round(args.contract_value / ask_price))
     base_row["contracts"] = n_contracts
 
-    um_str2 = f"{up_mid:.4f}" if up_mid is not None else "--"
     append_log(
-        f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str2} "
-        f"pred={side} pred_yes={probs[0]:.3f} pred_no={probs[1]:.3f} pred_skip={probs[2]:.3f} "
-        f"ask={fmt_pct(ask_price)} n={n_contracts} val=${args.contract_value:.2f}",
+        f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} "
+        f"decision=BUY_DOWN ask={fmt_pct(ask_price)} n={n_contracts} val=${args.contract_value:.2f}",
         prefix_timestamp=False,
     )
 
@@ -1571,10 +994,6 @@ async def evaluate_entry(
         status=order_status,
         side=side,
         token_id=token_id,
-        pred_class=pred_class,
-        pred_p_yes=float(probs[0]),
-        pred_p_no=float(probs[1]),
-        pred_p_skip=float(probs[2]),
         selected_ask=ask_price,
         selected_ask_qty=ask_qty,
         contracts=n_contracts,
@@ -1597,8 +1016,6 @@ async def evaluate_entry(
         "selected_ask": ask_price, "selected_ask_qty": ask_qty,
         "order_status": order_status, "order_id": order_id,
         "fill_price": fill_price, "filled_size": filled_size,
-        "pred_class": pred_class,
-        "pred_p_yes": float(probs[0]), "pred_p_no": float(probs[1]), "pred_p_skip": float(probs[2]),
         "reason": order_reason,
     })
 
@@ -1682,10 +1099,6 @@ async def maybe_record_outcome(
         "actual_label": actual_label,
         "correct": correct,
         "official_outcome_source": outcome_source,
-        "pred_class": decision.pred_class if decision else "",
-        "pred_p_yes": decision.pred_p_yes if decision else "",
-        "pred_p_no": decision.pred_p_no if decision else "",
-        "pred_p_skip": decision.pred_p_skip if decision else "",
         "successful_count": counts.successful,
         "unsuccessful_count": counts.unsuccessful,
         "skipped_count": counts.skipped,
@@ -1726,14 +1139,8 @@ async def run(args: argparse.Namespace) -> None:
         f"START polymarket_5m_trader live={args.live} contract_value=${args.contract_value:.2f} "
         f"entry_seconds={args.entry_seconds} tolerance={args.entry_tolerance}s "
         f"outcome_delay={args.outcome_delay_seconds}s "
-        f"stop_loss={fmt_money(args.stop_loss)} model={args.model_path}"
+        f"stop_loss={fmt_money(args.stop_loss)} threshold={ENTRY_THRESHOLD}"
     )
-
-    model = await asyncio.to_thread(
-        load_or_train_model, args.model_path, args.data_dir, args.outcomes_csv, args.retrain
-    )
-    if model is None:
-        append_log("MODEL: proceeding without model (all entries will SKIP)")
 
     counts = Counts()
     completed_seen: set[str] = set()
@@ -1853,11 +1260,6 @@ async def run(args: argparse.Namespace) -> None:
                         snap = QuoteSnapshot(
                             timestamp=time.time(),
                             up_mid=up_mid_live,
-                            up_bid_qty=ubq or 0.0,
-                            down_bid_qty=dbq or 0.0,
-                            up_book_imb_1c=up_book.book_imbalance(0.01) or 0.0,
-                            up_book_imb_5c=up_book.book_imbalance(0.05) or 0.0,
-                            up_book_imb_10c=up_book.book_imbalance(0.10) or 0.0,
                         )
                         runtime.history.append(snap)
 
@@ -1895,7 +1297,7 @@ async def run(args: argparse.Namespace) -> None:
                     await log_balance(
                         f"T{args.entry_seconds}s", remaining, args.initial_balance, args.stop_loss, args
                     )
-                    await evaluate_entry(runtime, state, model, counts, args, remaining)
+                    await evaluate_entry(runtime, state, counts, args, remaining)
                 elif remaining < lower and not runtime.decision_logged and remaining >= 0:
                     # Missed entry window
                     runtime.decision_logged = True
@@ -1937,15 +1339,11 @@ async def run(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Polymarket SOL 5m Up/Down live trader (sol_t240 model, cost filter [0.10,0.20)∪[0.40,0.50)).")
+    parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader — buy DOWN when up_mid < 0.15 at T=180s.")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
     parser.add_argument("--contract-value", type=float, default=2.0, help="Dollar value to spend per trade. Contracts = round(value / ask_price). Default: 2.")
-    parser.add_argument("--entry-seconds", type=float, default=240.0, help="Entry time before close (seconds). Default: 240.")
+    parser.add_argument("--entry-seconds", type=float, default=180.0, help="Entry time before close (seconds). Default: 180.")
     parser.add_argument("--entry-tolerance", type=float, default=5.0, help="Entry window tolerance (seconds). Default: 5.")
-    parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH, help="Saved LightGBM model file. Default: sol_t240_model.lgb.")
-    parser.add_argument("--retrain", action="store_true", help="Force retrain even if model file exists.")
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR, help="Historical CSV directory (only used when retraining).")
-    parser.add_argument("--outcomes-csv", type=Path, default=DEFAULT_OUTCOMES_CSV, help="Official outcomes CSV (only used when retraining).")
     parser.add_argument("--poll-interval", type=float, default=0.5, help="Poll interval (seconds). Default: 0.5.")
     parser.add_argument("--log-interval", type=float, default=30.0, help="Seconds between status log lines. Default: 30.")
     parser.add_argument("--stop-loss", type=float, default=5.0, help="Stop if balance drops this many USD. Default: 5.")
