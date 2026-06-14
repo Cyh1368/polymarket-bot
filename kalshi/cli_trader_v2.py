@@ -203,22 +203,28 @@ ENTRY_COST_FEATURES = [
 
 CSV_FIELDS = [
     "timestamp_utc",
+    "sample_epoch_ms",
     "kalshi_timestamp_utc",
     "kalshi_ticker",
     "kalshi_title",
     "kalshi_event_ticker",
     "kalshi_close_time",
+    "kalshi_seconds_to_close",
     "kalshi_status",
     "kalshi_yes_bid",
     "kalshi_yes_ask",
     "kalshi_no_bid",
     "kalshi_no_ask",
     "kalshi_yes_mid",
+    "kalshi_yes_spread",
     "kalshi_last_price",
     "kalshi_volume",
     "kalshi_open_interest",
     "kalshi_best_yes_bid_qty",
     "kalshi_best_no_bid_qty",
+    "kalshi_best_yes_ask_qty",
+    "kalshi_best_no_ask_qty",
+    "kalshi_book_age_seconds",
     *order_imbalance_csv_fields("kalshi"),
     "polymarket_timestamp_utc",
     "polymarket_ticker",
@@ -231,11 +237,15 @@ CSV_FIELDS = [
     "polymarket_no_bid",
     "polymarket_no_ask",
     "polymarket_yes_mid",
+    "polymarket_yes_spread",
     "polymarket_last_price",
     "polymarket_volume",
     "polymarket_open_interest",
     "polymarket_best_yes_bid_qty",
     "polymarket_best_no_bid_qty",
+    "polymarket_best_yes_ask_qty",
+    "polymarket_best_no_ask_qty",
+    "polymarket_book_age_seconds",
     *order_imbalance_csv_fields("polymarket"),
     "source_timestamp_utc",
     "kalshi_btc_source",
@@ -246,6 +256,9 @@ CSV_FIELDS = [
     "polymarket_btc_source",
     "polymarket_btc_price",
     "polymarket_btc_target",
+    "spot_age_seconds",
+    "distance_to_target",
+    "is_above_target",
     "k_plus_np",
     "nk_plus_p",
     "k_plus_np_kalshi_fee",
@@ -274,6 +287,8 @@ CSV_FIELDS = [
     "last_diverge_threshold",
     "active_trade",
     "polymarket_error",
+    "book_state_complete",
+    "quality_flags",
 ]
 
 BALANCE_CSV_FILENAME = "cli_trader_v2_balances.csv"
@@ -1239,6 +1254,7 @@ def make_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) -> dict[str
         "yes_ask_levels": yes_ask_levels,
         "no_ask_levels": no_ask_levels,
         **order_imbalance_metrics(yes_levels, yes_ask_levels, no_levels, no_ask_levels),
+        "book_updated_at": iso_utc(),
     })
 
 
@@ -1320,6 +1336,7 @@ def make_polymarket_snapshot(market: dict[str, Any], orderbook: dict[str, Any]) 
         "yes_ask_levels": yes_ask_levels,
         "no_ask_levels": no_ask_levels,
         **order_imbalance_metrics(yes_levels, yes_ask_levels, no_levels, no_ask_levels),
+        "book_updated_at": iso_utc(),
     }
 
 
@@ -1463,6 +1480,7 @@ def snapshot_with_kalshi_book(
     else:
         updated["yes_mid"] = None
     updated.update(order_imbalance_metrics(yes_levels, yes_ask_levels, no_levels, no_ask_levels))
+    updated["book_updated_at"] = iso_utc()
     return normalize_kalshi_snapshot_quotes(updated)
 
 
@@ -2039,6 +2057,7 @@ class AsyncMarketContext:
                     updated.get("no_ask_levels", []),
                 )
             )
+            updated["book_updated_at"] = iso_utc()
             old_signature = self._last_signature
             self._state = (kalshi_market, kalshi_snapshot, polymarket_market, updated, source_snapshot)
             self._last_signature = book_signature(kalshi_snapshot, updated)
@@ -2320,6 +2339,42 @@ def ensure_csv_schema(path: Path, fields: list[str]) -> bool:
     return True
 
 
+def _book_age_seconds(snapshot: dict[str, Any]) -> float | None:
+    ts = parse_ts(snapshot.get("book_updated_at"))
+    if not ts:
+        return None
+    return max(0.0, time.time() - ts)
+
+
+def _quality_flags_and_state(
+    kalshi_snapshot: dict[str, Any],
+    polymarket_snapshot: dict[str, Any],
+    source_snapshot: dict[str, Any],
+    seconds_to_close: float | None,
+) -> tuple[int, str]:
+    flags: list[str] = []
+    for field in ("yes_bid", "yes_ask", "no_bid", "no_ask"):
+        if finite_float(kalshi_snapshot.get(field)) is None:
+            flags.append(f"kalshi_{field}_missing")
+        if finite_float(polymarket_snapshot.get(field)) is None:
+            flags.append(f"polymarket_{field}_missing")
+    if source_snapshot.get("kalshi_price") is None:
+        flags.append("spot_missing")
+    if source_snapshot.get("kalshi_target") is None:
+        flags.append("target_missing")
+    if seconds_to_close is not None and seconds_to_close < 0:
+        flags.append("market_closed")
+    kalshi_ok = all(
+        finite_float(kalshi_snapshot.get(f)) is not None
+        for f in ("yes_bid", "yes_ask", "no_bid", "no_ask")
+    )
+    polymarket_ok = all(
+        finite_float(polymarket_snapshot.get(f)) is not None
+        for f in ("yes_bid", "yes_ask")
+    )
+    return int(kalshi_ok and polymarket_ok), ";".join(sorted(set(flags)))
+
+
 def build_csv_row(
     kalshi_snapshot: dict[str, Any],
     polymarket_snapshot: dict[str, Any],
@@ -2339,24 +2394,58 @@ def build_csv_row(
     bid_sum_features = bid_sum_arbitrage_features(kalshi_snapshot, polymarket_snapshot)
     best = best_arbitrage_candidate(kalshi_snapshot, polymarket_snapshot, profit_margin, contracts)
     last_decision = runtime.last_model_decision()
+
+    now_s = time.time()
+    now_epoch_ms = int(now_s * 1000)
+    close_ts = parse_ts(kalshi_snapshot.get("close_time"))
+    seconds_to_close = (close_ts - now_s) if close_ts else None
+
+    k_yes_bid = finite_float(kalshi_snapshot.get("yes_bid"))
+    k_yes_ask = finite_float(kalshi_snapshot.get("yes_ask"))
+    kalshi_yes_spread = (k_yes_ask - k_yes_bid) if k_yes_bid is not None and k_yes_ask is not None else ""
+
+    p_yes_bid = finite_float(polymarket_snapshot.get("yes_bid"))
+    p_yes_ask = finite_float(polymarket_snapshot.get("yes_ask"))
+    polymarket_yes_spread = (p_yes_ask - p_yes_bid) if p_yes_bid is not None and p_yes_ask is not None else ""
+
+    source_ts = parse_ts(source_snapshot.get("timestamp_utc"))
+    spot_age_seconds = (now_s - source_ts) if source_ts else ""
+
+    kalshi_price = finite_float(source_snapshot.get("kalshi_price"))
+    kalshi_target = finite_float(source_snapshot.get("kalshi_target"))
+    distance_to_target = (kalshi_price - kalshi_target) if kalshi_price is not None and kalshi_target is not None else ""
+    is_above_target = int(distance_to_target >= 0) if distance_to_target != "" else ""
+
+    kalshi_book_age = _book_age_seconds(kalshi_snapshot)
+    polymarket_book_age = _book_age_seconds(polymarket_snapshot)
+    book_state_complete, quality_flags = _quality_flags_and_state(
+        kalshi_snapshot, polymarket_snapshot, source_snapshot, seconds_to_close
+    )
+
     row = {
         "timestamp_utc": iso_utc(),
+        "sample_epoch_ms": now_epoch_ms,
         "kalshi_timestamp_utc": kalshi_snapshot.get("timestamp_utc", ""),
         "kalshi_ticker": kalshi_snapshot.get("ticker", ""),
         "kalshi_title": kalshi_snapshot.get("title", ""),
         "kalshi_event_ticker": kalshi_snapshot.get("event_ticker", ""),
         "kalshi_close_time": kalshi_snapshot.get("close_time", ""),
+        "kalshi_seconds_to_close": seconds_to_close if seconds_to_close is not None else "",
         "kalshi_status": kalshi_snapshot.get("status", ""),
         "kalshi_yes_bid": kalshi_snapshot.get("yes_bid", ""),
         "kalshi_yes_ask": kalshi_snapshot.get("yes_ask", ""),
         "kalshi_no_bid": kalshi_snapshot.get("no_bid", ""),
         "kalshi_no_ask": kalshi_snapshot.get("no_ask", ""),
         "kalshi_yes_mid": kalshi_snapshot.get("yes_mid", ""),
+        "kalshi_yes_spread": kalshi_yes_spread,
         "kalshi_last_price": kalshi_snapshot.get("last_price", ""),
         "kalshi_volume": kalshi_snapshot.get("volume", ""),
         "kalshi_open_interest": kalshi_snapshot.get("open_interest", ""),
         "kalshi_best_yes_bid_qty": kalshi_snapshot.get("best_yes_bid_qty", ""),
         "kalshi_best_no_bid_qty": kalshi_snapshot.get("best_no_bid_qty", ""),
+        "kalshi_best_yes_ask_qty": kalshi_snapshot.get("best_yes_ask_qty", ""),
+        "kalshi_best_no_ask_qty": kalshi_snapshot.get("best_no_ask_qty", ""),
+        "kalshi_book_age_seconds": kalshi_book_age if kalshi_book_age is not None else "",
         **prefixed_order_imbalance_fields("kalshi", kalshi_snapshot),
         "polymarket_timestamp_utc": polymarket_snapshot.get("timestamp_utc", ""),
         "polymarket_ticker": polymarket_snapshot.get("ticker", ""),
@@ -2369,11 +2458,15 @@ def build_csv_row(
         "polymarket_no_bid": polymarket_snapshot.get("no_bid", ""),
         "polymarket_no_ask": polymarket_snapshot.get("no_ask", ""),
         "polymarket_yes_mid": polymarket_snapshot.get("yes_mid", ""),
+        "polymarket_yes_spread": polymarket_yes_spread,
         "polymarket_last_price": polymarket_snapshot.get("last_price", ""),
         "polymarket_volume": polymarket_snapshot.get("volume", ""),
         "polymarket_open_interest": polymarket_snapshot.get("open_interest", ""),
         "polymarket_best_yes_bid_qty": polymarket_snapshot.get("best_yes_bid_qty", ""),
         "polymarket_best_no_bid_qty": polymarket_snapshot.get("best_no_bid_qty", ""),
+        "polymarket_best_yes_ask_qty": polymarket_snapshot.get("best_yes_ask_qty", ""),
+        "polymarket_best_no_ask_qty": polymarket_snapshot.get("best_no_ask_qty", ""),
+        "polymarket_book_age_seconds": polymarket_book_age if polymarket_book_age is not None else "",
         **prefixed_order_imbalance_fields("polymarket", polymarket_snapshot),
         "source_timestamp_utc": source_snapshot.get("timestamp_utc", ""),
         "kalshi_btc_source": "BRTI",
@@ -2384,6 +2477,9 @@ def build_csv_row(
         "polymarket_btc_source": "Polymarket RTDS",
         "polymarket_btc_price": source_snapshot.get("polymarket_price", ""),
         "polymarket_btc_target": source_snapshot.get("polymarket_target", ""),
+        "spot_age_seconds": spot_age_seconds,
+        "distance_to_target": distance_to_target,
+        "is_above_target": is_above_target,
         "k_plus_np": bid_sum_features.get("K+NP") if bid_sum_features.get("K+NP") is not None else "",
         "nk_plus_p": bid_sum_features.get("NK+P") if bid_sum_features.get("NK+P") is not None else "",
         "k_plus_np_kalshi_fee": k_plus_np.get("kalshi_fee") if k_plus_np else "",
@@ -2412,6 +2508,8 @@ def build_csv_row(
         "last_diverge_threshold": last_decision.get("threshold", ""),
         "active_trade": int(active_position is not None),
         "polymarket_error": polymarket_error,
+        "book_state_complete": book_state_complete,
+        "quality_flags": quality_flags,
     }
     return row
 
@@ -2447,8 +2545,11 @@ def history_dataframe(rows: deque[dict[str, Any]]) -> pd.DataFrame:
             "kalshi_btc_source",
             "polymarket_btc_source",
             "best_arb_direction",
+            "strategy_name",
+            "latch_action",
             "last_model_horizon",
             "polymarket_error",
+            "quality_flags",
         }
     ]
     for col in numeric_cols:

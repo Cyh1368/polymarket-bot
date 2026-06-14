@@ -373,14 +373,52 @@ def collect_one(config: CoinConfig, csv_dir: Path, dry_run: bool) -> dict[str, A
     return summary
 
 
-async def run_collector(config: CoinConfig, csv_dir: Path, csv_save_interval: float, max_seconds: float | None) -> None:
+async def _fetch_and_write_settlement(ticker: str, csv_dir: Path, delay_seconds: float) -> None:
+    """Wait for settlement then append a final row with the official status."""
+    await asyncio.sleep(delay_seconds)
+    try:
+        data = base.kalshi_get(f"/markets/{ticker}")
+        market = data.get("market") if isinstance(data, dict) else None
+        if not isinstance(market, dict):
+            market = data if isinstance(data, dict) else {}
+        status = str(market.get("status") or "")
+        result = str(market.get("result") or "")
+        settlement_value = market.get("settlement_value_dollars")
+        expiration_value = market.get("expiration_value")
+        floor_strike = market.get("floor_strike")
+        settlement_ts = market.get("settlement_ts") or ""
+        # Build a minimal settlement row — all trading/book fields are blank.
+        row: dict[str, Any] = {field: "" for field in base.CSV_FIELDS}
+        row.update(
+            {
+                "timestamp_utc": base.iso_utc(),
+                "kalshi_timestamp_utc": base.iso_utc(),
+                "kalshi_ticker": ticker,
+                "kalshi_status": status,
+                "kalshi_btc_target": floor_strike if floor_strike is not None else "",
+                "kalshi_btc_price": expiration_value if expiration_value is not None else "",
+            }
+        )
+        csv_path = base.csv_path_for_contract(csv_dir, ticker)
+        base.append_csv_row(csv_path, row)
+        print(
+            f"{base.iso_utc()} | SETTLEMENT {ticker} status={status} result={result} "
+            f"settlement_value={settlement_value} expiration_value={expiration_value} "
+            f"floor_strike={floor_strike} settlement_ts={settlement_ts}"
+        )
+    except Exception as exc:
+        print(f"{base.iso_utc()} | SETTLEMENT FETCH ERROR {ticker}: {type(exc).__name__}: {exc}")
+
+
+async def run_collector(config: CoinConfig, csv_dir: Path, csv_save_interval: float, max_seconds: float | None, settlement_delay_seconds: float = 300.0) -> None:
     configure_base(config)
     csv_dir.mkdir(parents=True, exist_ok=True)
-    print(f"{base.iso_utc()} | START cli_data_{config.symbol} series={config.kalshi_series} csv_dir={csv_dir} interval={csv_save_interval}s")
+    print(f"{base.iso_utc()} | START cli_data_{config.symbol} series={config.kalshi_series} csv_dir={csv_dir} interval={csv_save_interval}s settlement_delay={settlement_delay_seconds}s")
     ctx = base.AsyncMarketContext(base.fetch_market_state, logger=print)
     await ctx.start()
     started = time.monotonic()
     current_runtime: base.ContractRuntime | None = None
+    settlement_tasks: list[asyncio.Task[None]] = []
     try:
         while True:
             if max_seconds is not None and time.monotonic() - started >= max_seconds:
@@ -394,6 +432,11 @@ async def run_collector(config: CoinConfig, csv_dir: Path, csv_save_interval: fl
             remaining = base.seconds_to_expiry(kalshi_snapshot)
             if remaining is not None and remaining <= -2:
                 print(f"{base.iso_utc()} | CONTRACT ROLLOVER {ticker} expired; refreshing active market")
+                if ticker:
+                    task = asyncio.create_task(
+                        _fetch_and_write_settlement(ticker, csv_dir, settlement_delay_seconds)
+                    )
+                    settlement_tasks.append(task)
                 base.KALSHI_MARKET_CACHE.pop(base.SERIES_TICKER, None)
                 base.POLYMARKET_MARKET_CACHE.clear()
                 await ctx.stop()
@@ -417,9 +460,14 @@ async def run_collector(config: CoinConfig, csv_dir: Path, csv_save_interval: fl
                 base.append_csv_row(csv_path, row)
                 current_runtime.last_csv_save_at = now
                 current_runtime.history.append(row)
+            # Prune completed settlement tasks.
+            settlement_tasks = [t for t in settlement_tasks if not t.done()]
             await asyncio.sleep(0.1)
     finally:
         await ctx.stop()
+        # Wait for any in-flight settlement fetches so they aren't dropped on clean exit.
+        if settlement_tasks:
+            await asyncio.gather(*settlement_tasks, return_exceptions=True)
 
 
 def parser_for(config: CoinConfig) -> argparse.ArgumentParser:
