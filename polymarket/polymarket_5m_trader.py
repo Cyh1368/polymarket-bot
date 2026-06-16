@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Polymarket BTC 5m Up/Down live trader — simple DOWN-side threshold rule.
+"""Polymarket BTC 5m Up/Down live trader — LightGBM v3 + Filter B.
 
-Entry rule (2026-06-14 research):
-  At T=180s before close: if up_mid < 0.15, buy DOWN token and hold to settlement.
-  Backtest (Jun 8–14, n=154): 97.4% win rate, EV/available=+0.00573.
+Entry rule (2026-06-15 research, settlement_lgb_v3 + filter B):
+  At T=180s before close: run binary LightGBM to predict P(UP | features).
+  Apply analytical EV threshold (skip_bonus=0.05) to decide YES / NO / SKIP.
+  Filter B: block YES trade if p_yes_mid < 0.25 (removes zero-win zone).
+  200-seed validation: EV/available=+4.20%, CI95=[+3.51%,+4.86%].
+  Model file: polymarket/lgb_v3_t180.txt  (train with train_lgb_v3.py)
 
 No exit: hold to official settlement outcome.
 
@@ -34,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import websockets
@@ -57,9 +61,25 @@ COIN_SLUG_PREFIX = "btc"
 FIVE_MINUTE_SECONDS = 5 * 60
 POLYMARKET_CHAIN_ID = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
 
-# Entry rule: buy DOWN when up_mid < this threshold at T=ENTRY_SECONDS
-ENTRY_THRESHOLD = 0.15
+# LightGBM v3 model + Filter B decision parameters
+MODEL_PATH  = Path(__file__).resolve().parent / "lgb_v3_t180.txt"
+SKIP_BONUS  = 0.05    # minimum predicted EV to trade
+YES_GATE_LO = 0.25    # Filter B: block YES if p_yes_mid < this
+COST_ADD    = 0.01    # spread penalty added to ask in EV calculation
+FEATURES = [
+    "p_yes_mid",
+    "yes_mid_z_60", "yes_mid_vol_60",
+    "yes_mid_z_20", "yes_mid_vol_20",
+    "mid_change_60",
+    "book_qty_log",
+    "OBI", "OBI_vol_60", "OBI_z_60",
+    "spread_yes",
+    "tod_sin", "tod_cos",
+]
+
 TOLERANCE_SECONDS = 5.0       # entry window: [T-5, T]
+_model: lgb.Booster | None = None   # loaded at startup by run()
+
 OUTCOME_POLL_INTERVAL = 15.0
 OUTCOME_WAIT_LOG_INTERVAL = 30.0
 OUTCOME_DELAY_SECONDS = -270.0  # check outcome 4.5 min after close; observed resolution ~5.5 min
@@ -297,6 +317,7 @@ class CollectorState:
 class QuoteSnapshot:
     timestamp: float
     up_mid: float
+    obi: float = 0.0
 
 
 @dataclass
@@ -860,6 +881,70 @@ async def log_balance(
     return balance
 
 
+def _stats(hist: list[float], current: float) -> tuple[float, float]:
+    """(z_score, vol_ddof0) of current vs history+current — mirrors research series_stats."""
+    vals = hist + [current]
+    if len(vals) < 2:
+        return 0.0, 0.0
+    mean = sum(vals) / len(vals)
+    vol  = (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
+    z    = (current - mean) / vol if vol > 1e-12 else 0.0
+    return z, vol
+
+
+def _build_features(
+    runtime: ContractRuntime,
+    up_book: TokenBook,
+    down_book: TokenBook,
+) -> list[float] | None:
+    """Extract v3 features from live state + rolling history.
+    Feature order matches FEATURES list exactly.
+    Returns None if essential price data is unavailable.
+    """
+    up_bid_p, up_bid_q  = up_book.best_bid()
+    up_ask_p, _         = up_book.best_ask()
+    _,        down_bid_q = down_book.best_bid()
+
+    if up_bid_p is None or up_ask_p is None:
+        return None
+    if not (0.0 < up_ask_p < 1.0 and 0.0 < up_bid_p <= up_ask_p):
+        return None
+
+    up_mid  = (up_bid_p + up_ask_p) / 2.0
+    ubs     = up_bid_q  or 0.0
+    dbs     = down_bid_q or 0.0
+    obi_cur = (ubs - dbs) / (ubs + dbs + 1e-9)
+
+    now     = time.time()
+    h60     = [s for s in runtime.history if now - s.timestamp <= 60.0]
+    h20     = [s for s in runtime.history if now - s.timestamp <= 20.0]
+
+    mids_60 = [s.up_mid for s in h60]
+    mids_20 = [s.up_mid for s in h20]
+    obis_60 = [s.obi    for s in h60]
+
+    z60,  vol60  = _stats(mids_60, up_mid)
+    z20,  vol20  = _stats(mids_20, up_mid)
+    oz60, ovol60 = _stats(obis_60, obi_cur)
+
+    mid_change = up_mid - mids_60[0] if mids_60 else 0.0
+
+    dt  = datetime.now(timezone.utc)
+    sec = dt.hour * 3600 + dt.minute * 60 + dt.second
+
+    return [
+        up_mid,
+        z60,  vol60,
+        z20,  vol20,
+        mid_change,
+        math.log1p(ubs + dbs),
+        obi_cur, ovol60, oz60,
+        up_ask_p - up_bid_p,
+        math.sin(2 * math.pi * sec / 86400),
+        math.cos(2 * math.pi * sec / 86400),
+    ]
+
+
 async def evaluate_entry(
     runtime: ContractRuntime,
     state: CollectorState,
@@ -914,10 +999,11 @@ async def evaluate_entry(
 
     um_str = f"{up_mid:.4f}" if up_mid is not None else "--"
 
-    # Simple threshold rule: buy DOWN when up_mid < ENTRY_THRESHOLD
-    if up_mid is None or up_mid >= ENTRY_THRESHOLD:
+    # LightGBM v3 + Filter B: predict P(UP | features), apply EV threshold.
+    feats = _build_features(runtime, up_book, down_book)
+    if feats is None or up_mid is None:
         counts.skipped += 1
-        reason = f"threshold: up_mid={um_str} >= {ENTRY_THRESHOLD}"
+        reason = "feature extraction failed (missing book data)"
         runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
         append_log(
             f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} decision=SKIP {reason} | "
@@ -927,15 +1013,49 @@ async def evaluate_entry(
         append_trade_row({**base_row, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
         return
 
-    # Buy DOWN token
-    side = "NO"
-    token_id = runtime.market.down_token_id
-    ask_price = down_ask_p
-    ask_qty = down_ask_q
+    p_up    = float(_model.predict([feats])[0])
+    p_down  = 1.0 - p_up
+    c_yes   = (up_ask_p   or 0.0) + COST_ADD
+    c_no    = (down_ask_p or 0.0) + COST_ADD
+    ev_yes  = p_up   / max(c_yes, 1e-6) - 1.0
+    ev_no   = p_down / max(c_no,  1e-6) - 1.0
+
+    # Filter B: suppress YES when market is already near-certain DOWN
+    allow_yes = up_mid >= YES_GATE_LO
+
+    if ev_no > SKIP_BONUS and ev_no >= ev_yes:
+        action = "NO"
+    elif allow_yes and ev_yes > SKIP_BONUS and ev_yes > ev_no:
+        action = "YES"
+    else:
+        counts.skipped += 1
+        reason = (
+            f"EV below threshold: ev_no={ev_no:+.4f} ev_yes={ev_yes:+.4f} "
+            f"p_up={p_up:.3f} up_mid={um_str} allow_yes={allow_yes}"
+        )
+        runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
+        append_log(
+            f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} "
+            f"p_up={p_up:.3f} decision=SKIP {reason} | "
+            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
+            prefix_timestamp=False,
+        )
+        append_trade_row({**base_row, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
+        return
+
+    side = action
+    if action == "NO":
+        token_id  = runtime.market.down_token_id
+        ask_price = down_ask_p
+        ask_qty   = down_ask_q
+    else:
+        token_id  = runtime.market.up_token_id
+        ask_price = up_ask_p
+        ask_qty   = up_ask_q
 
     if ask_price is None or not (0.0 < ask_price < 1.0):
         counts.skipped += 1
-        reason = f"down_ask missing or out of range: {ask_price}"
+        reason = f"{action}_ask missing or out of range: {ask_price}"
         runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
         append_log(
             f"ORDER SKIP {runtime.market.slug} {side} {reason} | "
@@ -945,13 +1065,14 @@ async def evaluate_entry(
         append_trade_row({**base_row, "selected_side": side, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
         return
 
-    # Fixed-value sizing: spend ~$contract_value per trade regardless of ask price.
     n_contracts = max(1, round(args.contract_value / ask_price))
     base_row["contracts"] = n_contracts
 
+    ev_acted = ev_no if action == "NO" else ev_yes
     append_log(
         f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} "
-        f"decision=BUY_DOWN ask={fmt_pct(ask_price)} n={n_contracts} val=${args.contract_value:.2f}",
+        f"p_up={p_up:.3f} decision=BUY_{action} ev={ev_acted:+.4f} "
+        f"ask={fmt_pct(ask_price)} n={n_contracts} val=${args.contract_value:.2f}",
         prefix_timestamp=False,
     )
 
@@ -1134,12 +1255,18 @@ def _rotate_session_files() -> None:
 # ---------------------------------------------------------------------------
 
 async def run(args: argparse.Namespace) -> None:
+    global _model
+    if not MODEL_PATH.exists():
+        raise RuntimeError(f"Model file not found: {MODEL_PATH}  — run polymarket/train_lgb_v3.py first")
+    _model = lgb.Booster(model_file=str(MODEL_PATH))
+
     _rotate_session_files()
     append_log(
         f"START polymarket_5m_trader live={args.live} contract_value=${args.contract_value:.2f} "
         f"entry_seconds={args.entry_seconds} tolerance={args.entry_tolerance}s "
         f"outcome_delay={args.outcome_delay_seconds}s "
-        f"stop_loss={fmt_money(args.stop_loss)} threshold={ENTRY_THRESHOLD}"
+        f"stop_loss={fmt_money(args.stop_loss)} "
+        f"model={MODEL_PATH.name} skip_bonus={SKIP_BONUS} yes_gate={YES_GATE_LO}"
     )
 
     counts = Counts()
@@ -1257,9 +1384,13 @@ async def run(args: argparse.Namespace) -> None:
                         up_mid_live = (ub + ua) / 2.0
                         if runtime.up_mid_open is None:
                             runtime.up_mid_open = up_mid_live
+                        ubs_live = ubq or 0.0
+                        dbs_live = dbq or 0.0
+                        obi_live = (ubs_live - dbs_live) / (ubs_live + dbs_live + 1e-9)
                         snap = QuoteSnapshot(
                             timestamp=time.time(),
                             up_mid=up_mid_live,
+                            obi=obi_live,
                         )
                         runtime.history.append(snap)
 
@@ -1339,7 +1470,7 @@ async def run(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader — buy DOWN when up_mid < 0.15 at T=180s.")
+    parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader — LightGBM v3 + Filter B at T=180s.")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
     parser.add_argument("--contract-value", type=float, default=2.0, help="Dollar value to spend per trade. Contracts = round(value / ask_price). Default: 2.")
     parser.add_argument("--entry-seconds", type=float, default=180.0, help="Entry time before close (seconds). Default: 180.")
