@@ -1125,7 +1125,10 @@ async def evaluate_entry(
         append_trade_row({**base_row, "selected_side": side, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
         return
 
-    n_contracts = max(1, round(args.contract_value / ask_price))
+    # Ensure total order value >= $1.00 (Polymarket minimum).
+    # With small contract_value or high ask, round() alone can produce 1 contract
+    # at e.g. $0.86 which is rejected.  ceil(1/ask) guarantees the minimum.
+    n_contracts = max(math.ceil(1.0 / ask_price), round(args.contract_value / ask_price))
     base_row["contracts"] = n_contracts
 
     ev_acted = ev_no if action == "NO" else ev_yes
@@ -1151,7 +1154,7 @@ async def evaluate_entry(
             fresh_ask, _ = cur_book.best_ask()
             if fresh_ask is not None and 0.0 < fresh_ask < 1.0:
                 ask_price = fresh_ask
-                n_contracts = max(1, round(args.contract_value / ask_price))
+                n_contracts = max(math.ceil(1.0 / ask_price), round(args.contract_value / ask_price))
         price_rounded = round(round(ask_price * 100) / 100, 2)
         if attempt > 1:
             append_log(
