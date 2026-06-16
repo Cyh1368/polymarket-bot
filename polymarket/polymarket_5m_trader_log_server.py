@@ -16,6 +16,7 @@ APP_DIR = Path(__file__).resolve().parent
 LOG_PATH = Path(os.getenv("POLYMARKET_TRADER_LOG", str(APP_DIR / "polymarket_5m_trader.log")))
 TRADES_CSV = Path(os.getenv("POLYMARKET_TRADER_TRADES_CSV", str(APP_DIR / "polymarket_5m_trader_trades.csv")))
 PORTFOLIO_CSV = Path(os.getenv("POLYMARKET_TRADER_PORTFOLIO_CSV", str(APP_DIR / "polymarket_5m_trader_portfolio.csv")))
+CONTRACT_VALUE = float(os.getenv("POLYMARKET_CONTRACT_VALUE", "2.0"))
 
 app = Flask(__name__)
 CORS(app)
@@ -60,33 +61,56 @@ def _poisson_binomial_pvalue(wins: int, probs: list[float]) -> float | None:
 def compute_stats() -> dict[str, Any]:
     rows = _read_csv_rows(TRADES_CSV)
     outcome_rows = [r for r in rows if r.get("event") == "outcome"]
-    total = len(outcome_rows)
-    wins = sum(1 for r in outcome_rows if str(r.get("correct", "")).strip() == "1")
-    losses = sum(1 for r in outcome_rows if str(r.get("correct", "")).strip() == "0")
     skipped = sum(1 for r in rows if r.get("event") == "decision" and r.get("order_status") == "skip")
-    decided = wins + losses
-    win_rate = wins / decided if decided > 0 else None
 
-    # Breakeven p-value: P(X >= wins | X ~ PoissonBinomial(ask_prices))
-    # Null hypothesis: each trade wins with probability = the ask price paid
     decided_rows = [r for r in outcome_rows if str(r.get("correct", "")).strip() in ("0", "1")]
+
+    def _side_stats(side: str) -> tuple[int, int]:
+        sw = sum(1 for r in decided_rows if r.get("selected_side") == side and r.get("correct") == "1")
+        sl = sum(1 for r in decided_rows if r.get("selected_side") == side and r.get("correct") == "0")
+        return sw, sl
+
+    yes_w, yes_l = _side_stats("YES")
+    no_w,  no_l  = _side_stats("NO")
+    wins   = yes_w + no_w
+    losses = yes_l + no_l
+    decided = wins + losses
+
+    def _wr(w, n): return round(w / n * 100, 1) if n else None
+
+    # Dollar P&L: win → filled_size × (1 − fill_price); loss → −filled_size × fill_price
+    dollar_pnl = 0.0
+    for r in decided_rows:
+        fp = _finite(r.get("fill_price") or r.get("selected_ask"))
+        fs = _finite(r.get("filled_size") or r.get("contracts") or 1)
+        if r.get("correct") == "1":
+            dollar_pnl += fs * (1.0 - fp)
+        else:
+            dollar_pnl -= fs * fp
+
+    n_avail = decided + skipped
+    ev_avail = dollar_pnl / (CONTRACT_VALUE * n_avail) if n_avail else None
+
+    # Breakeven p-value (Poisson-Binomial): P(wins ≥ observed | null = buy at ask price)
     ask_probs = [_finite(r.get("selected_ask")) for r in decided_rows]
     ask_probs = [p for p in ask_probs if 0.0 < p < 1.0]
     breakeven_p = _poisson_binomial_pvalue(wins, ask_probs) if len(ask_probs) == decided and decided > 0 else None
 
-    pnl = sum(
-        (_finite(r.get("fill_price")) - _finite(r.get("selected_ask"))) * _finite(r.get("filled_size", 1))
-        for r in outcome_rows
-        if r.get("correct") == "1"
-    )
     return {
-        "total_decided": total,
+        "total_decided": decided,
         "wins": wins,
         "losses": losses,
         "skipped": skipped,
-        "win_rate": round(win_rate * 100, 1) if win_rate is not None else None,
-        "breakeven_p": round(breakeven_p, 4) if breakeven_p is not None else None,
-        "pnl": round(pnl, 4),
+        "win_rate":     _wr(wins,  decided),
+        "yes_wins":     yes_w,
+        "yes_losses":   yes_l,
+        "yes_win_rate": _wr(yes_w, yes_w + yes_l),
+        "no_wins":      no_w,
+        "no_losses":    no_l,
+        "no_win_rate":  _wr(no_w,  no_w + no_l),
+        "dollar_pnl":   round(dollar_pnl, 2),
+        "ev_avail":     round(ev_avail, 4) if ev_avail is not None else None,
+        "breakeven_p":  round(breakeven_p, 4) if breakeven_p is not None else None,
     }
 
 
@@ -239,20 +263,36 @@ def index() -> Response:
       <h2>Session Stats</h2>
       <div class="metric-grid">
         <div class="metric-item">
-          <div class="label">Successful</div>
-          <div class="value green" id="cnt-s">--</div>
+          <div class="label">W / L / Skip</div>
+          <div class="value white" id="cnt-wls">-- / -- / --</div>
         </div>
         <div class="metric-item">
-          <div class="label">Unsuccessful</div>
-          <div class="value red" id="cnt-u">--</div>
+          <div class="label">P&amp;L</div>
+          <div class="value" id="dollar-pnl">--</div>
         </div>
         <div class="metric-item">
-          <div class="label">Skipped</div>
-          <div class="value gray" id="cnt-k">--</div>
-        </div>
-        <div class="metric-item">
-          <div class="label">Win Rate</div>
+          <div class="label">Win Rate (all)</div>
           <div class="value blue" id="win-rate">--</div>
+        </div>
+        <div class="metric-item">
+          <div class="label">EV / Available</div>
+          <div class="value" id="ev-avail">--</div>
+        </div>
+        <div class="metric-item">
+          <div class="label">Win Rate YES <span style="color:#404070;font-size:9px;">exp 58%</span></div>
+          <div class="value blue" id="yes-wr">--</div>
+        </div>
+        <div class="metric-item">
+          <div class="label">Win Rate NO <span style="color:#404070;font-size:9px;">exp 54%</span></div>
+          <div class="value blue" id="no-wr">--</div>
+        </div>
+        <div class="metric-item">
+          <div class="label">YES W / L</div>
+          <div class="value gray" id="yes-wl">--</div>
+        </div>
+        <div class="metric-item">
+          <div class="label">NO W / L</div>
+          <div class="value gray" id="no-wl">--</div>
         </div>
         <div class="metric-item" style="grid-column:1/-1;">
           <div class="label">Breakeven p-value <span style="color:#404070;font-size:9px;">(wins ≥ avg cost; Poisson-Binomial)</span></div>
@@ -337,11 +377,32 @@ function updateLog(lines) {
 function updateStats(data) {
   const s = data.stats || {};
   const el = id => document.getElementById(id);
-  el('cnt-s').textContent = s.wins ?? '--';
-  el('cnt-u').textContent = s.losses ?? '--';
-  el('cnt-k').textContent = s.skipped ?? '--';
+
+  el('cnt-wls').textContent = `${s.wins??'--'} / ${s.losses??'--'} / ${s.skipped??'--'}`;
   el('win-rate').textContent = s.win_rate != null ? s.win_rate.toFixed(1) + '%' : '--';
-  el('header-status').textContent = `S:${s.wins||0} U:${s.losses||0} K:${s.skipped||0}`;
+
+  const pnlEl = el('dollar-pnl');
+  if (s.dollar_pnl != null) {
+    pnlEl.textContent = (s.dollar_pnl >= 0 ? '+' : '') + '$' + s.dollar_pnl.toFixed(2);
+    pnlEl.style.color = s.dollar_pnl >= 0 ? '#22e08a' : '#ff6060';
+  } else { pnlEl.textContent = '--'; pnlEl.style.color = '#8080b0'; }
+
+  const evEl = el('ev-avail');
+  if (s.ev_avail != null) {
+    evEl.textContent = (s.ev_avail >= 0 ? '+' : '') + (s.ev_avail * 100).toFixed(2) + '%';
+    evEl.style.color = s.ev_avail >= 0.025 ? '#22e08a' : s.ev_avail >= 0 ? '#ffe066' : '#ff6060';
+  } else { evEl.textContent = '--'; evEl.style.color = '#8080b0'; }
+
+  const wrColor = (wr, exp) => wr == null ? '#8080b0' : wr >= exp ? '#22e08a' : wr >= exp - 5 ? '#ffe066' : '#ff6060';
+  el('yes-wr').textContent = s.yes_win_rate != null ? s.yes_win_rate.toFixed(1) + '%' : '--';
+  el('yes-wr').style.color = wrColor(s.yes_win_rate, 58);
+  el('no-wr').textContent  = s.no_win_rate  != null ? s.no_win_rate.toFixed(1)  + '%' : '--';
+  el('no-wr').style.color  = wrColor(s.no_win_rate, 54);
+  el('yes-wl').textContent = `${s.yes_wins??'--'} / ${s.yes_losses??'--'}`;
+  el('no-wl').textContent  = `${s.no_wins??'--'} / ${s.no_losses??'--'}`;
+
+  el('header-status').textContent = `W:${s.wins||0} L:${s.losses||0} K:${s.skipped||0} ev:${s.ev_avail != null ? (s.ev_avail*100).toFixed(1)+'%' : '--'}`;
+
   const bpEl = el('breakeven-p');
   if (s.breakeven_p != null) {
     bpEl.textContent = s.breakeven_p < 0.001 ? s.breakeven_p.toExponential(2) : s.breakeven_p.toFixed(4);
