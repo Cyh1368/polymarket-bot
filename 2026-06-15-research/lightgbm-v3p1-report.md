@@ -202,7 +202,73 @@ Notes on extreme buckets:
 
 ---
 
-## 7. Recommended Next Steps
+## 7. Drawdown Analysis ($2/trade)
+
+**Script:** inline analysis from `cv_v3p1_records.csv`
+
+### 7.1 Expected drawdown
+
+| Metric | Value |
+|---|---|
+| Trades (CV OOS) | 999 over 1439 contracts |
+| Win rate | 55.5% |
+| Avg win / avg loss | +$1.89 / −$2.00 |
+| Total CV P&L | +$160.17 |
+| **Actual max drawdown (CV sequence)** | **$52.61** |
+| **Bootstrap CI95** | **$28.91 – $102.60** |
+| Max consecutive losses | 8 |
+
+Bootstrap percentile breakdown:
+
+| P50 | P75 | P90 | P95 | P99 |
+|---|---|---|---|---|
+| $50 | $64 | $80 | $92 | $119 |
+
+The bootstrap resamples trade P&Ls with replacement 10,000 times and computes max drawdown for each sample. The CI95 upper bound of **$103** is the realistic worst-case to plan around at $2/trade scale.
+
+**Stop-loss calibration:** the default `--stop-loss 5` will trigger on nearly every session. A stop-loss intended to catch catastrophic failure (not normal variance) should be set above the P95 (~$92), e.g. `--stop-loss 100`.
+
+### 7.2 Why is the drawdown large?
+
+Two compounding factors:
+
+**Factor 1 — Fold 1 creates an inflated peak.** Fold 1 earned +$106.50 (+14.8% EV/avail), which is 3× any other fold and contributes $106 of the $160 total. The drawdown is measured from this outlier peak, so the $52 drop appears large relative to a starting point that is itself anomalous.
+
+**Factor 2 — Fold 2 is a genuine losing window.** The trough falls at trades #380–592, spanning late fold 2 into early fold 3. Win rate in that window is 46.5% (vs 55.5% average) across 212 trades. Fold 2 loses $14.92 net.
+
+**Per-fold breakdown:**
+
+| Fold | Trades | EV/avail | Net $ | Win% |
+|---:|---:|---:|---:|---:|
+| 1 | 253 | +14.83% | +$106.50 | 53.8% |
+| 2 | 262 | −2.08% | −$14.92 | 53.1% |
+| 3 | 249 | +4.49% | +$32.25 | 55.8% |
+| 4 | 235 | +5.02% | +$36.34 | 59.6% |
+
+Excluding fold 1, folds 2–4 average **+2.48% EV/avail** — still positive but less than half the headline +5.45%. The folds 2–4 figure is the more realistic forward-looking expectation; fold 1's windfall is unlikely to repeat.
+
+**YES trades are near-zero edge:**
+
+| Action | n | Net | Avg/trade | Win% |
+|---|---|---|---|---|
+| YES | 400 | +$7.29 | +$0.018 | 58.2% |
+| NO | 599 | +$152.88 | +$0.255 | 53.6% |
+
+Almost all profit comes from NO trades. YES contributes volume and variance without proportional reward, which widens loss runs.
+
+### 7.3 Is fold 2's loss just bad luck?
+
+Most likely yes. The statistical argument:
+
+Under the model's expected parameters (55.5% win rate, avg win $1.89, avg loss $2.00), the expected net P&L for 262 trades is approximately **+$42**. Fold 2 came in at −$15, which is **$57 below expectation**. The standard deviation of total P&L over 262 trades is roughly $31, putting fold 2 at **−1.8 sigma** — bad luck at approximately the 4th percentile. Unusual but not structurally alarming.
+
+Corroboration from the 200-seed random-split framework: held-out sets of ~360 contracts produced negative EV in **10.5% of seeds**. Fold 2 is essentially one draw from that distribution. Getting a losing fold roughly 1-in-10 times is exactly what a 55% win-rate strategy predicts.
+
+The honest caveat: with only 4 CV folds you cannot fully separate "bad luck" from "brief regime mismatch." But −1.8 sigma is squarely within the expected variance of this strategy — it does not require invoking regime change to explain. The 200-seed result (89.5% positive) remains the more reliable EV estimate because it averages over many independent splits.
+
+---
+
+## 9. Recommended Next Steps
 
 | Priority | Action | Rationale |
 |---|---|---|
@@ -213,7 +279,7 @@ Notes on extreme buckets:
 
 ---
 
-## 8. Artifacts
+## 10. Artifacts
 
 | File | Description |
 |---|---|
