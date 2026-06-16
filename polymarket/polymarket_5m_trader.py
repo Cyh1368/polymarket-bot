@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Polymarket BTC 5m Up/Down live trader — LightGBM v3.1 + Filter B.
+"""Polymarket BTC 5m Up/Down live trader — LightGBM v3.1 + Filter B + regime filter.
 
 Entry rule (2026-06-15 research, settlement_lgb_v3p1 + filter B):
   At T=180s before close: run binary LightGBM to predict P(UP | features).
@@ -11,6 +11,11 @@ Entry rule (2026-06-15 research, settlement_lgb_v3p1 + filter B):
   200-seed validation: EV/available=+6.02%, CI95=[+5.29%,+6.72%].
   CV (4-fold expanding window): EV/available=+5.45%.
   Model file: polymarket/lgb_v3p1_t180.txt  (train with train_lgb_v3p1.py)
+
+Regime filter (2026-06-16 research):
+  Skips all trades when BTC 4h return > +0.3% (UP regime).
+  CV EV/available: +7.23% (FLAT+DOWN only), win rate 59.6%.
+  Regime is computed from Kraken 1m OHLCV at each contract transition.
 
 No exit: hold to official settlement outcome.
 
@@ -89,6 +94,11 @@ _TAU_LOG_X  = [math.log(t) for t in _TAU_PRICES]  # log(tau) for OLS x-axis
 TOLERANCE_SECONDS = 5.0       # entry window: [T-5, T]
 _model: lgb.Booster | None = None   # loaded at startup by run()
 
+# Regime filter — updated via Kraken OHLCV at each contract transition
+KRAKEN_OHLC_URL = "https://api.kraken.com/0/public/OHLC"
+_btc_regime: str = "FLAT"          # "UP", "FLAT", or "DOWN"
+_btc_4h_ret: float | None = None   # most recent 4h return used for classification
+
 OUTCOME_POLL_INTERVAL = 15.0
 OUTCOME_WAIT_LOG_INTERVAL = 30.0
 OUTCOME_DELAY_SECONDS = -270.0  # check outcome 4.5 min after close; observed resolution ~5.5 min
@@ -119,6 +129,7 @@ TRADE_FIELDS = [
     "contracts", "dry_run", "order_status", "order_id", "fill_price", "filled_size",
     "actual_side", "actual_label", "correct", "official_outcome_source",
     "successful_count", "unsuccessful_count", "skipped_count", "reason",
+    "regime", "btc_4h_ret",
 ]
 PORTFOLIO_FIELDS = [
     "timestamp_utc", "event", "remaining_seconds", "portfolio_value", "portfolio_available",
@@ -1002,6 +1013,52 @@ def _build_features(
     ]
 
 
+async def _update_regime(client: httpx.AsyncClient, args: argparse.Namespace) -> None:
+    """Fetch last ~6h of Kraken 1m OHLCV and update _btc_regime / _btc_4h_ret."""
+    global _btc_regime, _btc_4h_ret
+    since = int(time.time()) - 6 * 3600
+    url = f"{KRAKEN_OHLC_URL}?pair=XBTUSD&interval=1&since={since}"
+    try:
+        resp = await client.get(url, timeout=10.0)
+        data = resp.json()
+    except Exception as exc:
+        append_log(f"REGIME fetch error (keeping {_btc_regime}): {exc}", prefix_timestamp=False)
+        return
+    errors = data.get("error") or []
+    if errors:
+        append_log(f"REGIME Kraken error {errors} (keeping {_btc_regime})", prefix_timestamp=False)
+        return
+    result = data.get("result", {})
+    pair_key = next((k for k in result if k != "last"), None)
+    if not pair_key:
+        return
+    candles = result[pair_key]
+    if len(candles) < 241:
+        append_log(f"REGIME insufficient candles ({len(candles)}<241, keeping {_btc_regime})", prefix_timestamp=False)
+        return
+    # Use close prices: candle format is [time, open, high, low, close, vwap, volume, count]
+    closes = [float(c[4]) for c in candles]
+    price_now  = closes[-1]
+    price_4h   = closes[-241]   # 240 minutes ago (1-indexed from end)
+    if price_4h <= 0:
+        return
+    ret_4h = (price_now - price_4h) / price_4h
+    prev_regime = _btc_regime
+    if ret_4h > args.regime_up_threshold:
+        _btc_regime = "UP"
+    elif ret_4h < -args.regime_down_threshold:
+        _btc_regime = "DOWN"
+    else:
+        _btc_regime = "FLAT"
+    _btc_4h_ret = ret_4h
+    change_str = f" (was {prev_regime})" if _btc_regime != prev_regime else ""
+    append_log(
+        f"REGIME {_btc_regime}{change_str} | btc_4h_ret={ret_4h:+.4f} "
+        f"price_now={price_now:.2f} price_4h_ago={price_4h:.2f}",
+        prefix_timestamp=False,
+    )
+
+
 async def evaluate_entry(
     runtime: ContractRuntime,
     state: CollectorState,
@@ -1027,6 +1084,8 @@ async def evaluate_entry(
         "successful_count": counts.successful,
         "unsuccessful_count": counts.unsuccessful,
         "skipped_count": counts.skipped,
+        "regime": _btc_regime,
+        "btc_4h_ret": f"{_btc_4h_ret:.6f}" if _btc_4h_ret is not None else "",
     }
 
     if up_book is None or down_book is None:
@@ -1064,6 +1123,21 @@ async def evaluate_entry(
     if feats is None or up_mid is None:
         counts.skipped += 1
         reason = "feature extraction failed (missing book data)"
+        runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
+        append_log(
+            f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} decision=SKIP {reason} | "
+            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
+            prefix_timestamp=False,
+        )
+        append_trade_row({**base_row, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
+        return
+
+    # Regime filter: skip all trades in UP regime (2026-06-16 research).
+    # CV EV/avail: UP=−5.34%, FLAT=+10.13%, DOWN=+11.68%.
+    if _btc_regime == "UP":
+        counts.skipped += 1
+        ret_str = f"{_btc_4h_ret:+.4f}" if _btc_4h_ret is not None else "--"
+        reason = f"regime=UP btc_4h_ret={ret_str} (FLAT+DOWN strategy; skip)"
         runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
         append_log(
             f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} decision=SKIP {reason} | "
@@ -1343,7 +1417,9 @@ async def run(args: argparse.Namespace) -> None:
         f"entry_seconds={args.entry_seconds} tolerance={args.entry_tolerance}s "
         f"outcome_delay={args.outcome_delay_seconds}s "
         f"stop_loss={fmt_money(args.stop_loss)} "
-        f"model={MODEL_PATH.name} skip_bonus={SKIP_BONUS} yes_gate={YES_GATE_LO}"
+        f"model={MODEL_PATH.name} skip_bonus={SKIP_BONUS} yes_gate={YES_GATE_LO} "
+        f"regime_strategy=FLAT+DOWN up_thresh={args.regime_up_threshold:+.4f} "
+        f"down_thresh={args.regime_down_threshold:+.4f}"
     )
 
     counts = Counts()
@@ -1432,11 +1508,19 @@ async def run(args: argparse.Namespace) -> None:
 
                     contract_spot_str = f"{contract_spot:.2f}" if contract_spot is not None else "--"
                     contract_tgt_str = f"{market.price_target:.2f}" if market.price_target is not None else "--"
+
+                    try:
+                        await _update_regime(client, args)
+                    except Exception as exc:
+                        append_log(f"REGIME update error: {exc}", prefix_timestamp=False)
+
+                    ret_str = f"{_btc_4h_ret:+.4f}" if _btc_4h_ret is not None else "--"
                     append_log("", prefix_timestamp=False)
                     append_log(
                         f"CONTRACT {market.slug} | "
                         f"close {iso_from_ms(market.end_ts * 1000)} | "
-                        f"spot {contract_spot_str} target {contract_tgt_str}",
+                        f"spot {contract_spot_str} target {contract_tgt_str} | "
+                        f"regime={_btc_regime} btc_4h={ret_str}",
                         prefix_timestamp=False,
                     )
 
@@ -1491,7 +1575,8 @@ async def run(args: argparse.Namespace) -> None:
                     tgt_str = f"{market.price_target:.2f}" if market.price_target is not None else "--"
                     append_log(
                         f"STATUS T={remaining:.1f}s | up_mid={um_str} "
-                        f"spot={spot_str} target={tgt_str} trade={status_str} | "
+                        f"spot={spot_str} target={tgt_str} trade={status_str} "
+                        f"regime={_btc_regime} | "
                         f"{_counts_str(counts, args.contract_value)}",
                         prefix_timestamp=False,
                     )
@@ -1560,6 +1645,10 @@ def parse_args() -> argparse.Namespace:
                         help="Check outcome this many seconds after close. Default: -270 (4.5 min; observed resolution ~5.5 min).")
     parser.add_argument("--log-features", action="store_true",
                         help="Log the 14 feature values at each entry decision.")
+    parser.add_argument("--regime-up-threshold", type=float, default=0.003,
+                        help="btc_4h_ret above this → UP regime (skip). Default: 0.003 (+0.3%%).")
+    parser.add_argument("--regime-down-threshold", type=float, default=0.003,
+                        help="btc_4h_ret below negative this → DOWN regime. Default: 0.003 (+0.3%%).")
     args = parser.parse_args()
     args.contract_value = max(1.0, args.contract_value)
     args.entry_tolerance = max(0.0, args.entry_tolerance)
