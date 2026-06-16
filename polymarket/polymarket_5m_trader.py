@@ -334,6 +334,30 @@ class Counts:
     successful: int = 0
     unsuccessful: int = 0
     skipped: int = 0
+    yes_won: int = 0
+    yes_lost: int = 0
+    no_won: int = 0
+    no_lost: int = 0
+    total_pnl: float = 0.0
+
+
+def _counts_str(counts: Counts, contract_value: float) -> str:
+    n_yes    = counts.yes_won + counts.yes_lost
+    n_no     = counts.no_won  + counts.no_lost
+    n_traded = n_yes + n_no
+    n_avail  = n_traded + counts.skipped
+
+    def wr(w: int, n: int) -> str:
+        return f"{w/n:.1%}" if n else "--"
+
+    ev_str = (f"{counts.total_pnl / (contract_value * n_avail):+.3f}"
+              if n_avail else "--")
+    return (
+        f"trades={n_traded}(Y:{n_yes}/N:{n_no}) skip={counts.skipped} "
+        f"wr={wr(counts.yes_won + counts.no_won, n_traded)}"
+        f"(Y:{wr(counts.yes_won, n_yes)}/N:{wr(counts.no_won, n_no)}) "
+        f"pnl=${counts.total_pnl:+.2f} ev/avail={ev_str}"
+    )
 
 
 @dataclass
@@ -1209,6 +1233,20 @@ async def maybe_record_outcome(
     if decision is not None and decision.outcome_eligible:
         pred_won = (decision.side == "YES" and actual_label == 1) or (decision.side == "NO" and actual_label == 0)
         correct = int(pred_won)
+
+        # Dollar P&L: n_contracts × (outcome − fill_price)
+        fp = decision.fill_price or decision.selected_ask or 0.0
+        fs = decision.filled_size or float(decision.contracts)
+        dollar_pnl = fs * (1.0 - fp) if pred_won else -fs * fp
+        counts.total_pnl += dollar_pnl
+
+        if decision.side == "YES":
+            if pred_won: counts.yes_won  += 1
+            else:        counts.yes_lost += 1
+        elif decision.side == "NO":
+            if pred_won: counts.no_won   += 1
+            else:        counts.no_lost  += 1
+
         if correct:
             counts.successful += 1
             latest = "successful"
@@ -1231,7 +1269,7 @@ async def maybe_record_outcome(
         f"OUTCOME {runtime.market.slug} | actual={actual_side} source={outcome_source} "
         f"trade={decision.side if decision else '--'} status={decision.status if decision else 'none'} "
         f"result={latest} correct={correct if correct != '' else '--'} | "
-        f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
+        f"{_counts_str(counts, args.contract_value)}",
         prefix_timestamp=False,
     )
     append_trade_row({
@@ -1450,7 +1488,8 @@ async def run(args: argparse.Namespace) -> None:
                     tgt_str = f"{market.price_target:.2f}" if market.price_target is not None else "--"
                     append_log(
                         f"STATUS T={remaining:.1f}s | up_mid={um_str} "
-                        f"spot={spot_str} target={tgt_str} trade={status_str}",
+                        f"spot={spot_str} target={tgt_str} trade={status_str} | "
+                        f"{_counts_str(counts, args.contract_value)}",
                         prefix_timestamp=False,
                     )
                     runtime.last_status_log = now_mono
