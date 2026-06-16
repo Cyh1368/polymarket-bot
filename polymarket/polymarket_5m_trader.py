@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Polymarket BTC 5m Up/Down live trader — LightGBM v3 + Filter B.
+"""Polymarket BTC 5m Up/Down live trader — LightGBM v3.1 + Filter B.
 
-Entry rule (2026-06-15 research, settlement_lgb_v3 + filter B):
+Entry rule (2026-06-15 research, settlement_lgb_v3p1 + filter B):
   At T=180s before close: run binary LightGBM to predict P(UP | features).
   Apply analytical EV threshold (skip_bonus=0.05) to decide YES / NO / SKIP.
   Filter B: block YES trade if p_yes_mid < 0.25 (removes zero-win zone).
-  200-seed validation: EV/available=+4.20%, CI95=[+3.51%,+4.86%].
-  Model file: polymarket/lgb_v3_t180.txt  (train with train_lgb_v3.py)
+  14 features: v3 base (13) + obi_depth_slope (OLS slope of book imbalance
+    vs log(tau) across 8 depth levels). NaN when <2 tau levels are available
+    — LightGBM routes NaN to the optimal branch at each split.
+  200-seed validation: EV/available=+6.02%, CI95=[+5.29%,+6.72%].
+  CV (4-fold expanding window): EV/available=+5.45%.
+  Model file: polymarket/lgb_v3p1_t180.txt  (train with train_lgb_v3p1.py)
 
 No exit: hold to official settlement outcome.
 
@@ -61,8 +65,8 @@ COIN_SLUG_PREFIX = "btc"
 FIVE_MINUTE_SECONDS = 5 * 60
 POLYMARKET_CHAIN_ID = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
 
-# LightGBM v3 model + Filter B decision parameters
-MODEL_PATH  = Path(__file__).resolve().parent / "lgb_v3_t180.txt"
+# LightGBM v3.1 model + Filter B decision parameters
+MODEL_PATH  = Path(__file__).resolve().parent / "lgb_v3p1_t180.txt"
 SKIP_BONUS  = 0.05    # minimum predicted EV to trade
 YES_GATE_LO = 0.25    # Filter B: block YES if p_yes_mid < this
 COST_ADD    = 0.01    # spread penalty added to ask in EV calculation
@@ -75,7 +79,12 @@ FEATURES = [
     "OBI", "OBI_vol_60", "OBI_z_60",
     "spread_yes",
     "tod_sin", "tod_cos",
+    "obi_depth_slope",
 ]
+
+# obi_depth_slope: tau levels in price units (0.01 = 1 cent)
+_TAU_PRICES = [0.01, 0.02, 0.03, 0.05, 0.07, 0.10, 0.15, 0.20]
+_TAU_LOG_X  = [math.log(t) for t in _TAU_PRICES]  # log(tau) for OLS x-axis
 
 TOLERANCE_SECONDS = 5.0       # entry window: [T-5, T]
 _model: lgb.Booster | None = None   # loaded at startup by run()
@@ -892,17 +901,35 @@ def _stats(hist: list[float], current: float) -> tuple[float, float]:
     return z, vol
 
 
+def _ols_slope(y_vals: list[float | None]) -> float:
+    """OLS slope of y_vals vs _TAU_LOG_X. Returns NaN when <2 valid points.
+    NaN is passed through to LightGBM, which routes it to the optimal branch.
+    """
+    pairs = [(x, y) for x, y in zip(_TAU_LOG_X, y_vals)
+             if y is not None and math.isfinite(y)]
+    if len(pairs) < 2:
+        return float("nan")
+    xs = [p[0] for p in pairs]; ys = [p[1] for p in pairs]
+    n = len(xs)
+    xm = sum(xs) / n; ym = sum(ys) / n
+    denom = sum((x - xm) ** 2 for x in xs)
+    if denom < 1e-12:
+        return float("nan")
+    return sum((x - xm) * (y - ym) for x, y in zip(xs, ys)) / denom
+
+
 def _build_features(
     runtime: ContractRuntime,
     up_book: TokenBook,
     down_book: TokenBook,
 ) -> list[float] | None:
-    """Extract v3 features from live state + rolling history.
+    """Extract v3.1 features from live state + rolling history.
     Feature order matches FEATURES list exactly.
     Returns None if essential price data is unavailable.
+    obi_depth_slope may be float('nan') when the live book is too thin.
     """
-    up_bid_p, up_bid_q  = up_book.best_bid()
-    up_ask_p, _         = up_book.best_ask()
+    up_bid_p, up_bid_q   = up_book.best_bid()
+    up_ask_p, _          = up_book.best_ask()
     _,        down_bid_q = down_book.best_bid()
 
     if up_bid_p is None or up_ask_p is None:
@@ -932,6 +959,11 @@ def _build_features(
     dt  = datetime.now(timezone.utc)
     sec = dt.hour * 3600 + dt.minute * 60 + dt.second
 
+    # obi_depth_slope: OLS slope of book imbalance across 8 tau depth levels.
+    # NaN when the live book has fewer than 2 non-empty tau levels.
+    tau_obis = [up_book.book_imbalance(tau) for tau in _TAU_PRICES]
+    slope = _ols_slope(tau_obis)
+
     return [
         up_mid,
         z60,  vol60,
@@ -942,6 +974,7 @@ def _build_features(
         up_ask_p - up_bid_p,
         math.sin(2 * math.pi * sec / 86400),
         math.cos(2 * math.pi * sec / 86400),
+        slope,
     ]
 
 
@@ -1257,7 +1290,7 @@ def _rotate_session_files() -> None:
 async def run(args: argparse.Namespace) -> None:
     global _model
     if not MODEL_PATH.exists():
-        raise RuntimeError(f"Model file not found: {MODEL_PATH}  — run polymarket/train_lgb_v3.py first")
+        raise RuntimeError(f"Model file not found: {MODEL_PATH}  — run polymarket/train_lgb_v3p1.py first")
     _model = lgb.Booster(model_file=str(MODEL_PATH))
 
     _rotate_session_files()
@@ -1470,7 +1503,7 @@ async def run(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader — LightGBM v3 + Filter B at T=180s.")
+    parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader — LightGBM v3.1 + Filter B at T=180s.")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
     parser.add_argument("--contract-value", type=float, default=2.0, help="Dollar value to spend per trade. Contracts = round(value / ask_price). Default: 2.")
     parser.add_argument("--entry-seconds", type=float, default=180.0, help="Entry time before close (seconds). Default: 180.")
