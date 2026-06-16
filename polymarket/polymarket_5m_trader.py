@@ -1032,8 +1032,11 @@ async def evaluate_entry(
 
     um_str = f"{up_mid:.4f}" if up_mid is not None else "--"
 
-    # LightGBM v3 + Filter B: predict P(UP | features), apply EV threshold.
+    # LightGBM v3.1 + Filter B: predict P(UP | features), apply EV threshold.
     feats = _build_features(runtime, up_book, down_book)
+    if args.log_features and feats is not None:
+        feat_str = "  ".join(f"{n}={v:.4f}" for n, v in zip(FEATURES, feats))
+        append_log(f"FEATURES {runtime.market.slug} | {feat_str}", prefix_timestamp=False)
     if feats is None or up_mid is None:
         counts.skipped += 1
         reason = "feature extraction failed (missing book data)"
@@ -1513,6 +1516,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stop-loss", type=float, default=5.0, help="Stop if balance drops this many USD. Default: 5.")
     parser.add_argument("--outcome-delay-seconds", type=float, default=OUTCOME_DELAY_SECONDS,
                         help="Check outcome this many seconds after close. Default: -270 (4.5 min; observed resolution ~5.5 min).")
+    parser.add_argument("--log-features", action="store_true",
+                        help="Log the 14 feature values at each entry decision.")
     args = parser.parse_args()
     args.contract_value = max(1.0, args.contract_value)
     args.entry_tolerance = max(0.0, args.entry_tolerance)
