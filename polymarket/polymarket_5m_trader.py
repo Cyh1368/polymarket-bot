@@ -9,13 +9,15 @@ Entry rule (2026-06-15 research, settlement_lgb_v3p1 + filter B):
     vs log(tau) across 8 depth levels). NaN when <2 tau levels are available
     — LightGBM routes NaN to the optimal branch at each split.
   200-seed validation: EV/available=+6.02%, CI95=[+5.29%,+6.72%].
-  CV (4-fold expanding window): EV/available=+5.45%.
+  CV (4-fold expanding window): EV/available=+2.62%.
   Model file: polymarket/lgb_v3p1_t180.txt  (train with train_lgb_v3p1.py)
 
-Regime filter (2026-06-16 research):
-  Skips all trades when BTC 4h return > +0.3% (UP regime).
-  CV EV/available: +7.23% (FLAT+DOWN only), win rate 59.6%.
-  Regime is computed from Kraken 1m OHLCV at each contract transition.
+Regime filter (2026-06-16 research, cv_sma_regime.py):
+  Regime = (spot_now - SMA_4h) / SMA_4h  where SMA_4h = mean of last 240
+  1-minute Kraken closes. Smoother than a point-to-point 4h return.
+  FLAT : trade YES and NO freely  (EV/avail=+3.19%, n=741)
+  UP   : trade NO only            (YES EV/trig=−5.2%; NO EV/trig=+10.7%)
+  DOWN : skip entirely            (EV/avail=−2.48%, n=135)
 
 No exit: hold to official settlement outcome.
 
@@ -97,7 +99,7 @@ _model: lgb.Booster | None = None   # loaded at startup by run()
 # Regime filter — updated via Kraken OHLCV at each contract transition
 KRAKEN_OHLC_URL = "https://api.kraken.com/0/public/OHLC"
 _btc_regime: str = "FLAT"          # "UP", "FLAT", or "DOWN"
-_btc_4h_ret: float | None = None   # most recent 4h return used for classification
+_btc_4h_ret: float | None = None   # sma_signal = (spot_now - mean(last 240 1m closes)) / mean(...)
 
 OUTCOME_POLL_INTERVAL = 15.0
 OUTCOME_WAIT_LOG_INTERVAL = 30.0
@@ -1014,7 +1016,13 @@ def _build_features(
 
 
 async def _update_regime(client: httpx.AsyncClient, args: argparse.Namespace) -> None:
-    """Fetch last ~6h of Kraken 1m OHLCV and update _btc_regime / _btc_4h_ret."""
+    """Fetch last ~6h of Kraken 1m OHLCV and update _btc_regime / _btc_4h_ret.
+
+    Regime signal = (spot_now - SMA_4h) / SMA_4h
+    where SMA_4h = mean of the last 240 1-minute close prices.
+    This is smoother than a point-to-point 4h return because a single noisy
+    candle at either endpoint cannot flip the regime classification.
+    """
     global _btc_regime, _btc_4h_ret
     since = int(time.time()) - 6 * 3600
     url = f"{KRAKEN_OHLC_URL}?pair=XBTUSD&interval=1&since={since}"
@@ -1038,23 +1046,23 @@ async def _update_regime(client: httpx.AsyncClient, args: argparse.Namespace) ->
         return
     # Use close prices: candle format is [time, open, high, low, close, vwap, volume, count]
     closes = [float(c[4]) for c in candles]
-    price_now  = closes[-1]
-    price_4h   = closes[-241]   # 240 minutes ago (1-indexed from end)
-    if price_4h <= 0:
+    price_now = closes[-1]
+    sma_4h    = sum(closes[-240:]) / 240   # 4-hour SMA of 1m closes
+    if sma_4h <= 0:
         return
-    ret_4h = (price_now - price_4h) / price_4h
+    signal = (price_now - sma_4h) / sma_4h
     prev_regime = _btc_regime
-    if ret_4h > args.regime_up_threshold:
+    if signal > args.regime_up_threshold:
         _btc_regime = "UP"
-    elif ret_4h < -args.regime_down_threshold:
+    elif signal < -args.regime_down_threshold:
         _btc_regime = "DOWN"
     else:
         _btc_regime = "FLAT"
-    _btc_4h_ret = ret_4h
+    _btc_4h_ret = signal
     change_str = f" (was {prev_regime})" if _btc_regime != prev_regime else ""
     append_log(
-        f"REGIME {_btc_regime}{change_str} | btc_4h_ret={ret_4h:+.4f} "
-        f"price_now={price_now:.2f} price_4h_ago={price_4h:.2f}",
+        f"REGIME {_btc_regime}{change_str} | sma_signal={signal:+.4f} "
+        f"price_now={price_now:.2f} sma_4h={sma_4h:.2f}",
         prefix_timestamp=False,
     )
 
@@ -1132,12 +1140,12 @@ async def evaluate_entry(
         append_trade_row({**base_row, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
         return
 
-    # Regime filter: skip all trades in UP regime (2026-06-16 research).
-    # CV EV/avail: UP=−5.34%, FLAT=+10.13%, DOWN=+11.68%.
-    if _btc_regime == "UP":
+    # Regime filter (2026-06-16 research, cv_sma_regime.py):
+    # DOWN: skip entirely (EV/avail=−2.48%, model loses calibration in sustained downtrends).
+    if _btc_regime == "DOWN":
         counts.skipped += 1
-        ret_str = f"{_btc_4h_ret:+.4f}" if _btc_4h_ret is not None else "--"
-        reason = f"regime=UP btc_4h_ret={ret_str} (FLAT+DOWN strategy; skip)"
+        sig_str = f"{_btc_4h_ret:+.4f}" if _btc_4h_ret is not None else "--"
+        reason = f"regime=DOWN sma_signal={sig_str} (skip: EV/avail=−2.48% in DOWN)"
         runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
         append_log(
             f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} decision=SKIP {reason} | "
@@ -1156,6 +1164,9 @@ async def evaluate_entry(
 
     # Filter B: suppress YES when market is already near-certain DOWN
     allow_yes = up_mid >= YES_GATE_LO
+    # UP regime: NO trades only (YES EV/trig=−5.2% in UP; NO EV/trig=+10.7%)
+    if _btc_regime == "UP":
+        allow_yes = False
 
     if ev_no > SKIP_BONUS and ev_no >= ev_yes:
         action = "NO"
@@ -1418,8 +1429,8 @@ async def run(args: argparse.Namespace) -> None:
         f"outcome_delay={args.outcome_delay_seconds}s "
         f"stop_loss={fmt_money(args.stop_loss)} "
         f"model={MODEL_PATH.name} skip_bonus={SKIP_BONUS} yes_gate={YES_GATE_LO} "
-        f"regime_strategy=FLAT+DOWN up_thresh={args.regime_up_threshold:+.4f} "
-        f"down_thresh={args.regime_down_threshold:+.4f}"
+        f"regime_strategy=FLAT(YES+NO)+UP(NO-only)+DOWN(skip) "
+        f"sma_thresh=±{args.regime_up_threshold:.4f}"
     )
 
     counts = Counts()
@@ -1514,13 +1525,13 @@ async def run(args: argparse.Namespace) -> None:
                     except Exception as exc:
                         append_log(f"REGIME update error: {exc}", prefix_timestamp=False)
 
-                    ret_str = f"{_btc_4h_ret:+.4f}" if _btc_4h_ret is not None else "--"
+                    sig_str = f"{_btc_4h_ret:+.4f}" if _btc_4h_ret is not None else "--"
                     append_log("", prefix_timestamp=False)
                     append_log(
                         f"CONTRACT {market.slug} | "
                         f"close {iso_from_ms(market.end_ts * 1000)} | "
                         f"spot {contract_spot_str} target {contract_tgt_str} | "
-                        f"regime={_btc_regime} btc_4h={ret_str}",
+                        f"regime={_btc_regime} sma_signal={sig_str}",
                         prefix_timestamp=False,
                     )
 
