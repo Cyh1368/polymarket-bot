@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
-"""Polymarket BTC 5m Up/Down live trader — LightGBM v3.1 + Filter B + regime filter.
+"""Polymarket BTC 5m Up/Down live trader — LightGBM v3.1 + Filter B+.
 
-Entry rule (2026-06-15 research, settlement_lgb_v3p1 + filter B):
+Entry rule (2026-06-15 research, settlement_lgb_v3p1 + Filter B+):
   At T=180s before close: run binary LightGBM to predict P(UP | features).
   Apply analytical EV threshold (skip_bonus=0.05) to decide YES / NO / SKIP.
-  Filter B: block YES trade if p_yes_mid < 0.25 (removes zero-win zone).
+  Filter B+: block YES if p_yes_mid < 0.25 AND block ALL trades if p_yes_mid >= 0.95.
   14 features: v3 base (13) + obi_depth_slope (OLS slope of book imbalance
     vs log(tau) across 8 depth levels). NaN when <2 tau levels are available
     — LightGBM routes NaN to the optimal branch at each split.
   200-seed validation: EV/available=+6.02%, CI95=[+5.29%,+6.72%].
-  CV (4-fold expanding window): EV/available=+2.62%.
+  CV (4-fold expanding window): EV/available=+5.45%. With Filter B+: +6.58%.
   Model file: polymarket/lgb_v3p1_t180.txt  (train with train_lgb_v3p1.py)
-
-Regime filter (2026-06-16 research, cv_sma_regime.py):
-  Regime = (spot_now - SMA_4h) / SMA_4h  where SMA_4h = mean of last 240
-  1-minute Kraken closes. Smoother than a point-to-point 4h return.
-  FLAT : trade YES and NO freely  (EV/avail=+3.19%, n=741)
-  UP   : trade NO only            (YES EV/trig=−5.2%; NO EV/trig=+10.7%)
-  DOWN : skip entirely            (EV/avail=−2.48%, n=135)
 
 No exit: hold to official settlement outcome.
 
@@ -72,10 +65,11 @@ COIN_SLUG_PREFIX = "btc"
 FIVE_MINUTE_SECONDS = 5 * 60
 POLYMARKET_CHAIN_ID = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
 
-# LightGBM v3.1 model + Filter B decision parameters
+# LightGBM v3.1 model + Filter B+ decision parameters
 MODEL_PATH  = Path(__file__).resolve().parent / "lgb_v3p1_t180.txt"
 SKIP_BONUS  = 0.05    # minimum predicted EV to trade
 YES_GATE_LO = 0.25    # Filter B: block YES if p_yes_mid < this
+YES_GATE_HI = 0.95    # Filter B+: block ALL trades if p_yes_mid >= this (0/16 wins in CV)
 COST_ADD    = 0.01    # spread penalty added to ask in EV calculation
 FEATURES = [
     "p_yes_mid",
@@ -95,11 +89,6 @@ _TAU_LOG_X  = [math.log(t) for t in _TAU_PRICES]  # log(tau) for OLS x-axis
 
 TOLERANCE_SECONDS = 5.0       # entry window: [T-5, T]
 _model: lgb.Booster | None = None   # loaded at startup by run()
-
-# Regime filter — updated via Kraken OHLCV at each contract transition
-KRAKEN_OHLC_URL = "https://api.kraken.com/0/public/OHLC"
-_btc_regime: str = "FLAT"          # "UP", "FLAT", or "DOWN"
-_btc_4h_ret: float | None = None   # sma_signal = (spot_now - mean(last 240 1m closes)) / mean(...)
 
 OUTCOME_POLL_INTERVAL = 15.0
 OUTCOME_WAIT_LOG_INTERVAL = 30.0
@@ -131,7 +120,7 @@ TRADE_FIELDS = [
     "contracts", "dry_run", "order_status", "order_id", "fill_price", "filled_size",
     "actual_side", "actual_label", "correct", "official_outcome_source",
     "successful_count", "unsuccessful_count", "skipped_count", "reason",
-    "regime", "btc_4h_ret",
+    "dollar_pnl",
 ]
 PORTFOLIO_FIELDS = [
     "timestamp_utc", "event", "remaining_seconds", "portfolio_value", "portfolio_available",
@@ -1015,57 +1004,6 @@ def _build_features(
     ]
 
 
-async def _update_regime(client: httpx.AsyncClient, args: argparse.Namespace) -> None:
-    """Fetch last ~6h of Kraken 1m OHLCV and update _btc_regime / _btc_4h_ret.
-
-    Regime signal = (spot_now - SMA_4h) / SMA_4h
-    where SMA_4h = mean of the last 240 1-minute close prices.
-    This is smoother than a point-to-point 4h return because a single noisy
-    candle at either endpoint cannot flip the regime classification.
-    """
-    global _btc_regime, _btc_4h_ret
-    since = int(time.time()) - 6 * 3600
-    url = f"{KRAKEN_OHLC_URL}?pair=XBTUSD&interval=1&since={since}"
-    try:
-        resp = await client.get(url, timeout=10.0)
-        data = resp.json()
-    except Exception as exc:
-        append_log(f"REGIME fetch error (keeping {_btc_regime}): {exc}", prefix_timestamp=False)
-        return
-    errors = data.get("error") or []
-    if errors:
-        append_log(f"REGIME Kraken error {errors} (keeping {_btc_regime})", prefix_timestamp=False)
-        return
-    result = data.get("result", {})
-    pair_key = next((k for k in result if k != "last"), None)
-    if not pair_key:
-        return
-    candles = result[pair_key]
-    if len(candles) < 241:
-        append_log(f"REGIME insufficient candles ({len(candles)}<241, keeping {_btc_regime})", prefix_timestamp=False)
-        return
-    # Use close prices: candle format is [time, open, high, low, close, vwap, volume, count]
-    closes = [float(c[4]) for c in candles]
-    price_now = closes[-1]
-    sma_4h    = sum(closes[-240:]) / 240   # 4-hour SMA of 1m closes
-    if sma_4h <= 0:
-        return
-    signal = (price_now - sma_4h) / sma_4h
-    prev_regime = _btc_regime
-    if signal > args.regime_up_threshold:
-        _btc_regime = "UP"
-    elif signal < -args.regime_down_threshold:
-        _btc_regime = "DOWN"
-    else:
-        _btc_regime = "FLAT"
-    _btc_4h_ret = signal
-    change_str = f" (was {prev_regime})" if _btc_regime != prev_regime else ""
-    append_log(
-        f"REGIME {_btc_regime}{change_str} | sma_signal={signal:+.4f} "
-        f"price_now={price_now:.2f} sma_4h={sma_4h:.2f}",
-        prefix_timestamp=False,
-    )
-
 
 async def evaluate_entry(
     runtime: ContractRuntime,
@@ -1092,8 +1030,6 @@ async def evaluate_entry(
         "successful_count": counts.successful,
         "unsuccessful_count": counts.unsuccessful,
         "skipped_count": counts.skipped,
-        "regime": _btc_regime,
-        "btc_4h_ret": f"{_btc_4h_ret:.6f}" if _btc_4h_ret is not None else "",
     }
 
     if up_book is None or down_book is None:
@@ -1123,7 +1059,7 @@ async def evaluate_entry(
 
     um_str = f"{up_mid:.4f}" if up_mid is not None else "--"
 
-    # LightGBM v3.1 + Filter B: predict P(UP | features), apply EV threshold.
+    # LightGBM v3.1 + Filter B+: predict P(UP | features), apply EV threshold.
     feats = _build_features(runtime, up_book, down_book)
     if args.log_features and feats is not None:
         feat_str = "  ".join(f"{n}={v:.4f}" for n, v in zip(FEATURES, feats))
@@ -1140,21 +1076,6 @@ async def evaluate_entry(
         append_trade_row({**base_row, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
         return
 
-    # Regime filter (2026-06-16 research, cv_sma_regime.py):
-    # DOWN: skip entirely (EV/avail=−2.48%, model loses calibration in sustained downtrends).
-    if _btc_regime == "DOWN":
-        counts.skipped += 1
-        sig_str = f"{_btc_4h_ret:+.4f}" if _btc_4h_ret is not None else "--"
-        reason = f"regime=DOWN sma_signal={sig_str} (skip: EV/avail=−2.48% in DOWN)"
-        runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
-        append_log(
-            f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} decision=SKIP {reason} | "
-            f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
-            prefix_timestamp=False,
-        )
-        append_trade_row({**base_row, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
-        return
-
     p_up    = float(_model.predict([feats])[0])
     p_down  = 1.0 - p_up
     c_yes   = (up_ask_p   or 0.0) + COST_ADD
@@ -1162,13 +1083,11 @@ async def evaluate_entry(
     ev_yes  = p_up   / max(c_yes, 1e-6) - 1.0
     ev_no   = p_down / max(c_no,  1e-6) - 1.0
 
-    # Filter B: suppress YES when market is already near-certain DOWN
+    # Filter B+: suppress YES below 0.25 (0/41 win rate), suppress ALL above 0.95 (0/16 wins in CV)
     allow_yes = up_mid >= YES_GATE_LO
-    # UP regime: NO trades only (YES EV/trig=−5.2% in UP; NO EV/trig=+10.7%)
-    if _btc_regime == "UP":
-        allow_yes = False
+    allow_no  = up_mid < YES_GATE_HI
 
-    if ev_no > SKIP_BONUS and ev_no >= ev_yes:
+    if allow_no and ev_no > SKIP_BONUS and ev_no >= ev_yes:
         action = "NO"
     elif allow_yes and ev_yes > SKIP_BONUS and ev_yes > ev_no:
         action = "YES"
@@ -1176,7 +1095,7 @@ async def evaluate_entry(
         counts.skipped += 1
         reason = (
             f"EV below threshold: ev_no={ev_no:+.4f} ev_yes={ev_yes:+.4f} "
-            f"p_up={p_up:.3f} up_mid={um_str} allow_yes={allow_yes}"
+            f"p_up={p_up:.3f} up_mid={um_str} allow_yes={allow_yes} allow_no={allow_no}"
         )
         runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
         append_log(
@@ -1322,10 +1241,12 @@ async def maybe_record_outcome(
         pred_won = (decision.side == "YES" and actual_label == 1) or (decision.side == "NO" and actual_label == 0)
         correct = int(pred_won)
 
-        # Dollar P&L: n_contracts × (outcome − fill_price)
+        # Dollar P&L: n_contracts × (outcome − fill_price) minus taker fee
         fp = decision.fill_price or decision.selected_ask or 0.0
         fs = decision.filled_size or float(decision.contracts)
-        dollar_pnl = fs * (1.0 - fp) if pred_won else -fs * fp
+        fee_per_contract = math.ceil(0.07 * fp * (1.0 - fp) * 100) / 100
+        gross_pnl = fs * (1.0 - fp) if pred_won else -(fs * fp)
+        dollar_pnl = gross_pnl - fs * fee_per_contract
         counts.total_pnl += dollar_pnl
 
         if decision.side == "YES":
@@ -1385,6 +1306,7 @@ async def maybe_record_outcome(
         "successful_count": counts.successful,
         "unsuccessful_count": counts.unsuccessful,
         "skipped_count": counts.skipped,
+        "dollar_pnl": f"{dollar_pnl:.4f}" if decision and decision.outcome_eligible else "",
         "reason": latest,
     })
     runtime.outcome_logged = True
@@ -1423,14 +1345,14 @@ async def run(args: argparse.Namespace) -> None:
     _model = lgb.Booster(model_file=str(MODEL_PATH))
 
     _rotate_session_files()
+    mode_label = "*** LIVE TRADING ***" if args.live else "--- DRY TESTING ---"
     append_log(
-        f"START polymarket_5m_trader live={args.live} contract_value=${args.contract_value:.2f} "
+        f"START {mode_label} polymarket_5m_trader contract_value=${args.contract_value:.2f} "
         f"entry_seconds={args.entry_seconds} tolerance={args.entry_tolerance}s "
         f"outcome_delay={args.outcome_delay_seconds}s "
         f"stop_loss={fmt_money(args.stop_loss)} "
-        f"model={MODEL_PATH.name} skip_bonus={SKIP_BONUS} yes_gate={YES_GATE_LO} "
-        f"regime_strategy=FLAT(YES+NO)+UP(NO-only)+DOWN(skip) "
-        f"sma_thresh=±{args.regime_up_threshold:.4f}"
+        f"model={MODEL_PATH.name} skip_bonus={SKIP_BONUS} "
+        f"yes_gate=[{YES_GATE_LO},{YES_GATE_HI})"
     )
 
     counts = Counts()
@@ -1520,18 +1442,11 @@ async def run(args: argparse.Namespace) -> None:
                     contract_spot_str = f"{contract_spot:.2f}" if contract_spot is not None else "--"
                     contract_tgt_str = f"{market.price_target:.2f}" if market.price_target is not None else "--"
 
-                    try:
-                        await _update_regime(client, args)
-                    except Exception as exc:
-                        append_log(f"REGIME update error: {exc}", prefix_timestamp=False)
-
-                    sig_str = f"{_btc_4h_ret:+.4f}" if _btc_4h_ret is not None else "--"
                     append_log("", prefix_timestamp=False)
                     append_log(
                         f"CONTRACT {market.slug} | "
                         f"close {iso_from_ms(market.end_ts * 1000)} | "
-                        f"spot {contract_spot_str} target {contract_tgt_str} | "
-                        f"regime={_btc_regime} sma_signal={sig_str}",
+                        f"spot {contract_spot_str} target {contract_tgt_str}",
                         prefix_timestamp=False,
                     )
 
@@ -1584,10 +1499,10 @@ async def run(args: argparse.Namespace) -> None:
                     um_str = f"{up_mid_log:.4f}" if up_mid_log is not None else "--"
                     spot_str = f"{spot_price_log:.2f}" if spot_price_log is not None else "--"
                     tgt_str = f"{market.price_target:.2f}" if market.price_target is not None else "--"
+                    mode_str = "LIVE" if args.live else "DRY"
                     append_log(
-                        f"STATUS T={remaining:.1f}s | up_mid={um_str} "
-                        f"spot={spot_str} target={tgt_str} trade={status_str} "
-                        f"regime={_btc_regime} | "
+                        f"STATUS [{mode_str}] T={remaining:.1f}s | up_mid={um_str} "
+                        f"spot={spot_str} target={tgt_str} trade={status_str} | "
                         f"{_counts_str(counts, args.contract_value)}",
                         prefix_timestamp=False,
                     )
@@ -1644,7 +1559,7 @@ async def run(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader — LightGBM v3.1 + Filter B at T=180s.")
+    parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader — LightGBM v3.1 + Filter B+ at T=180s.")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
     parser.add_argument("--contract-value", type=float, default=2.0, help="Dollar value to spend per trade. Contracts = round(value / ask_price). Default: 2.")
     parser.add_argument("--entry-seconds", type=float, default=180.0, help="Entry time before close (seconds). Default: 180.")
@@ -1656,10 +1571,6 @@ def parse_args() -> argparse.Namespace:
                         help="Check outcome this many seconds after close. Default: -270 (4.5 min; observed resolution ~5.5 min).")
     parser.add_argument("--log-features", action="store_true",
                         help="Log the 14 feature values at each entry decision.")
-    parser.add_argument("--regime-up-threshold", type=float, default=0.003,
-                        help="btc_4h_ret above this → UP regime (skip). Default: 0.003 (+0.3%%).")
-    parser.add_argument("--regime-down-threshold", type=float, default=0.003,
-                        help="btc_4h_ret below negative this → DOWN regime. Default: 0.003 (+0.3%%).")
     args = parser.parse_args()
     args.contract_value = max(1.0, args.contract_value)
     args.entry_tolerance = max(0.0, args.entry_tolerance)
