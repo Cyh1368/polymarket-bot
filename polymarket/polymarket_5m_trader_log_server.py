@@ -58,6 +58,23 @@ def _poisson_binomial_pvalue(wins: int, probs: list[float]) -> float | None:
     return sum(dp[wins:])
 
 
+def detect_mode() -> str:
+    """Return 'LIVE' or 'DRY' by scanning the last START line in the log."""
+    if not LOG_PATH.exists():
+        return "DRY"
+    try:
+        with LOG_PATH.open(encoding="utf-8", errors="replace") as f:
+            for line in reversed(f.readlines()):
+                if "START" in line and "polymarket_5m_trader" in line:
+                    if "LIVE TRADING" in line:
+                        return "LIVE"
+                    if "DRY TESTING" in line:
+                        return "DRY"
+    except Exception:
+        pass
+    return "DRY"
+
+
 def compute_stats() -> dict[str, Any]:
     rows = _read_csv_rows(TRADES_CSV)
     outcome_rows = [r for r in rows if r.get("event") == "outcome"]
@@ -78,15 +95,19 @@ def compute_stats() -> dict[str, Any]:
 
     def _wr(w, n): return round(w / n * 100, 1) if n else None
 
-    # Dollar P&L: win → filled_size × (1 − fill_price); loss → −filled_size × fill_price
+    # Dollar P&L: use dollar_pnl column (written by trader with fee) when present,
+    # otherwise fall back to gross formula for backwards compat with old CSVs.
     dollar_pnl = 0.0
     for r in decided_rows:
-        fp = _finite(r.get("fill_price") or r.get("selected_ask"))
-        fs = _finite(r.get("filled_size") or r.get("contracts") or 1)
-        if r.get("correct") == "1":
-            dollar_pnl += fs * (1.0 - fp)
+        raw = r.get("dollar_pnl", "").strip()
+        if raw:
+            dollar_pnl += _finite(raw)
         else:
-            dollar_pnl -= fs * fp
+            fp = _finite(r.get("fill_price") or r.get("selected_ask"))
+            fs = _finite(r.get("filled_size") or r.get("contracts") or 1)
+            fee = math.ceil(0.07 * fp * (1.0 - fp) * 100) / 100
+            gross = fs * (1.0 - fp) if r.get("correct") == "1" else -(fs * fp)
+            dollar_pnl += gross - fs * fee
 
     n_avail = decided + skipped
     ev_avail = dollar_pnl / (CONTRACT_VALUE * n_avail) if n_avail else None
@@ -95,32 +116,6 @@ def compute_stats() -> dict[str, Any]:
     ask_probs = [_finite(r.get("selected_ask")) for r in decided_rows]
     ask_probs = [p for p in ask_probs if 0.0 < p < 1.0]
     breakeven_p = _poisson_binomial_pvalue(wins, ask_probs) if len(ask_probs) == decided and decided > 0 else None
-
-    # Regime breakdown — count decisions by regime (from regime column added 2026-06-16)
-    regime_counts: dict[str, dict[str, int]] = {}
-    for r in rows:
-        if r.get("event") != "decision":
-            continue
-        reg = r.get("regime", "") or "?"
-        if reg not in regime_counts:
-            regime_counts[reg] = {"decided": 0, "skipped": 0}
-        if r.get("order_status") == "skip":
-            regime_counts[reg]["skipped"] += 1
-        elif str(r.get("correct", "")).strip() in ("0", "1"):
-            regime_counts[reg]["decided"] += 1
-
-    # Latest regime from most recent decision row that has it
-    current_regime = None
-    current_btc_4h_ret = None
-    for r in reversed(rows):
-        if r.get("event") == "decision" and r.get("regime"):
-            current_regime = r.get("regime")
-            raw_ret = r.get("btc_4h_ret", "")
-            try:
-                current_btc_4h_ret = round(float(raw_ret) * 100, 3) if raw_ret else None
-            except (TypeError, ValueError):
-                current_btc_4h_ret = None
-            break
 
     return {
         "total_decided": decided,
@@ -137,9 +132,7 @@ def compute_stats() -> dict[str, Any]:
         "dollar_pnl":   round(dollar_pnl, 2),
         "ev_avail":     round(ev_avail, 4) if ev_avail is not None else None,
         "breakeven_p":  round(breakeven_p, 4) if breakeven_p is not None else None,
-        "current_regime":    current_regime,
-        "btc_4h_ret_pct":    current_btc_4h_ret,
-        "regime_counts":     regime_counts,
+        "mode":         detect_mode(),
     }
 
 
@@ -231,6 +224,7 @@ def index() -> Response:
   header { background: #1a1a2e; padding: 14px 22px; display: flex; align-items: center; gap: 18px; border-bottom: 1px solid #2a2a4a; }
   header h1 { font-size: 16px; font-weight: 700; color: #a0c4ff; letter-spacing: 1px; }
   header .dot { width: 9px; height: 9px; border-radius: 50%; background: #22e08a; animation: pulse 1.8s infinite; }
+  #mode-badge { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 4px; letter-spacing: 1px; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
   .layout { display: grid; grid-template-columns: 1fr 340px; gap: 0; height: calc(100vh - 52px); }
   .log-pane { padding: 14px 18px; overflow-y: auto; border-right: 1px solid #1e1e38; }
@@ -275,6 +269,7 @@ def index() -> Response:
 <header>
   <div class="dot" id="dot"></div>
   <h1>POLYMARKET 5m TRADER — BTC/USD</h1>
+  <span id="mode-badge">DRY TESTING</span>
   <span id="header-status" style="margin-left:auto;font-size:11px;color:#606090;">loading...</span>
 </header>
 
@@ -343,20 +338,15 @@ def index() -> Response:
       </div>
     </div>
 
-    <!-- Regime -->
+    <!-- Mode -->
     <div class="card">
-      <h2>BTC Regime</h2>
+      <h2>Trading Mode</h2>
       <div class="metric-grid">
-        <div class="metric-item">
-          <div class="label">Current Regime</div>
-          <div class="value" id="regime-label" style="font-size:20px;">--</div>
+        <div class="metric-item" style="grid-column:1/-1;">
+          <div class="value" id="mode-label" style="font-size:22px;">--</div>
         </div>
-        <div class="metric-item">
-          <div class="label">BTC 4h Return</div>
-          <div class="value" id="btc-4h-ret">--</div>
-        </div>
-        <div class="metric-item" style="grid-column:1/-1;font-size:10px;color:#606090;">
-          UP=skip &nbsp;|&nbsp; FLAT/DOWN=trade &nbsp;|&nbsp; threshold ±0.3%
+        <div class="metric-item" style="grid-column:1/-1;font-size:10px;color:#606090;" id="mode-desc">
+          Filter B+: yes_gate=[0.25, 0.95)
         </div>
       </div>
     </div>
@@ -446,21 +436,22 @@ function updateStats(data) {
   el('no-wr').textContent  = s.no_win_rate  != null ? s.no_win_rate.toFixed(1)  + '%' : '--';
   el('no-wr').style.color  = wrColor(s.no_win_rate, 59);
 
-  // Regime card
-  const regEl = el('regime-label');
-  const retEl = el('btc-4h-ret');
-  if (s.current_regime) {
-    regEl.textContent = s.current_regime;
-    regEl.style.color = s.current_regime === 'UP' ? '#ff6060' : s.current_regime === 'DOWN' ? '#a0c4ff' : '#22e08a';
-  } else { regEl.textContent = '--'; regEl.style.color = '#8080b0'; }
-  if (s.btc_4h_ret_pct != null) {
-    retEl.textContent = (s.btc_4h_ret_pct >= 0 ? '+' : '') + s.btc_4h_ret_pct.toFixed(3) + '%';
-    retEl.style.color = s.btc_4h_ret_pct > 0.3 ? '#ff6060' : s.btc_4h_ret_pct < -0.3 ? '#a0c4ff' : '#22e08a';
-  } else { retEl.textContent = '--'; retEl.style.color = '#8080b0'; }
+  // Mode card + header badge
+  const mode = s.mode || 'DRY';
+  const isLive = mode === 'LIVE';
+  const modeColor = isLive ? '#ff6060' : '#ffe066';
+  el('mode-label').textContent = isLive ? 'LIVE TRADING' : 'DRY TESTING';
+  el('mode-label').style.color = modeColor;
+  const badge = el('mode-badge');
+  badge.textContent = isLive ? '*** LIVE ***' : '--- DRY ---';
+  badge.style.background = isLive ? 'rgba(255,60,60,0.18)' : 'rgba(255,220,60,0.12)';
+  badge.style.color = modeColor;
+  badge.style.border = `1px solid ${modeColor}44`;
+
   el('yes-wl').textContent = `${s.yes_wins??'--'} / ${s.yes_losses??'--'}`;
   el('no-wl').textContent  = `${s.no_wins??'--'} / ${s.no_losses??'--'}`;
 
-  el('header-status').textContent = `W:${s.wins||0} L:${s.losses||0} K:${s.skipped||0} ev:${s.ev_avail != null ? (s.ev_avail*100).toFixed(1)+'%' : '--'}`;
+  el('header-status').textContent = `[${mode}] W:${s.wins||0} L:${s.losses||0} K:${s.skipped||0} ev:${s.ev_avail != null ? (s.ev_avail*100).toFixed(1)+'%' : '--'}`;
 
   const bpEl = el('breakeven-p');
   if (s.breakeven_p != null) {
