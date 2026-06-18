@@ -10,12 +10,23 @@ Multi-strategy DRY-TESTING backtest dashboard.  http://0.0.0.0:8099
 >>  backtests over the locally-collected CSVs and renders the results.             >>
 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
+Self-contained data collection (no separate collector script needed):
+  * A background COLLECTOR thread runs the Polymarket 5m BTC collector in-process
+    (reusing polymarket/polymarket_data_BTC_5m.py), writing per-contract CSVs to the same
+    polymarket/data_BTC_5m/ directory the backtest reads from.
+  * When a contract closes, the collector fetches its official settlement outcome from the
+    Gamma API (reusing fetch_all_outcomes.py) and appends it to the official-outcomes CSV,
+    then SIGNALS the backtest worker to recompute. So the dashboard "updates after every
+    contract" rather than on a blind fixed timer.
+
 Design for "keeps on running":
-  * A background worker reloads the contracts from disk and re-runs every strategy on a
-    fixed interval (default 600s), so the dashboard tracks newly-collected dry-test data.
+  * A background worker reloads the contracts from disk and re-runs every strategy whenever a
+    contract completes (event-driven), with a fixed-interval fallback heartbeat (default 600s).
   * Each strategy is computed inside its own try/except — one failing strategy can't take
     down the others or the server.
   * The whole worker loop is wrapped so any exception is logged and the loop continues.
+  * The collector thread is likewise wrapped + auto-restarting; a collection failure can never
+    take down the HTTP server or the backtest worker.
   * The HTTP handler only ever reads the last-good cached results under a lock; a request
     can never trigger a recompute or crash the worker.
   * ThreadingHTTPServer.serve_forever() runs in the main thread; the page auto-refreshes.
@@ -26,13 +37,16 @@ by the same expanding-window CV + lottery-robust gate used across the study (bac
 Run (kept alive by pm2/nohup in practice):
     kalshi/.venv-cli-trader/bin/python 2026-06-17-research/dashboard_server.py
     kalshi/.venv-cli-trader/bin/python 2026-06-17-research/dashboard_server.py --port 8099 --interval 600 --seeds 5
+    kalshi/.venv-cli-trader/bin/python 2026-06-17-research/dashboard_server.py --no-collect  # read disk only
 """
 from __future__ import annotations
 import argparse
+import asyncio
 import copy
 import csv
 import html
 import json
+import sys
 import threading
 import time
 import traceback
@@ -44,6 +58,22 @@ import pandas as pd
 
 import huber_common as hc
 import backtest_lib as bl
+
+# Make the sibling collector module and the repo-root outcome fetcher importable so the
+# dashboard can collect data itself instead of relying on a separate script.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+for _p in (str(_REPO_ROOT), str(_REPO_ROOT / "polymarket")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+try:  # collector deps (httpx/websockets) live in the project venv
+    import polymarket_data_BTC_5m as collector
+    import fetch_all_outcomes as outcomes_mod
+    _COLLECTOR_IMPORT_ERR = None
+except Exception as _exc:  # don't let an import problem take down the read-only dashboard
+    collector = None
+    outcomes_mod = None
+    _COLLECTOR_IMPORT_ERR = f"{type(_exc).__name__}: {_exc}"
 
 # Where recorded PnL lives on disk (survives restarts; accrues a row per pass per strategy).
 RESULTS_DIR = Path(__file__).parent / "dashboard_pnl"
@@ -63,8 +93,21 @@ _STATE = {
     "last_error": None,
     "computing": True,
     "elapsed": None,
+    "collector": "off",     # short collector status string for the header
 }
-_CFG = {"interval": 600, "seeds": 5, "boot": 2000, "stake": 1.0, "strategies": None}
+_CFG = {"interval": 600, "seeds": 5, "boot": 2000, "stake": 1.0, "strategies": None,
+        "collect": True}
+
+# Set by the collector whenever a contract finishes (and its outcome is recorded); the
+# backtest worker waits on it so the dashboard recomputes "after every contract".
+_RECOMPUTE_EVENT = threading.Event()
+
+# Slugs whose official outcome is already on disk (skip), and slugs collected but not yet
+# resolved by the Gamma API (retry each contract until they settle). Guarded by _PENDING_LOCK.
+_PENDING_LOCK = threading.Lock()
+_RESOLVED: set[str] = set()
+_PENDING: set[str] = set()
+OUTCOMES_CSV = _REPO_ROOT / "polymarket" / f"polymarket_{hc.COIN.lower()}_5m_official_outcomes.csv"
 
 
 def _log(msg: str):
@@ -101,6 +144,165 @@ def _record_pnl(res: dict, updated: str, run_count: int):
             w.writeheader()
         w.writerow(row)
     return total_usd
+
+
+# ── self-contained data collection ────────────────────────────────────────────────
+def _load_resolved_slugs() -> set[str]:
+    """Slugs already recorded with a Up/Down outcome on disk (so we never re-fetch them)."""
+    if not OUTCOMES_CSV.exists():
+        return set()
+    try:
+        df = pd.read_csv(OUTCOMES_CSV, usecols=["market_slug", "winning_outcome"])
+    except Exception:
+        return set()
+    ok = df["winning_outcome"].astype(str).isin(["Up", "Down"])
+    return set(df.loc[ok, "market_slug"].astype(str))
+
+
+def _seed_pending_from_data_dir(cap: int = 200) -> None:
+    """Find the most-recent collected contracts whose outcome isn't on disk yet and queue
+    them for resolution, so a freshly-started dashboard self-heals recent gaps (bounded)."""
+    data_dir = _REPO_ROOT / "polymarket" / f"data_{hc.COIN}_5m"
+    slugs = []
+    for path in data_dir.glob(f"polymarket_data_{hc.COIN}_5m_*.csv"):
+        slug = path.stem
+        if "_5m_" in slug:
+            slug = slug.split("_5m_", 1)[1]
+        slugs.append(slug)
+    # newest first by trailing unix timestamp
+    slugs.sort(key=lambda s: int(s.rsplit("-", 1)[-1]) if s.rsplit("-", 1)[-1].isdigit() else 0,
+               reverse=True)
+    with _PENDING_LOCK:
+        for slug in slugs:
+            if len(_PENDING) >= cap:
+                break
+            if slug not in _RESOLVED:
+                _PENDING.add(slug)
+
+
+def _append_outcome_row(row: dict) -> None:
+    new = not OUTCOMES_CSV.exists()
+    with OUTCOMES_CSV.open("a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=outcomes_mod.POLYMARKET_CSV_FIELDS)
+        if new:
+            w.writeheader()
+        w.writerow({k: row.get(k, "") for k in outcomes_mod.POLYMARKET_CSV_FIELDS})
+
+
+def _resolve_pending() -> int:
+    """Try the Gamma API for every queued slug; append any that have settled to the outcomes
+    CSV. Blocking (urllib) — call from an executor, not the event loop. Returns # newly resolved."""
+    with _PENDING_LOCK:
+        pend = sorted(_PENDING)
+    resolved_now: list[str] = []
+    for slug in pend:
+        try:
+            row = outcomes_mod._row_for_slug(slug)
+        except Exception as e:
+            _log(f"  outcome fetch error {slug}: {type(e).__name__}: {e}")
+            continue
+        if str(row.get("winning_outcome")) in ("Up", "Down"):
+            try:
+                _append_outcome_row(row)
+            except Exception:
+                _log(f"  outcome write error {slug}:\n" + traceback.format_exc())
+                continue
+            resolved_now.append(slug)
+            _log(f"  outcome resolved: {slug} -> {row['winning_outcome']}")
+    if resolved_now:
+        with _PENDING_LOCK:
+            for s in resolved_now:
+                _PENDING.discard(s)
+                _RESOLVED.add(s)
+    return len(resolved_now)
+
+
+def _on_contract_done(slug: str) -> None:
+    """Runs (in an executor) after a contract closes: queue + resolve outcomes, then wake the
+    backtest worker so the dashboard updates after every contract."""
+    with _PENDING_LOCK:
+        if slug not in _RESOLVED:
+            _PENDING.add(slug)
+        n_pending = len(_PENDING)
+    n_new = _resolve_pending()
+    with _LOCK:
+        _STATE["collector"] = (f"last contract {slug} · "
+                               f"+{n_new} outcomes · {len(_PENDING)} pending")
+    _log(f"contract complete: {slug} (newly-resolved outcomes={n_new}, pending={n_pending})")
+    _RECOMPUTE_EVENT.set()  # trigger a backtest recompute
+
+
+def _collector_args(coin: str):
+    cc = collector.COIN_CONFIGS[coin]
+    return argparse.Namespace(
+        coin=coin, coin_config=cc,
+        data_dir=_REPO_ROOT / "polymarket" / cc.data_dir_name, slug=None,
+        sample_seconds=5.0, market_refresh_seconds=2.0, after_close_seconds=10.0,
+        http_timeout=10.0, ws_open_timeout=10.0,
+        clob_ws_url=collector.CLOB_MARKET_WS_URL, rtds_ws_url=collector.RTDS_WS_URL,
+        spot_topic=collector.DEFAULT_SPOT_TOPIC, spot_symbol=cc.spot_symbol,
+        target_max_distance_seconds=300.0, initial_spot_wait_seconds=5.0,
+        max_spread=0.20, max_book_age_seconds=15.0, max_book_skew_seconds=8.0,
+        max_spot_age_seconds=15.0, max_complement_deviation=0.20, once=False,
+    )
+
+
+async def _collector_main(args) -> None:
+    """One contract at a time: discover the live market, collect it to CSV until it closes,
+    then hand the slug off for outcome resolution + a dashboard recompute."""
+    stop = asyncio.Event()
+    state = collector.CollectorState(args.spot_symbol, args.spot_topic)
+    spot_task = asyncio.create_task(collector.rtds_ws_loop(state, stop, args))
+    loop = asyncio.get_running_loop()
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=args.http_timeout) as client:
+            last_slug = ""
+            while not stop.is_set():
+                try:
+                    market = await collector.discover_current_market(client, args.coin_config, None)
+                except Exception as e:
+                    _log(f"collector: discover failed: {type(e).__name__}: {e}")
+                    await asyncio.sleep(args.market_refresh_seconds)
+                    continue
+                if market.slug == last_slug:
+                    await asyncio.sleep(args.market_refresh_seconds)
+                    continue
+                last_slug = market.slug
+                with _LOCK:
+                    _STATE["collector"] = f"collecting {market.slug}"
+                _log(f"collector: tracking {market.slug}")
+                await collector.run_market(state, client, market, stop, args)
+                # contract closed → resolve outcome + recompute (off the event loop)
+                await loop.run_in_executor(None, _on_contract_done, market.slug)
+                await asyncio.sleep(args.market_refresh_seconds)
+    finally:
+        stop.set()
+        spot_task.cancel()
+        await asyncio.gather(spot_task, return_exceptions=True)
+
+
+def collector_thread():
+    """Run the in-process collector forever; restart on any failure. Never exits."""
+    if collector is None or outcomes_mod is None:
+        with _LOCK:
+            _STATE["collector"] = f"disabled (import error: {_COLLECTOR_IMPORT_ERR})"
+        _log(f"COLLECTOR DISABLED — import failed: {_COLLECTOR_IMPORT_ERR}")
+        return
+    with _PENDING_LOCK:
+        _RESOLVED.update(_load_resolved_slugs())
+    _seed_pending_from_data_dir()
+    _log(f"collector: {len(_RESOLVED)} resolved outcomes on disk, "
+         f"{len(_PENDING)} recent contracts queued for resolution")
+    args = _collector_args(hc.COIN)
+    while True:
+        try:
+            asyncio.run(_collector_main(args))
+        except Exception:
+            _log("COLLECTOR ERROR (restarting in 5s):\n" + traceback.format_exc())
+            with _LOCK:
+                _STATE["collector"] = "error — restarting"
+        time.sleep(5)
 
 
 def worker():
@@ -157,7 +359,10 @@ def worker():
         finally:
             with _LOCK:
                 _STATE["computing"] = False
-        time.sleep(_CFG["interval"])
+        # Wake on the next completed contract (event-driven), with the interval as a fallback
+        # heartbeat so the dashboard still refreshes if no contract has closed yet.
+        _RECOMPUTE_EVENT.wait(timeout=_CFG["interval"])
+        _RECOMPUTE_EVENT.clear()
 
 
 # ── rendering ────────────────────────────────────────────────────────────────────
@@ -276,6 +481,7 @@ def render_page() -> str:
     status = "computing…" if st["computing"] and not results else \
              (f'updated {st["updated"]} UTC · pass #{st["run_count"]} · '
               f'{st["n_contracts"]} contracts · {st["elapsed"]}s/pass' if st["updated"] else "starting…")
+    status = f'{status}  ‖  collector: {st.get("collector", "off")}'
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="refresh" content="60">
@@ -385,16 +591,27 @@ def main():
     ap.add_argument("--strategies", default=None,
                     help="comma-separated strategy names to run (default: all). "
                          "e.g. prod_t180_mc150,t245_combined")
+    ap.add_argument("--no-collect", action="store_true",
+                    help="do NOT collect data in-process; only re-run backtests over CSVs "
+                         "already on disk (rely on a separate collector script).")
     args = ap.parse_args()
     _CFG.update(interval=args.interval, seeds=args.seeds, boot=args.boot, stake=args.stake,
-                strategies=args.strategies.split(",") if args.strategies else None)
+                strategies=args.strategies.split(",") if args.strategies else None,
+                collect=not args.no_collect)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
 
+    if _CFG["collect"]:
+        c = threading.Thread(target=collector_thread, daemon=True)
+        c.start()
+    else:
+        with _LOCK:
+            _STATE["collector"] = "off (--no-collect)"
+
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     _log(f"DRY-ONLY dashboard at http://{args.host}:{args.port}  "
-         f"(interval={args.interval}s seeds={args.seeds})")
+         f"(interval={args.interval}s seeds={args.seeds} collect={_CFG['collect']})")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
