@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-"""Polymarket BTC 5m Up/Down live trader — Huber edge-regression model.
+"""Polymarket BTC 5m Up/Down live trader — Huber edge-regression model (t245_combined).
 
-Entry rule (2026-06-17 research, saved_huber_model, min_child=150):
-  At T=180s before close: two Huber LightGBM regressors predict the expected
-  return of a YES bet and a NO bet directly (objective=huber, alpha=1.0).
+Entry rule (2026-06-18 research, saved_huber_model_t245_combined, min_child=150):
+  At T=245s before close: two Huber LightGBM regressors predict the expected
+  return of a YES bet and a NO bet directly (objective=huber, alpha=0.5).
   Trade the side with the higher predicted edge if it clears skip_bonus=0.05.
-  NO post-hoc filters (no cost-band, no p_yes gate) — the edge prediction is
-  the only gate.
+  NO post-hoc filters — the edge prediction is the only gate.
   14 features: v3 base (13) + obi_depth_slope (OLS slope of book imbalance
     vs log(tau) across 8 depth levels). NaN when <2 tau levels are available
     — LightGBM routes NaN to the optimal branch at each split.
-  CV (5-fold expanding window): EV/available=+2.9%, win-capped=+0.040,
-    trim10=+0.052 (robustly lottery-free). Gate pass is seed-fragile
-    (significance sample-size-limited) — see saved_huber_model/metadata.json.
-  Model files: polymarket/huber_yes_t180.txt, polymarket/huber_no_t180.txt
-    (train with 2026-06-17-research/train_huber_save.py)
+  CV (5-fold expanding window): EV/available=+3.9%, win-capped=+0.040,
+    trim10=+0.057, worst-seed CI lower bound +0.0061 (5/5 seeds pass).
+  Model files: 2026-06-17-research/saved_huber_model_t245_combined/huber_yes_t245.txt,
+    huber_no_t245.txt (train with 2026-06-17-research/train_t245_combined.py)
 
 No exit: hold to official settlement outcome.
 
@@ -30,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import hashlib
 import json
 import math
 import os
@@ -69,12 +68,11 @@ COIN_SLUG_PREFIX = "btc"
 FIVE_MINUTE_SECONDS = 5 * 60
 POLYMARKET_CHAIN_ID = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
 
-# Huber edge-regression model (2026-06-17 research, saved_huber_model, min_child=150).
+# Huber edge-regression model (2026-06-18 research, t245_combined, min_child=150, alpha=0.5).
 # Two regressors predict E[YES return] and E[NO return] directly; trade the side with the
-# higher predicted edge if it clears SKIP_BONUS. NO post-hoc filters (no cost-band, no
-# p_yes gate) — the model's edge prediction is the only gate.
-MODEL_YES_PATH = Path(__file__).resolve().parent / "huber_yes_t180.txt"
-MODEL_NO_PATH  = Path(__file__).resolve().parent / "huber_no_t180.txt"
+# higher predicted edge if it clears SKIP_BONUS. NO post-hoc filters.
+MODEL_YES_PATH = Path(__file__).resolve().parent / "huber_yes_t245.txt"
+MODEL_NO_PATH  = Path(__file__).resolve().parent / "huber_no_t245.txt"
 SKIP_BONUS  = 0.05    # minimum predicted edge (return-on-stake) to trade
 FEATURES = [
     "p_yes_mid",
@@ -1339,9 +1337,11 @@ async def run(args: argparse.Namespace) -> None:
     global _model_yes, _model_no
     for p in (MODEL_YES_PATH, MODEL_NO_PATH):
         if not p.exists():
-            raise RuntimeError(f"Model file not found: {p}  — run 2026-06-17-research/train_huber_save.py first")
+            raise RuntimeError(f"Model file not found: {p}  — copy huber_yes_t245.txt / huber_no_t245.txt into polymarket/")
     _model_yes = lgb.Booster(model_file=str(MODEL_YES_PATH))
     _model_no  = lgb.Booster(model_file=str(MODEL_NO_PATH))
+    _yes_md5 = hashlib.md5(MODEL_YES_PATH.read_bytes()).hexdigest()
+    _no_md5  = hashlib.md5(MODEL_NO_PATH.read_bytes()).hexdigest()
 
     _rotate_session_files()
     mode_label = "*** LIVE TRADING ***" if args.live else "--- DRY TESTING ---"
@@ -1350,7 +1350,8 @@ async def run(args: argparse.Namespace) -> None:
         f"entry_seconds={args.entry_seconds} tolerance={args.entry_tolerance}s "
         f"outcome_delay={args.outcome_delay_seconds}s "
         f"stop_loss={fmt_money(args.stop_loss)} "
-        f"model=huber_edge_mc150[yes,no] skip_bonus={SKIP_BONUS} filters=none"
+        f"model=huber_edge_t245_combined[yes,no] skip_bonus={SKIP_BONUS} filters=none "
+        f"model_md5_yes={_yes_md5[:12]} model_md5_no={_no_md5[:12]}"
     )
 
     counts = Counts()
@@ -1560,7 +1561,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader — Huber edge-regression model at T=180s.")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
     parser.add_argument("--contract-value", type=float, default=1.05, help="Dollar value to spend per trade. Contracts = round(value / ask_price). Default: 1.05.")
-    parser.add_argument("--entry-seconds", type=float, default=180.0, help="Entry time before close (seconds). Default: 180.")
+    parser.add_argument("--entry-seconds", type=float, default=245.0, help="Entry time before close (seconds). Default: 245.")
     parser.add_argument("--entry-tolerance", type=float, default=5.0, help="Entry window tolerance (seconds). Default: 5.")
     parser.add_argument("--poll-interval", type=float, default=0.5, help="Poll interval (seconds). Default: 0.5.")
     parser.add_argument("--log-interval", type=float, default=30.0, help="Seconds between status log lines. Default: 30.")
