@@ -1,0 +1,57 @@
+{
+  "model": "huber_edge_v2_mc150",
+  "trained": "2026-06-18",
+  "selected_as": "best-for-live (sweeps 1-4): highest true EV among robustly lottery-free configs; win-capped positive on every seed; 3/5 seeds clear the full gate. min_child_samples=150 is the inverted-U peak.",
+  "venue": "polymarket",
+  "coin": "BTC",
+  "horizon_seconds": 180,
+  "features": [
+    "p_yes_mid",
+    "yes_mid_z_60",
+    "yes_mid_vol_60",
+    "yes_mid_z_20",
+    "yes_mid_vol_20",
+    "mid_change_60",
+    "book_qty_log",
+    "OBI",
+    "OBI_vol_60",
+    "OBI_z_60",
+    "spread_yes",
+    "tod_sin",
+    "tod_cos",
+    "obi_depth_slope"
+  ],
+  "target_yes": "y/c_yes - 1   (realized YES return, c_yes = up_ask + 0.01)",
+  "target_no": "(1-y)/c_no - 1 (realized NO  return, c_no = down_ask + 0.01)",
+  "objective": "huber",
+  "huber_alpha": 1.0,
+  "hyperparams": {
+    "max_depth": 3,
+    "num_leaves": 7,
+    "min_child_samples": 150,
+    "lambda_l2": 5.0,
+    "subsample": 0.9,
+    "feature_fraction": 0.9,
+    "learning_rate": 0.05,
+    "n_rounds": 300,
+    "huber_alpha": 1.0
+  },
+  "decision_rule": "trade max(pred_yes,pred_no) if > 0.05; Filter B: block YES if p_yes_mid<0.25",
+  "skip_bonus": 0.05,
+  "yes_gate_lo": 0.25,
+  "n_train_contracts": 2200,
+  "train_close_time_min": "2026-06-08 04:45:00+00:00",
+  "train_close_time_max": "2026-06-18 03:00:00+00:00",
+  "insample_pred_yes": {
+    "min": -1.1827035835408233,
+    "max": 0.5232399756118797,
+    "mean": -0.26500524608046094
+  },
+  "insample_pred_no": {
+    "min": -1.1781448851982297,
+    "max": 0.520910581834453,
+    "mean": -0.259129180616907
+  },
+  "cv_performance": "EV/avail\u2248+0.029, win-capped\u2248+0.040, trim10\u2248+0.052 (5-fold expanding CV, ~874 trades); lottery-free robustly across seeds.",
+  "WARNING": "Gate pass is SEED-FRAGILE: true-EV day-block CI lower bound sits on the zero boundary (~3/5 seeds pass) because there are only ~9 day-blocks. Lottery-freeness is robust; statistical significance is sample-size limited. Research artifact \u2014 do NOT deploy capital until the gate passes robustly on more trading days."
+}

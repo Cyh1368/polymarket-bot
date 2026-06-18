@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Polymarket BTC 5m Up/Down live trader — LightGBM v3.1 + Filter B+.
+"""Polymarket BTC 5m Up/Down live trader — Huber edge-regression model.
 
-Entry rule (2026-06-15 research, settlement_lgb_v3p1 + Filter B+):
-  At T=180s before close: run binary LightGBM to predict P(UP | features).
-  Apply analytical EV threshold (skip_bonus=0.05) to decide YES / NO / SKIP.
-  Filter B+: block YES if p_yes_mid < 0.25 AND block ALL trades if p_yes_mid >= 0.95.
+Entry rule (2026-06-17 research, saved_huber_model, min_child=150):
+  At T=180s before close: two Huber LightGBM regressors predict the expected
+  return of a YES bet and a NO bet directly (objective=huber, alpha=1.0).
+  Trade the side with the higher predicted edge if it clears skip_bonus=0.05.
+  NO post-hoc filters (no cost-band, no p_yes gate) — the edge prediction is
+  the only gate.
   14 features: v3 base (13) + obi_depth_slope (OLS slope of book imbalance
     vs log(tau) across 8 depth levels). NaN when <2 tau levels are available
     — LightGBM routes NaN to the optimal branch at each split.
-  200-seed validation: EV/available=+6.02%, CI95=[+5.29%,+6.72%].
-  CV (4-fold expanding window): EV/available=+5.45%. With Filter B+: +6.58%.
-  Model file: polymarket/lgb_v3p1_t180.txt  (train with train_lgb_v3p1.py)
+  CV (5-fold expanding window): EV/available=+2.9%, win-capped=+0.040,
+    trim10=+0.052 (robustly lottery-free). Gate pass is seed-fragile
+    (significance sample-size-limited) — see saved_huber_model/metadata.json.
+  Model files: polymarket/huber_yes_t180.txt, polymarket/huber_no_t180.txt
+    (train with 2026-06-17-research/train_huber_save.py)
 
 No exit: hold to official settlement outcome.
 
@@ -65,12 +69,13 @@ COIN_SLUG_PREFIX = "btc"
 FIVE_MINUTE_SECONDS = 5 * 60
 POLYMARKET_CHAIN_ID = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
 
-# LightGBM v3.1 model + Filter B+ decision parameters
-MODEL_PATH  = Path(__file__).resolve().parent / "lgb_v3p1_t180.txt"
-SKIP_BONUS  = 0.05    # minimum predicted EV to trade
-YES_GATE_LO = 0.25    # Filter B: block YES if p_yes_mid < this
-YES_GATE_HI = 0.95    # Filter B+: block ALL trades if p_yes_mid >= this (0/16 wins in CV)
-COST_ADD    = 0.01    # spread penalty added to ask in EV calculation
+# Huber edge-regression model (2026-06-17 research, saved_huber_model, min_child=150).
+# Two regressors predict E[YES return] and E[NO return] directly; trade the side with the
+# higher predicted edge if it clears SKIP_BONUS. NO post-hoc filters (no cost-band, no
+# p_yes gate) — the model's edge prediction is the only gate.
+MODEL_YES_PATH = Path(__file__).resolve().parent / "huber_yes_t180.txt"
+MODEL_NO_PATH  = Path(__file__).resolve().parent / "huber_no_t180.txt"
+SKIP_BONUS  = 0.05    # minimum predicted edge (return-on-stake) to trade
 FEATURES = [
     "p_yes_mid",
     "yes_mid_z_60", "yes_mid_vol_60",
@@ -88,7 +93,8 @@ _TAU_PRICES = [0.01, 0.02, 0.03, 0.05, 0.07, 0.10, 0.15, 0.20]
 _TAU_LOG_X  = [math.log(t) for t in _TAU_PRICES]  # log(tau) for OLS x-axis
 
 TOLERANCE_SECONDS = 5.0       # entry window: [T-5, T]
-_model: lgb.Booster | None = None   # loaded at startup by run()
+_model_yes: lgb.Booster | None = None   # E[YES return]; loaded at startup by run()
+_model_no:  lgb.Booster | None = None   # E[NO  return]; loaded at startup by run()
 
 OUTCOME_POLL_INTERVAL = 15.0
 OUTCOME_WAIT_LOG_INTERVAL = 30.0
@@ -1059,10 +1065,10 @@ async def evaluate_entry(
 
     um_str = f"{up_mid:.4f}" if up_mid is not None else "--"
 
-    # LightGBM v3.1 + Filter B+: predict P(UP | features), apply EV threshold.
+    # Huber edge model: predict E[YES return] and E[NO return], trade the higher edge.
     feats = _build_features(runtime, up_book, down_book)
     if args.log_features and feats is not None:
-        feat_str = "  ".join(f"{n}={v:.4f}" for n, v in zip(FEATURES, feats))
+        feat_str = "  ".join(f"{n}={v:.7f}" for n, v in zip(FEATURES, feats))
         append_log(f"FEATURES {runtime.market.slug} | {feat_str}", prefix_timestamp=False)
     if feats is None or up_mid is None:
         counts.skipped += 1
@@ -1076,31 +1082,22 @@ async def evaluate_entry(
         append_trade_row({**base_row, "order_status": "skip", "reason": reason, "skipped_count": counts.skipped})
         return
 
-    p_up    = float(_model.predict([feats])[0])
-    p_down  = 1.0 - p_up
-    c_yes   = (up_ask_p   or 0.0) + COST_ADD
-    c_no    = (down_ask_p or 0.0) + COST_ADD
-    ev_yes  = p_up   / max(c_yes, 1e-6) - 1.0
-    ev_no   = p_down / max(c_no,  1e-6) - 1.0
+    pred_yes = float(_model_yes.predict([feats])[0])
+    pred_no  = float(_model_no.predict([feats])[0])
 
-    # Filter B+: suppress YES below 0.25 (0/41 win rate), suppress ALL above 0.95 (0/16 wins in CV)
-    allow_yes = up_mid >= YES_GATE_LO
-    allow_no  = up_mid < YES_GATE_HI
-
-    if allow_no and ev_no > SKIP_BONUS and ev_no >= ev_yes:
+    # Pure edge rule, no post-hoc filters: take the side with the higher predicted edge
+    # if it clears SKIP_BONUS.
+    if pred_no > SKIP_BONUS and pred_no >= pred_yes:
         action = "NO"
-    elif allow_yes and ev_yes > SKIP_BONUS and ev_yes > ev_no:
+    elif pred_yes > SKIP_BONUS and pred_yes > pred_no:
         action = "YES"
     else:
         counts.skipped += 1
-        reason = (
-            f"EV below threshold: ev_no={ev_no:+.4f} ev_yes={ev_yes:+.4f} "
-            f"p_up={p_up:.3f} up_mid={um_str} allow_yes={allow_yes} allow_no={allow_no}"
-        )
+        reason = f"edge below threshold: pred_no={pred_no:+.4f} pred_yes={pred_yes:+.4f}"
         runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
         append_log(
             f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} "
-            f"p_up={p_up:.3f} decision=SKIP {reason} | "
+            f"pred_yes={pred_yes:+.3f} pred_no={pred_no:+.3f} decision=SKIP {reason} | "
             f"counts S={counts.successful} U={counts.unsuccessful} K={counts.skipped}",
             prefix_timestamp=False,
         )
@@ -1135,10 +1132,10 @@ async def evaluate_entry(
     n_contracts = max(math.ceil(1.0 / ask_price), round(args.contract_value / ask_price))
     base_row["contracts"] = n_contracts
 
-    ev_acted = ev_no if action == "NO" else ev_yes
+    edge_acted = pred_no if action == "NO" else pred_yes
     append_log(
         f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} "
-        f"p_up={p_up:.3f} decision=BUY_{action} ev={ev_acted:+.4f} "
+        f"pred_yes={pred_yes:+.3f} pred_no={pred_no:+.3f} decision=BUY_{action} edge={edge_acted:+.4f} "
         f"ask={fmt_pct(ask_price)} n={n_contracts} val=${args.contract_value:.2f}",
         prefix_timestamp=False,
     )
@@ -1339,10 +1336,12 @@ def _rotate_session_files() -> None:
 # ---------------------------------------------------------------------------
 
 async def run(args: argparse.Namespace) -> None:
-    global _model
-    if not MODEL_PATH.exists():
-        raise RuntimeError(f"Model file not found: {MODEL_PATH}  — run polymarket/train_lgb_v3p1.py first")
-    _model = lgb.Booster(model_file=str(MODEL_PATH))
+    global _model_yes, _model_no
+    for p in (MODEL_YES_PATH, MODEL_NO_PATH):
+        if not p.exists():
+            raise RuntimeError(f"Model file not found: {p}  — run 2026-06-17-research/train_huber_save.py first")
+    _model_yes = lgb.Booster(model_file=str(MODEL_YES_PATH))
+    _model_no  = lgb.Booster(model_file=str(MODEL_NO_PATH))
 
     _rotate_session_files()
     mode_label = "*** LIVE TRADING ***" if args.live else "--- DRY TESTING ---"
@@ -1351,8 +1350,7 @@ async def run(args: argparse.Namespace) -> None:
         f"entry_seconds={args.entry_seconds} tolerance={args.entry_tolerance}s "
         f"outcome_delay={args.outcome_delay_seconds}s "
         f"stop_loss={fmt_money(args.stop_loss)} "
-        f"model={MODEL_PATH.name} skip_bonus={SKIP_BONUS} "
-        f"yes_gate=[{YES_GATE_LO},{YES_GATE_HI})"
+        f"model=huber_edge_mc150[yes,no] skip_bonus={SKIP_BONUS} filters=none"
     )
 
     counts = Counts()
@@ -1559,14 +1557,14 @@ async def run(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader — LightGBM v3.1 + Filter B+ at T=180s.")
+    parser = argparse.ArgumentParser(description="Polymarket BTC 5m Up/Down live trader — Huber edge-regression model at T=180s.")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
-    parser.add_argument("--contract-value", type=float, default=2.0, help="Dollar value to spend per trade. Contracts = round(value / ask_price). Default: 2.")
+    parser.add_argument("--contract-value", type=float, default=1.05, help="Dollar value to spend per trade. Contracts = round(value / ask_price). Default: 1.05.")
     parser.add_argument("--entry-seconds", type=float, default=180.0, help="Entry time before close (seconds). Default: 180.")
     parser.add_argument("--entry-tolerance", type=float, default=5.0, help="Entry window tolerance (seconds). Default: 5.")
     parser.add_argument("--poll-interval", type=float, default=0.5, help="Poll interval (seconds). Default: 0.5.")
     parser.add_argument("--log-interval", type=float, default=30.0, help="Seconds between status log lines. Default: 30.")
-    parser.add_argument("--stop-loss", type=float, default=5.0, help="Stop if balance drops this many USD. Default: 5.")
+    parser.add_argument("--stop-loss", type=float, default=30.0, help="Stop if balance drops this many USD. Default: 30.")
     parser.add_argument("--outcome-delay-seconds", type=float, default=OUTCOME_DELAY_SECONDS,
                         help="Check outcome this many seconds after close. Default: -270 (4.5 min; observed resolution ~5.5 min).")
     parser.add_argument("--log-features", action="store_true",
