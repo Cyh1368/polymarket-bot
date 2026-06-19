@@ -58,21 +58,30 @@ def _poisson_binomial_pvalue(wins: int, probs: list[float]) -> float | None:
     return sum(dp[wins:])
 
 
-def detect_mode() -> str:
-    """Return 'LIVE' or 'DRY' by scanning the last START line in the log."""
+def detect_session_config() -> dict[str, Any]:
+    """Parse the last START line from the log for mode + all key config values."""
+    config: dict[str, Any] = {"mode": "DRY"}
     if not LOG_PATH.exists():
-        return "DRY"
+        return config
+    import re
     try:
         with LOG_PATH.open(encoding="utf-8", errors="replace") as f:
             for line in reversed(f.readlines()):
                 if "START" in line and "polymarket_5m_trader" in line:
-                    if "LIVE TRADING" in line:
-                        return "LIVE"
-                    if "DRY TESTING" in line:
-                        return "DRY"
+                    config["mode"] = "LIVE" if "LIVE TRADING" in line else "DRY"
+                    for key in ("model", "filters", "skip_bonus", "entry_seconds",
+                                "contract_value", "stop_loss", "tolerance"):
+                        m = re.search(rf"{key}=(\S+)", line)
+                        if m:
+                            config[key] = m.group(1)
+                    break
     except Exception:
         pass
-    return "DRY"
+    return config
+
+
+def detect_mode() -> str:
+    return detect_session_config()["mode"]
 
 
 def compute_stats() -> dict[str, Any]:
@@ -184,6 +193,46 @@ def portfolio_history() -> list[dict[str, Any]]:
     return result
 
 
+def ev_history() -> list[dict[str, Any]]:
+    """Running EV/trade (mean dollar P&L) with 95% CI at each resolved trade."""
+    rows = _read_csv_rows(TRADES_CSV)
+    outcome_rows = [
+        r for r in rows
+        if r.get("event") == "outcome" and str(r.get("correct", "")).strip() in ("0", "1")
+    ]
+    result = []
+    cumsum = 0.0
+    cumsum2 = 0.0
+    for i, r in enumerate(outcome_rows, 1):
+        ts = r.get("timestamp_utc", "")
+        if not ts:
+            continue
+        raw = r.get("dollar_pnl", "").strip()
+        if raw:
+            pnl = _finite(raw)
+        else:
+            fp = _finite(r.get("fill_price") or r.get("selected_ask"))
+            fs = _finite(r.get("filled_size") or r.get("contracts") or 1)
+            fee = math.ceil(0.07 * fp * (1.0 - fp) * 100) / 100
+            pnl = (fs * (1.0 - fp) - fs * fee) if r.get("correct") == "1" else -(fs * fp + fs * fee)
+        cumsum  += pnl
+        cumsum2 += pnl * pnl
+        mean = cumsum / i
+        if i > 1:
+            var = max((cumsum2 - cumsum * cumsum / i) / (i - 1), 0.0)
+            se = math.sqrt(var / i)
+        else:
+            se = 0.0
+        result.append({
+            "timestamp_utc": ts,
+            "n": i,
+            "ev_mean": round(mean, 4),
+            "ci_lo":   round(mean - 1.96 * se, 4),
+            "ci_hi":   round(mean + 1.96 * se, 4),
+        })
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -203,10 +252,15 @@ def get_log() -> Response:
 
 @app.route("/stats")
 def get_stats() -> Response:
+    session_config = detect_session_config()
+    stats = compute_stats()
+    stats["mode"] = session_config["mode"]
     return jsonify({
-        "stats": compute_stats(),
+        "stats": stats,
+        "session_config": session_config,
         "latest_contract": latest_contract_status(),
         "portfolio_history": portfolio_history(),
+        "ev_history": ev_history(),
     })
 
 
@@ -245,6 +299,7 @@ def index() -> Response:
   .metric-item .value.blue { color: #a0c4ff; }
 
   canvas#chart { width: 100% !important; height: 120px !important; }
+  canvas#ev-chart { width: 100% !important; height: 130px !important; }
   .range-btns { display: flex; gap: 6px; margin-top: 6px; }
   .range-btn { flex: 1; padding: 4px 0; background: #1e1e3a; border: 1px solid #2a2a5a; border-radius: 4px;
     color: #a0a0c0; font-size: 10px; cursor: pointer; text-align: center; transition: background .15s; }
@@ -338,6 +393,12 @@ def index() -> Response:
       </div>
     </div>
 
+    <!-- EV/trade chart -->
+    <div class="card">
+      <h2>EV / Trade vs. Time <span style="color:#404070;font-size:9px;">running mean ± 95% CI</span></h2>
+      <canvas id="ev-chart"></canvas>
+    </div>
+
     <!-- Mode -->
     <div class="card">
       <h2>Trading Mode</h2>
@@ -345,8 +406,8 @@ def index() -> Response:
         <div class="metric-item" style="grid-column:1/-1;">
           <div class="value" id="mode-label" style="font-size:22px;">--</div>
         </div>
-        <div class="metric-item" style="grid-column:1/-1;font-size:10px;color:#606090;" id="mode-desc">
-          Filter B+: yes_gate=[0.25, 0.95)
+        <div class="metric-item" style="grid-column:1/-1;font-size:10px;color:#606090;line-height:1.7;" id="mode-desc">
+          —
         </div>
       </div>
     </div>
@@ -365,6 +426,7 @@ def index() -> Response:
 <script>
 const API_INTERVAL = 3000;
 let portfolioData = [];
+let evData = [];
 let currentRange = '4h';
 let autoScroll = true;
 
@@ -413,6 +475,7 @@ function updateLog(lines) {
 
 function updateStats(data) {
   const s = data.stats || {};
+  const cfg = data.session_config || {};
   const el = id => document.getElementById(id);
 
   el('cnt-wls').textContent = `${s.wins??'--'} / ${s.losses??'--'} / ${s.skipped??'--'}`;
@@ -450,6 +513,16 @@ function updateStats(data) {
 
   el('yes-wl').textContent = `${s.yes_wins??'--'} / ${s.yes_losses??'--'}`;
   el('no-wl').textContent  = `${s.no_wins??'--'} / ${s.no_losses??'--'}`;
+
+  // Mode description — built from live session config, never hardcoded
+  const descLines = [];
+  if (cfg.model)          descLines.push(`model: ${cfg.model}`);
+  if (cfg.filters)        descLines.push(`filters: ${cfg.filters}`);
+  if (cfg.skip_bonus)     descLines.push(`skip_bonus: ${cfg.skip_bonus}`);
+  if (cfg.entry_seconds)  descLines.push(`entry: T=${cfg.entry_seconds}s`);
+  if (cfg.contract_value) descLines.push(`contract: ${cfg.contract_value}`);
+  if (cfg.stop_loss)      descLines.push(`stop_loss: ${cfg.stop_loss}`);
+  el('mode-desc').innerHTML = descLines.join('<br>') || '—';
 
   el('header-status').textContent = `[${mode}] W:${s.wins||0} L:${s.losses||0} K:${s.skipped||0} ev:${s.ev_avail != null ? (s.ev_avail*100).toFixed(1)+'%' : '--'}`;
 
@@ -495,6 +568,97 @@ function setRange(r, btn) {
 function updatePortfolio(history) {
   portfolioData = history;
   drawChart();
+}
+
+function updateEvHistory(history) {
+  evData = history;
+  drawEvChart();
+}
+
+function drawEvChart() {
+  const canvas = document.getElementById('ev-chart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth;
+  const H = canvas.offsetHeight;
+  canvas.width = W * window.devicePixelRatio;
+  canvas.height = H * window.devicePixelRatio;
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  ctx.clearRect(0, 0, W, H);
+
+  if (evData.length < 2) {
+    ctx.fillStyle = '#606090';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(evData.length === 0 ? 'No trades yet' : 'Need ≥2 trades', W/2, H/2);
+    return;
+  }
+
+  const pad = { l: 44, r: 10, t: 10, b: 24 };
+  const gW = W - pad.l - pad.r;
+  const gH = H - pad.t - pad.b;
+
+  const allY = evData.flatMap(d => [d.ci_lo, d.ci_hi]);
+  const minY = Math.min(0, ...allY);
+  const maxY = Math.max(0, ...allY);
+  const rangeY = maxY - minY || 0.01;
+
+  function toX(i) { return pad.l + gW * i / (evData.length - 1); }
+  function toY(v) { return pad.t + gH * (1 - (v - minY) / rangeY); }
+
+  // Grid lines
+  ctx.strokeStyle = '#1e1e3a';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const v = minY + rangeY * i / 3;
+    const y = toY(v);
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + gW, y); ctx.stroke();
+    ctx.fillStyle = '#505080';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText((v >= 0 ? '+' : '') + '$' + v.toFixed(2), pad.l - 3, y + 3);
+  }
+
+  // Zero line
+  const zeroY = toY(0);
+  ctx.setLineDash([3, 4]);
+  ctx.strokeStyle = '#404070';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.l, zeroY); ctx.lineTo(pad.l + gW, zeroY); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // CI band
+  ctx.beginPath();
+  evData.forEach((d, i) => { i === 0 ? ctx.moveTo(toX(i), toY(d.ci_hi)) : ctx.lineTo(toX(i), toY(d.ci_hi)); });
+  for (let i = evData.length - 1; i >= 0; i--) ctx.lineTo(toX(i), toY(evData[i].ci_lo));
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(160,196,255,0.12)';
+  ctx.fill();
+
+  // Mean line
+  const lastMean = evData[evData.length - 1].ev_mean;
+  const lineColor = lastMean >= 0.025 ? '#22e08a' : lastMean >= 0 ? '#ffe066' : '#ff6060';
+  ctx.beginPath();
+  evData.forEach((d, i) => { i === 0 ? ctx.moveTo(toX(i), toY(d.ev_mean)) : ctx.lineTo(toX(i), toY(d.ev_mean)); });
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
+
+  // Time labels
+  ctx.fillStyle = '#606090';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(new Date(evData[0].timestamp_utc).toISOString().slice(11, 16) + 'Z', pad.l, H - 5);
+  ctx.textAlign = 'right';
+  const lastTs = new Date(evData[evData.length - 1].timestamp_utc).toISOString().slice(11, 16) + 'Z';
+  ctx.fillText(lastTs, pad.l + gW, H - 5);
+
+  // Annotate final value
+  ctx.textAlign = 'right';
+  ctx.font = '9px monospace';
+  ctx.fillStyle = lineColor;
+  const last = evData[evData.length - 1];
+  ctx.fillText(`n=${last.n} | ${(last.ev_mean >= 0 ? '+' : '')}$${last.ev_mean.toFixed(3)}/trade`, pad.l + gW, pad.t + 10);
 }
 
 function drawChart() {
@@ -582,6 +746,7 @@ async function refreshAll() {
     updateLog(logData.lines || []);
     updateStats(statsData);
     updatePortfolio(statsData.portfolio_history || []);
+    updateEvHistory(statsData.ev_history || []);
     document.getElementById('dot').style.background = '#22e08a';
   } catch (e) {
     document.getElementById('dot').style.background = '#ff6060';
