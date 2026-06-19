@@ -6,6 +6,7 @@ import csv
 import json
 import math
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -233,6 +234,33 @@ def ev_history() -> list[dict[str, Any]]:
     return result
 
 
+def up_rate_24h() -> dict[str, Any]:
+    """Compute Up% from settled outcome rows in the last 24 h."""
+    rows = _read_csv_rows(TRADES_CSV)
+    cutoff = time.time() - 86400.0
+    ups, total = 0, 0
+    for r in rows:
+        if r.get("event") != "outcome":
+            continue
+        actual = r.get("actual_side", "").strip()
+        if actual not in ("Up", "Down"):
+            continue
+        try:
+            from datetime import datetime, timezone
+            t = datetime.fromisoformat(r.get("timestamp_utc", "").replace("Z", "+00:00")).timestamp()
+        except Exception:
+            continue
+        if t < cutoff:
+            continue
+        total += 1
+        if actual == "Up":
+            ups += 1
+    return {
+        "up_rate_24h": round(ups / total, 4) if total else None,
+        "n_settled_24h": total,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -261,6 +289,7 @@ def get_stats() -> Response:
         "latest_contract": latest_contract_status(),
         "portfolio_history": portfolio_history(),
         "ev_history": ev_history(),
+        "up_rate_24h": up_rate_24h(),
     })
 
 
@@ -390,6 +419,24 @@ def index() -> Response:
         <div class="range-btn" data-range="3d" onclick="setRange('3d',this)">3d</div>
         <div class="range-btn" data-range="1w" onclick="setRange('1w',this)">1w</div>
         <div class="range-btn" data-range="all" onclick="setRange('all',this)">all</div>
+      </div>
+    </div>
+
+    <!-- Up% 24h regime card -->
+    <div class="card">
+      <h2>BTC Regime — Up% in past 24h</h2>
+      <div class="metric-grid">
+        <div class="metric-item">
+          <div class="label">Up% <span style="color:#404070;font-size:9px;">settled contracts</span></div>
+          <div class="value" id="up-rate-24h">--</div>
+        </div>
+        <div class="metric-item">
+          <div class="label">Settled (24h)</div>
+          <div class="value gray" id="n-settled-24h">--</div>
+        </div>
+        <div class="metric-item" style="grid-column:1/-1;">
+          <div class="label" style="font-size:9px;color:#404070;">Backtest mean: 50.0% · balanced ±4pp/day · warning if >55% or <45%</div>
+        </div>
       </div>
     </div>
 
@@ -570,6 +617,19 @@ function updatePortfolio(history) {
   drawChart();
 }
 
+function updateUpRate(data) {
+  const el = id => document.getElementById(id);
+  const rate = data.up_rate_24h;
+  const n = data.n_settled_24h;
+  el('n-settled-24h').textContent = n != null ? n : '--';
+  const rateEl = el('up-rate-24h');
+  if (rate == null) { rateEl.textContent = '--'; rateEl.style.color = '#8080b0'; return; }
+  rateEl.textContent = (rate * 100).toFixed(1) + '%';
+  rateEl.style.color = (rate >= 0.45 && rate <= 0.55) ? '#22e08a'
+                     : (rate >= 0.40 && rate <= 0.60) ? '#ffe066'
+                     : '#ff6060';
+}
+
 function updateEvHistory(history) {
   evData = history;
   drawEvChart();
@@ -747,6 +807,7 @@ async function refreshAll() {
     updateStats(statsData);
     updatePortfolio(statsData.portfolio_history || []);
     updateEvHistory(statsData.ev_history || []);
+    updateUpRate(statsData.up_rate_24h || {});
     document.getElementById('dot').style.background = '#22e08a';
   } catch (e) {
     document.getElementById('dot').style.background = '#ff6060';
