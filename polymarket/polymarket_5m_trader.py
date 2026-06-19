@@ -984,6 +984,12 @@ def _build_features(
     z20,  vol20  = _stats(mids_20, up_mid)
     oz60, ovol60 = _stats(obis_60, obi_cur)
 
+    # Stale-book guard: if we have history but every snapshot has the same mid
+    # price (CLOB WS frozen), vol60 == 0 with len > 1. This produces all-zero
+    # rolling features which are out-of-distribution for the model. Skip.
+    if len(h60) > 1 and vol60 == 0.0 and ovol60 == 0.0:
+        return None
+
     mid_change = up_mid - mids_60[0] if mids_60 else 0.0
 
     dt  = datetime.now(timezone.utc)
@@ -1070,7 +1076,12 @@ async def evaluate_entry(
         append_log(f"FEATURES {runtime.market.slug} | {feat_str}", prefix_timestamp=False)
     if feats is None or up_mid is None:
         counts.skipped += 1
-        reason = "feature extraction failed (missing book data)"
+        h60_len = sum(1 for s in runtime.history if time.time() - s.timestamp <= 60.0)
+        mids = [s.up_mid for s in runtime.history if time.time() - s.timestamp <= 60.0]
+        if h60_len > 1 and len(set(mids)) == 1:
+            reason = "stale book: CLOB WS frozen (all history identical)"
+        else:
+            reason = "feature extraction failed (missing book data)"
         runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
         append_log(
             f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} decision=SKIP {reason} | "
