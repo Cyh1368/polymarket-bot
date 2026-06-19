@@ -1,0 +1,41 @@
+{
+  "model": "huber_edge_eth_t265",
+  "trained": "2026-06-18",
+  "venue": "polymarket",
+  "coin": "ETH",
+  "horizon_seconds": 265,
+  "features": [
+    "p_yes_mid",
+    "yes_mid_z_60",
+    "yes_mid_vol_60",
+    "yes_mid_z_20",
+    "yes_mid_vol_20",
+    "mid_change_60",
+    "book_qty_log",
+    "OBI",
+    "OBI_vol_60",
+    "OBI_z_60",
+    "spread_yes",
+    "tod_sin",
+    "tod_cos",
+    "obi_depth_slope"
+  ],
+  "hyperparams": {
+    "max_depth": 3,
+    "num_leaves": 7,
+    "min_child_samples": 150,
+    "lambda_l2": 5.0,
+    "subsample": 0.9,
+    "feature_fraction": 0.9,
+    "learning_rate": 0.05,
+    "n_rounds": 300,
+    "huber_alpha": 1.0
+  },
+  "skip_bonus": 0.05,
+  "yes_gate_lo": 0.25,
+  "n_train_contracts": 1989,
+  "train_close_time_min": "2026-06-08 18:05:00+00:00",
+  "train_close_time_max": "2026-06-18 02:20:00+00:00",
+  "cv_performance": "50-seed: EV/avail +3.72%, win-capped +5.95%, trim10 +7.60%, CI lo +3.38%. Gate PASS.",
+  "WARNING": "DRY TESTING ONLY. Opening-book signal (~35s window at T=265). Research artifact."
+}
