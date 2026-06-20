@@ -70,7 +70,7 @@ def detect_session_config() -> dict[str, Any]:
             for line in reversed(f.readlines()):
                 if "START" in line and "polymarket_5m_trader" in line:
                     config["mode"] = "LIVE" if "LIVE TRADING" in line else "DRY"
-                    for key in ("model", "filters", "skip_bonus", "entry_seconds",
+                    for key in ("model", "session_gate", "skip_bonus", "entry_seconds",
                                 "contract_value", "stop_loss", "tolerance"):
                         m = re.search(rf"{key}=(\S+)", line)
                         if m:
@@ -300,7 +300,7 @@ def index() -> Response:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Polymarket 5m Trader</title>
+<title>Polymarket 5m ETH Trader</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0f0f14; color: #d0d0e0; font-family: 'Fira Mono', 'Consolas', monospace; font-size: 12.5px; min-height: 100vh; }
@@ -352,7 +352,7 @@ def index() -> Response:
 <body>
 <header>
   <div class="dot" id="dot"></div>
-  <h1>POLYMARKET 5m TRADER — BTC/USD</h1>
+  <h1>POLYMARKET 5m TRADER — ETH/USD</h1>
   <span id="mode-badge">DRY TESTING</span>
   <span id="header-status" style="margin-left:auto;font-size:11px;color:#606090;">loading...</span>
 </header>
@@ -387,11 +387,11 @@ def index() -> Response:
           <div class="value" id="ev-avail">--</div>
         </div>
         <div class="metric-item">
-          <div class="label">Win Rate YES <span style="color:#404070;font-size:9px;">exp 61%</span></div>
+          <div class="label">Win Rate YES <span style="color:#404070;font-size:9px;">exp ~63%</span></div>
           <div class="value blue" id="yes-wr">--</div>
         </div>
         <div class="metric-item">
-          <div class="label">Win Rate NO <span style="color:#404070;font-size:9px;">exp 59%</span></div>
+          <div class="label">Win Rate NO <span style="color:#404070;font-size:9px;">exp ~61%</span></div>
           <div class="value blue" id="no-wr">--</div>
         </div>
         <div class="metric-item">
@@ -424,7 +424,7 @@ def index() -> Response:
 
     <!-- Up% 24h regime card -->
     <div class="card">
-      <h2>BTC Regime — Up% in past 24h</h2>
+      <h2>ETH Regime — Up% in past 24h</h2>
       <div class="metric-grid">
         <div class="metric-item">
           <div class="label">Up% <span style="color:#404070;font-size:9px;">settled contracts</span></div>
@@ -436,6 +436,9 @@ def index() -> Response:
         </div>
         <div class="metric-item" style="grid-column:1/-1;">
           <div class="label" style="font-size:9px;color:#404070;">Backtest mean: 50.0% · balanced ±4pp/day · warning if >55% or <45%</div>
+        </div>
+        <div class="metric-item" style="grid-column:1/-1;">
+          <div class="label" style="font-size:9px;color:#404070;">Session gate: trading 08-12 UTC &amp; 20-24 UTC only (pre-reg 2026-06-20)</div>
         </div>
       </div>
     </div>
@@ -542,9 +545,9 @@ function updateStats(data) {
 
   const wrColor = (wr, exp) => wr == null ? '#8080b0' : wr >= exp ? '#22e08a' : wr >= exp - 5 ? '#ffe066' : '#ff6060';
   el('yes-wr').textContent = s.yes_win_rate != null ? s.yes_win_rate.toFixed(1) + '%' : '--';
-  el('yes-wr').style.color = wrColor(s.yes_win_rate, 61);
+  el('yes-wr').style.color = wrColor(s.yes_win_rate, 63);
   el('no-wr').textContent  = s.no_win_rate  != null ? s.no_win_rate.toFixed(1)  + '%' : '--';
-  el('no-wr').style.color  = wrColor(s.no_win_rate, 59);
+  el('no-wr').style.color  = wrColor(s.no_win_rate, 61);
 
   // Mode card + header badge
   const mode = s.mode || 'DRY';
@@ -564,7 +567,7 @@ function updateStats(data) {
   // Mode description — built from live session config, never hardcoded
   const descLines = [];
   if (cfg.model)          descLines.push(`model: ${cfg.model}`);
-  if (cfg.filters)        descLines.push(`filters: ${cfg.filters}`);
+  if (cfg.session_gate)   descLines.push(`session: ${cfg.session_gate}`);
   if (cfg.skip_bonus)     descLines.push(`skip_bonus: ${cfg.skip_bonus}`);
   if (cfg.entry_seconds)  descLines.push(`entry: T=${cfg.entry_seconds}s`);
   if (cfg.contract_value) descLines.push(`contract: ${cfg.contract_value}`);
