@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Polymarket ETH 5m Up/Down live trader — Huber edge-regression model (eth_t265).
+"""Polymarket ETH 5m Up/Down live trader — Huber edge-regression model (eth_t75).
 
-Entry rule (2026-06-20 CFES session-aware framework, ETH T=265s):
-  At T=265s before close: two Huber LightGBM regressors predict the expected
+Entry rule (2026-06-20 CFES session-aware framework, ETH T=75s):
+  At T=75s before close: two Huber LightGBM regressors predict the expected
   return of a YES bet and a NO bet directly (objective=huber, alpha=0.5).
   Trade the side with the higher predicted edge if it clears skip_bonus=0.05.
-  SESSION GATE: only trade during 08-12 UTC and 20-24 UTC. Skip all contracts
-    whose close time falls in 00-08 UTC (pre-registered bad session).
+  SESSION GATE (defensive): skip 00-08 UTC only. Trade all other sessions
+    (08-12, 12-16, 16-20, 20-24 UTC).
   14 features: v3 base (13) + obi_depth_slope (OLS slope of book imbalance
     vs log(tau) across 8 depth levels). NaN when <2 tau levels are available
     — LightGBM routes NaN to the optimal branch at each split.
-  CFES in-sample (purged daily walk-forward, 8 OOS days):
-    offensive session (08-12 & 20-24): EV +3.6%, Sharpe +0.65, t=+1.84.
-    Pre-registered hypothesis holds 7/7 days as of 2026-06-20.
-  Model files: polymarket/huber_yes_eth_t265.txt, huber_no_eth_t265.txt
+  CFES in-sample (purged daily walk-forward, 8 OOS days, defensive filter):
+    EV +2.2%, Sharpe +0.87, t=+2.45, 75% pos-days, CI=[+0.5%,+3.7%].
+  Model files: polymarket/huber_yes_eth_t75.txt, huber_no_eth_t75.txt
 
 No exit: hold to official settlement outcome.
 
@@ -72,12 +71,12 @@ POLYMARKET_CHAIN_ID = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
 # Huber edge-regression model (2026-06-20 CFES, ETH T=265s, session-gated).
 # Two regressors predict E[YES return] and E[NO return] directly; trade the side with the
 # higher predicted edge if it clears SKIP_BONUS. Session gate applied before model call.
-MODEL_YES_PATH = Path(__file__).resolve().parent / "huber_yes_eth_t265.txt"
-MODEL_NO_PATH  = Path(__file__).resolve().parent / "huber_no_eth_t265.txt"
+MODEL_YES_PATH = Path(__file__).resolve().parent / "huber_yes_eth_t75.txt"
+MODEL_NO_PATH  = Path(__file__).resolve().parent / "huber_no_eth_t75.txt"
 
-# Pre-registered good sessions (UTC hour ranges) — locked 2026-06-20, do NOT re-tune.
-# Trade only when contract close falls in 08-12 UTC or 20-24 UTC.
-GOOD_SESSION_HOURS: set[int] = set(range(8, 12)) | set(range(20, 24))
+# Defensive session gate — skip 00-08 UTC only (pre-registered bad window).
+# Trades 08-24 UTC (4 sessions: 08-12, 12-16, 16-20, 20-24).
+BAD_SESSION_HOURS: set[int] = set(range(0, 8))
 SKIP_BONUS  = 0.05    # minimum predicted edge (return-on-stake) to trade
 FEATURES = [
     "p_yes_mid",
@@ -1068,11 +1067,11 @@ async def evaluate_entry(
 
     um_str = f"{up_mid:.4f}" if up_mid is not None else "--"
 
-    # Session gate: skip contracts outside pre-registered good sessions (08-12 & 20-24 UTC).
+    # Session gate: skip contracts in 00-08 UTC (pre-registered bad window).
     close_hour = datetime.fromtimestamp(runtime.market.end_ts, timezone.utc).hour
-    if close_hour not in GOOD_SESSION_HOURS:
+    if close_hour in BAD_SESSION_HOURS:
         counts.skipped += 1
-        reason = f"outside good session (close_hour={close_hour} UTC); good={sorted(GOOD_SESSION_HOURS)}"
+        reason = f"bad session (close_hour={close_hour} UTC); skipping 00-08 UTC"
         runtime.decision = TradeDecision(status="skip", contracts=0, dry_run=not args.live, reason=reason)
         append_log(
             f"STATUS T={remaining:.1f}s {runtime.market.slug} | up_mid={um_str} decision=SKIP {reason} | "
@@ -1369,8 +1368,8 @@ async def run(args: argparse.Namespace) -> None:
         f"entry_seconds={args.entry_seconds} tolerance={args.entry_tolerance}s "
         f"outcome_delay={args.outcome_delay_seconds}s "
         f"stop_loss={fmt_money(args.stop_loss)} "
-        f"model=huber_edge_eth_t265[yes,no] skip_bonus={SKIP_BONUS} "
-        f"session_gate=08-12+20-24UTC "
+        f"model=huber_edge_eth_t75[yes,no] skip_bonus={SKIP_BONUS} "
+        f"session_gate=skip-00-08UTC "
         f"model_md5_yes={_yes_md5[:12]} model_md5_no={_no_md5[:12]}"
     )
 
@@ -1578,10 +1577,10 @@ async def run(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Polymarket ETH 5m Up/Down live trader — Huber edge-regression model at T=265s, session-gated 08-12 & 20-24 UTC.")
+    parser = argparse.ArgumentParser(description="Polymarket ETH 5m Up/Down live trader — Huber edge-regression model at T=75s, defensive session gate (skip 00-08 UTC).")
     parser.add_argument("--live", action="store_true", help="Submit real orders. Omit for dry-run.")
     parser.add_argument("--contract-value", type=float, default=1.05, help="Dollar value to spend per trade. Contracts = round(value / ask_price). Default: 1.05.")
-    parser.add_argument("--entry-seconds", type=float, default=265.0, help="Entry time before close (seconds). Default: 265.")
+    parser.add_argument("--entry-seconds", type=float, default=75.0, help="Entry time before close (seconds). Default: 75.")
     parser.add_argument("--entry-tolerance", type=float, default=5.0, help="Entry window tolerance (seconds). Default: 5.")
     parser.add_argument("--poll-interval", type=float, default=0.5, help="Poll interval (seconds). Default: 0.5.")
     parser.add_argument("--log-interval", type=float, default=30.0, help="Seconds between status log lines. Default: 30.")

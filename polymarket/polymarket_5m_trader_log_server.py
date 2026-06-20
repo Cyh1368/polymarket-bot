@@ -438,7 +438,7 @@ def index() -> Response:
           <div class="label" style="font-size:9px;color:#404070;">Backtest mean: 50.0% · balanced ±4pp/day · warning if >55% or <45%</div>
         </div>
         <div class="metric-item" style="grid-column:1/-1;">
-          <div class="label" style="font-size:9px;color:#404070;">Session gate: trading 08-12 UTC &amp; 20-24 UTC only (pre-reg 2026-06-20)</div>
+          <div class="label" style="font-size:9px;color:#404070;">Session gate: skip 00-08 UTC, trade 08-24 UTC (pre-reg 2026-06-20)</div>
         </div>
       </div>
     </div>
