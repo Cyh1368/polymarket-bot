@@ -9,3 +9,12 @@ data/live_orderbooks/
 .env
 .pytest_cache/
 .venv/
+keys/
+live-data/
+# Runtime logs (not source)
+polymarket/polymarket_5m_trader*.log
+polymarket/xrp_maker_trader.log
+.antigravity/
+.codex/
+.ssh/
+.claude/

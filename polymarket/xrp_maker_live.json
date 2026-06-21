@@ -1,0 +1,11 @@
+{
+  "start_time_utc": "2026-06-21T21:29:06.965Z",
+  "uptime_s": 1852,
+  "contracts_seen": 3,
+  "trades_attempted": 1,
+  "trades_filled": 0,
+  "trades_skipped": 0,
+  "fill_rate": 0.0,
+  "pnl_realized": 0.0,
+  "open_position": null
+}

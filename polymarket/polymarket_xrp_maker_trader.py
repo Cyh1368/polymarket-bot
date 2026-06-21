@@ -42,6 +42,8 @@ from typing import Any
 import httpx
 import numpy as np
 import websockets
+import logging
+logging.getLogger("py_clob_client_v2").setLevel(logging.CRITICAL)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -149,20 +151,47 @@ class SpotState:
             self.prices = [(t, p) for t, p in self.prices if t >= cutoff]
 
     async def ret_60s(self, now_ms: float) -> float | None:
-        """60-second log-return: log(price_now / price_60s_ago)."""
+        """60-second log-return: log(price_now / price_60s_ago).
+        If no price exists from 60s ago, uses oldest available (handles startup warmup)."""
         async with self.lock:
             if not self.prices:
                 return None
-            # most recent price at or before now_ms
             now_prices = [(t, p) for t, p in self.prices if t <= now_ms]
-            ago_prices  = [(t, p) for t, p in self.prices if t <= now_ms - HF_WINDOW_MS]
-            if not now_prices or not ago_prices:
+            if not now_prices:
                 return None
             p_now = now_prices[-1][1]
-            p_ago = ago_prices[-1][1]
+            ago_prices = [(t, p) for t, p in self.prices if t <= now_ms - HF_WINDOW_MS]
+            if ago_prices:
+                p_ago = ago_prices[-1][1]
+            else:
+                # Use oldest available price (startup warmup period)
+                p_ago = self.prices[0][1]
             if p_ago <= 0:
                 return None
             return float(np.log(p_now / p_ago))
+
+
+def seed_spot_from_csv(spot: SpotState) -> int:
+    """Pre-load last 5 minutes of XRP prices from local HF CSV (if available)."""
+    count = 0
+    for csv_path in [HF_CSV, REPO_ROOT / "kraken_hf" / f"trades_{COIN}_backfill.csv"]:
+        if not csv_path.exists():
+            continue
+        try:
+            import pandas as pd
+            df = pd.read_csv(csv_path, usecols=["kraken_ts_ms", "price"])
+            cutoff = time.time() * 1000 - 300_000  # last 5 min
+            df = df[df["kraken_ts_ms"] >= cutoff]
+            for _, row in df.iterrows():
+                spot.prices.append((float(row["kraken_ts_ms"]), float(row["price"])))
+            count += len(df)
+            if count > 0:
+                break
+        except Exception:
+            pass
+    if count:
+        spot.prices.sort(key=lambda x: x[0])
+    return count
 
 
 async def run_kraken_spot(spot: SpotState) -> None:
@@ -181,8 +210,15 @@ async def run_kraken_spot(spot: SpotState) -> None:
                     if msg.get("channel") != "trade" or msg.get("type") != "update":
                         continue
                     for trade in msg.get("data", []):
-                        ts_ms = float(trade.get("timestamp", 0))
-                        if ts_ms == 0:
+                        raw_ts = trade.get("timestamp", 0)
+                        try:
+                            # Kraken WS v2 sends ISO string e.g. "2026-06-21T21:17:03.357Z"
+                            if isinstance(raw_ts, str):
+                                ts_ms = datetime.fromisoformat(
+                                    raw_ts.replace("Z", "+00:00")).timestamp() * 1000
+                            else:
+                                ts_ms = float(raw_ts) * (1 if float(raw_ts) > 1e12 else 1000)
+                        except Exception:
                             ts_ms = time.time() * 1000
                         price = float(trade["price"])
                         await spot.add(ts_ms, price)
@@ -196,33 +232,46 @@ async def run_kraken_spot(spot: SpotState) -> None:
 # ---------------------------------------------------------------------------
 
 async def find_active_market(client: httpx.AsyncClient) -> dict | None:
-    """Find the currently active XRP 5m Up/Down market via Gamma API."""
-    resp = await client.get(
-        f"{GAMMA_BASE_URL}/markets",
-        params={"tag_slug": f"{COIN_SLUG_PREFIX}-updown-5m", "active": "true", "closed": "false"},
-        timeout=10,
-    )
-    if resp.status_code != 200:
-        return None
-    markets = resp.json() if isinstance(resp.json(), list) else resp.json().get("markets", [])
-    # filter to slug prefix and not-yet-closed
-    now_ts = time.time()
-    candidates = []
-    for m in markets:
-        slug = m.get("slug", "") or m.get("market_slug", "")
-        if not slug.startswith(f"{COIN_SLUG_PREFIX}-updown-5m"):
-            continue
-        end_ts = m.get("end_date_iso") or m.get("event_end_utc") or m.get("endDateIso") or ""
+    """Find the currently active XRP 5m Up/Down market via Gamma API events endpoint.
+
+    Uses timestamp-slot discovery (same as the data collector): tries slugs
+    xrp-updown-5m-<slot> for the current 5m slot and adjacent ones.
+    """
+    FIVE_MIN = 300
+    now_ts   = time.time()
+    current_slot = int(now_ts) // FIVE_MIN * FIVE_MIN
+    offsets = [0, 1, -1, 2, -2, 3, -3]
+
+    for offset in offsets:
+        slot = current_slot + offset * FIVE_MIN
+        if slot < now_ts - FIVE_MIN:
+            continue  # already closed
+        slug = f"{COIN_SLUG_PREFIX}-updown-5m-{slot}"
         try:
-            end_s = datetime.fromisoformat(end_ts.replace("Z", "+00:00")).timestamp()
-            if end_s > now_ts + ENTRY_HORIZON - 30:  # closes after our entry window
-                candidates.append((end_s, m))
+            resp = await client.get(f"{GAMMA_BASE_URL}/events/slug/{slug}", timeout=8)
+            if resp.status_code != 200:
+                continue
+            event = resp.json()
+            markets = event.get("markets", [])
+            if not markets:
+                continue
+            m = markets[0]
+            # Normalise close time — Gamma puts it on the market as "endDate" (full ISO)
+            close_iso = (m.get("endDate") or event.get("endDate") or
+                         m.get("end_date_iso") or m.get("endDateIso") or "")
+            m["end_date_iso"] = close_iso
+            m["slug"] = slug
+            # Verify it hasn't already closed
+            try:
+                close_s = datetime.fromisoformat(close_iso.replace("Z","+00:00")).timestamp()
+                if close_s < time.time() - 30:
+                    continue   # already settled
+            except Exception:
+                pass
+            return m
         except Exception:
-            pass
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: x[0])
-    return candidates[0][1]
+            continue
+    return None
 
 
 async def get_market_clob_info(client: httpx.AsyncClient, condition_id: str) -> dict | None:
@@ -253,31 +302,50 @@ class BookState:
     updated_at: float = 0.0
 
     async def update(self, token_id: str, up_token_id: str, bids: list, asks: list) -> None:
+        """Update from a 'book' event: bids/asks are lists of {price, size} dicts."""
         async with self.lock:
-            if bids:
-                best_bid = float(bids[0]["price"])
-                best_bid_qty = float(bids[0]["size"])
-            else:
-                best_bid, best_bid_qty = 0.0, 0.0
-            if asks:
-                best_ask = float(asks[0]["price"])
-                best_ask_qty = float(asks[0]["size"])
-            else:
-                best_ask, best_ask_qty = 1.0, 0.0
-            mid = (best_bid + best_ask) / 2
+            def best(levels: list, side: str):
+                valid = [(float(l["price"]), float(l["size"]))
+                         for l in levels if isinstance(l, dict)
+                         and float(l.get("size", 0)) > 0]
+                if not valid:
+                    return (0.0, 0.0) if side == "bid" else (1.0, 0.0)
+                return max(valid) if side == "bid" else min(valid)
+
+            bb, bbq = best(bids, "bid")
+            ba, baq = best(asks, "ask")
+            mid = round((bb + ba) / 2, 4)
 
             if token_id == up_token_id:
-                self.up_bid, self.up_ask, self.up_mid = best_bid, best_ask, mid
-                self.up_bid_qty, self.up_ask_qty = best_bid_qty, best_ask_qty
-                self.down_ask = round(1 - best_bid, 4)
-                self.down_bid = round(1 - best_ask, 4)
+                self.up_bid, self.up_ask, self.up_mid = bb, ba, mid
+                self.up_bid_qty, self.up_ask_qty = bbq, baq
+                self.down_ask = round(1 - bb, 4)
+                self.down_bid = round(1 - ba, 4)
                 self.down_mid = round(1 - mid, 4)
             else:
-                self.down_bid, self.down_ask, self.down_mid = best_bid, best_ask, mid
-                self.up_ask = round(1 - best_bid, 4)
-                self.up_bid = round(1 - best_ask, 4)
+                self.down_bid, self.down_ask, self.down_mid = bb, ba, mid
+                self.up_ask = round(1 - bb, 4)
+                self.up_bid = round(1 - ba, 4)
                 self.up_mid = round(1 - mid, 4)
             self.updated_at = time.time()
+
+    async def apply_price_change(self, token_id: str, up_token_id: str, chg: dict) -> None:
+        """Update from a 'price_change' event: single side+price+size delta."""
+        async with self.lock:
+            side  = str(chg.get("side","")).upper()
+            price = chg.get("price")
+            fa    = chg.get("best_ask") or chg.get("bestAsk")
+            fb    = chg.get("best_bid") or chg.get("bestBid")
+            if fa is not None and fb is not None:
+                bb, ba = float(fb), float(fa)
+                mid = round((bb + ba) / 2, 4)
+                if token_id == up_token_id:
+                    self.up_bid, self.up_ask, self.up_mid = bb, ba, mid
+                    self.down_ask = round(1-bb,4); self.down_bid = round(1-ba,4); self.down_mid = round(1-mid,4)
+                else:
+                    self.down_bid, self.down_ask, self.down_mid = bb, ba, mid
+                    self.up_ask = round(1-bb,4); self.up_bid = round(1-ba,4); self.up_mid = round(1-mid,4)
+                self.updated_at = time.time()
 
 
 async def run_clob_book(book: BookState, condition_id: str,
@@ -292,13 +360,29 @@ async def run_clob_book(book: BookState, condition_id: str,
                 await ws.send(sub)
                 log(f"CLOB book WS: subscribed to {condition_id}")
                 async for raw in ws:
-                    msg = json.loads(raw)
-                    event_type = msg.get("event_type") or msg.get("type", "")
-                    token_id   = msg.get("asset_id") or msg.get("token_id") or ""
-                    if event_type in ("book", "price_change") and token_id in (up_token_id, down_token_id):
-                        bids = msg.get("bids", [])
-                        asks = msg.get("asks", [])
-                        await book.update(token_id, up_token_id, bids, asks)
+                    msgs = json.loads(raw)
+                    # CLOB WS sends a list of event objects
+                    if not isinstance(msgs, list):
+                        msgs = [msgs]
+                    for msg in msgs:
+                        if not isinstance(msg, dict):
+                            continue
+                        event_type = msg.get("event_type", "")
+                        token_id   = msg.get("asset_id") or msg.get("token_id") or ""
+                        if event_type == "book" and token_id in (up_token_id, down_token_id):
+                            bids = msg.get("bids", [])
+                            asks = msg.get("asks", [])
+                            await book.update(token_id, up_token_id, bids, asks)
+                        elif event_type == "price_change":
+                            changes = msg.get("price_changes") or [msg]
+                            for chg in changes:
+                                tid = chg.get("asset_id","")
+                                if tid in (up_token_id, down_token_id):
+                                    await book.apply_price_change(tid, up_token_id, chg)
+                        elif event_type == "best_bid_ask":
+                            tid = msg.get("asset_id","")
+                            if tid in (up_token_id, down_token_id):
+                                await book.apply_price_change(tid, up_token_id, msg)
         except Exception as exc:
             log(f"CLOB book WS error: {exc} — reconnecting in 3s")
             await asyncio.sleep(3)
@@ -376,6 +460,9 @@ def cancel_order_by_id(order_id: str) -> dict:
 
 
 def send_heartbeat() -> None:
+    key = os.getenv("POLYMARKET_PRIVATE_KEY") or os.getenv("PK")
+    if not key:
+        return  # skip heartbeat in dry-run without credentials
     try:
         client = _polymarket_client()
         client.post_heartbeat()
@@ -467,25 +554,18 @@ async def trade_contract(
 
     condition_id  = clob_info.get("condition_id") or market.get("conditionId", "")
     market_slug   = market.get("slug") or market.get("market_slug", "")
-    close_time_s  = float(market.get("end_date_iso") or
-                          market.get("event_end_utc") or
-                          market.get("endDateIso") or 0)
-    if close_time_s == 0:
-        log(f"SKIP {market_slug}: cannot parse close time")
-        return
-
+    close_iso = (market.get("end_date_iso") or market.get("endDate") or
+                 market.get("event_end_utc") or market.get("endDateIso") or "")
     try:
-        close_dt = datetime.fromisoformat(
-            (market.get("end_date_iso") or market.get("event_end_utc") or "").replace("Z", "+00:00")
-        )
+        close_dt = datetime.fromisoformat(close_iso.replace("Z", "+00:00"))
         close_time_s = close_dt.timestamp()
     except Exception:
-        log(f"SKIP {market_slug}: bad close time")
+        log(f"SKIP {market_slug}: cannot parse close time from '{close_iso}'")
         return
 
     tokens = clob_info.get("tokens", [])
-    up_token_id   = next((t["token_id"] for t in tokens if t.get("outcome") == "Yes"), None)
-    down_token_id = next((t["token_id"] for t in tokens if t.get("outcome") == "No"), None)
+    up_token_id   = next((t["token_id"] for t in tokens if t.get("outcome") in ("Yes","Up")), None)
+    down_token_id = next((t["token_id"] for t in tokens if t.get("outcome") in ("No","Down")), None)
     if not up_token_id or not down_token_id:
         log(f"SKIP {market_slug}: missing token IDs")
         return
@@ -594,17 +674,23 @@ async def trade_contract(
         await asyncio.sleep(0.5)
 
     # Contract closed — wait for outcome then log PnL
-    if entered and order_id:
+    if entered:
         await asyncio.sleep(60)  # wait ~1 min after close for settlement
-        try:
-            client = _polymarket_client()
-            order_info = client.get_order(order_id) if not dry_run else {}
-        except Exception:
+        if dry_run:
+            # Assume full fill at limit price for dry-run PnL simulation
             order_info = {}
-
-        filled   = float(order_info.get("size_matched") or 0)
-        fill_px  = float(order_info.get("average_price") or limit_price or 0)
-        status   = str(order_info.get("status", "unknown" if not dry_run else "dry_run"))
+            filled  = float(size_shares)
+            fill_px = float(limit_price or 0)
+            status  = "dry_run"
+        else:
+            try:
+                client = _polymarket_client()
+                order_info = client.get_order(order_id) if order_id else {}
+            except Exception:
+                order_info = {}
+            filled  = float(order_info.get("size_matched") or 0)
+            fill_px = float(order_info.get("average_price") or limit_price or 0)
+            status  = str(order_info.get("status", "unknown"))
 
         # Try to get official outcome from CLOB trades
         official_outcome = None
@@ -663,14 +749,17 @@ async def trade_contract(
 
 async def run_heartbeat() -> None:
     while True:
-        send_heartbeat()
         await asyncio.sleep(HEARTBEAT_INTERVAL)
+        # Run blocking heartbeat in thread pool so it doesn't stall the event loop
+        await asyncio.get_event_loop().run_in_executor(None, send_heartbeat)
 
 
 async def main_loop(*, dry_run: bool, size_shares: float) -> None:
-    _load_env()
     bundle = load_model()
     spot   = SpotState()
+    seeded = seed_spot_from_csv(spot)
+    if seeded:
+        log(f"Seeded {seeded} recent spot prices from local HF CSV")
     stats  = SessionStats()
     init_trades_csv()
 
@@ -691,6 +780,7 @@ async def main_loop(*, dry_run: bool, size_shares: float) -> None:
 
         while True:
             try:
+                log("Searching for active XRP 5m market…")
                 market = await find_active_market(http)
                 if market is None:
                     log("No active XRP 5m market found — waiting 15s")
@@ -714,9 +804,10 @@ async def main_loop(*, dry_run: bool, size_shares: float) -> None:
                     continue
 
                 tokens        = clob_info.get("tokens", [])
-                up_token_id   = next((t["token_id"] for t in tokens if t.get("outcome") == "Yes"), None)
-                down_token_id = next((t["token_id"] for t in tokens if t.get("outcome") == "No"), None)
+                up_token_id   = next((t["token_id"] for t in tokens if t.get("outcome") in ("Yes","Up")), None)
+                down_token_id = next((t["token_id"] for t in tokens if t.get("outcome") in ("No","Down")), None)
                 if not up_token_id or not down_token_id:
+                    log(f"Could not find Up/Down token IDs in {[t.get('outcome') for t in tokens]} — skip")
                     await asyncio.sleep(10)
                     continue
 
@@ -747,6 +838,7 @@ async def main_loop(*, dry_run: bool, size_shares: float) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    _load_env()
     parser = argparse.ArgumentParser(description="XRP Polymarket Maker Trader")
     parser.add_argument("--live", action="store_true",
                         help="Place real orders (default: dry run)")
