@@ -692,23 +692,29 @@ async def trade_contract(
             fill_px = float(order_info.get("average_price") or limit_price or 0)
             status  = str(order_info.get("status", "unknown"))
 
-        # Try to get official outcome from CLOB trades
+        # Try to get official outcome from CLOB trades (retry up to 3 times, 60s apart)
         official_outcome = None
-        try:
-            async with httpx.AsyncClient() as http:
-                r = await http.get(f"{CLOB_BASE_URL}/data/trades",
-                                   params={"market": condition_id, "taker_only": "false"})
-                if r.status_code == 200:
-                    trades_data = r.json()
-                    # Check last traded price near 0 or 1 (settlement)
-                    for t in (trades_data.get("data") or trades_data or []):
-                        price_val = float(t.get("price") or 0)
-                        if price_val >= 0.99:
-                            official_outcome = 1
-                        elif price_val <= 0.01:
-                            official_outcome = 0
-        except Exception:
-            pass
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient() as http:
+                    r = await http.get(f"{CLOB_BASE_URL}/data/trades",
+                                       params={"market": condition_id, "taker_only": "false"},
+                                       timeout=10)
+                    if r.status_code == 200:
+                        trades_data = r.json()
+                        for t in (trades_data.get("data") or trades_data or []):
+                            price_val = float(t.get("price") or 0)
+                            if price_val >= 0.99:
+                                official_outcome = 1
+                            elif price_val <= 0.01:
+                                official_outcome = 0
+            except Exception:
+                pass
+            if official_outcome is not None:
+                break
+            if attempt < 2:
+                log(f"{market_slug}: outcome not yet available — retrying in 60s")
+                await asyncio.sleep(60)
 
         if filled > 0 and official_outcome is not None:
             # Compute net PnL
