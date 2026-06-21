@@ -773,70 +773,73 @@ async def main_loop(*, dry_run: bool, size_shares: float) -> None:
     log(f"Starting XRP maker trader  dry_run={dry_run}  size={size_shares}  "
         f"balance={f'${balance:.2f}' if balance else 'unknown'}")
 
-    async with httpx.AsyncClient() as http:
-        # Background tasks: Kraken spot + heartbeat
-        tasks: list[asyncio.Task] = [
-            asyncio.create_task(run_kraken_spot(spot)),
-            asyncio.create_task(run_heartbeat()),
-        ]
+    # Background tasks: Kraken spot + heartbeat
+    tasks: list[asyncio.Task] = [
+        asyncio.create_task(run_kraken_spot(spot)),
+        asyncio.create_task(run_heartbeat()),
+    ]
 
-        seen_conditions: set[str] = set()
-        current_book_task: asyncio.Task | None = None
-        current_condition: str = ""
+    seen_conditions: set[str] = set()
+    current_book_task: asyncio.Task | None = None
+    current_condition: str = ""
 
-        while True:
-            try:
-                log("Searching for active XRP 5m market…")
-                market = await find_active_market(http)
-                if market is None:
-                    log("No active XRP 5m market found — waiting 15s")
-                    await asyncio.sleep(15)
-                    continue
+    while True:
+        try:
+            log("Searching for active XRP 5m market…")
+            # Fresh client each iteration — avoids stale connection pool hangs
+            async with httpx.AsyncClient(timeout=12) as http:
+                market = await asyncio.wait_for(find_active_market(http), timeout=30)
+            if market is None:
+                log("No active XRP 5m market found — waiting 15s")
+                await asyncio.sleep(15)
+                continue
 
-                condition_id = (market.get("conditionId") or
-                                market.get("condition_id") or "")
-                if not condition_id:
-                    await asyncio.sleep(15)
-                    continue
+            condition_id = (market.get("conditionId") or
+                            market.get("condition_id") or "")
+            if not condition_id:
+                await asyncio.sleep(15)
+                continue
 
-                if condition_id in seen_conditions:
-                    # Already handled this contract, wait for next
-                    await asyncio.sleep(10)
-                    continue
+            if condition_id in seen_conditions:
+                # Already handled this contract, wait for next
+                await asyncio.sleep(10)
+                continue
 
-                clob_info = await get_market_clob_info(http, condition_id)
-                if not clob_info:
-                    await asyncio.sleep(10)
-                    continue
+            async with httpx.AsyncClient(timeout=12) as http:
+                clob_info = await asyncio.wait_for(
+                    get_market_clob_info(http, condition_id), timeout=20)
+            if not clob_info:
+                await asyncio.sleep(10)
+                continue
 
-                tokens        = clob_info.get("tokens", [])
-                up_token_id   = next((t["token_id"] for t in tokens if t.get("outcome") in ("Yes","Up")), None)
-                down_token_id = next((t["token_id"] for t in tokens if t.get("outcome") in ("No","Down")), None)
-                if not up_token_id or not down_token_id:
-                    log(f"Could not find Up/Down token IDs in {[t.get('outcome') for t in tokens]} — skip")
-                    await asyncio.sleep(10)
-                    continue
+            tokens        = clob_info.get("tokens", [])
+            up_token_id   = next((t["token_id"] for t in tokens if t.get("outcome") in ("Yes","Up")), None)
+            down_token_id = next((t["token_id"] for t in tokens if t.get("outcome") in ("No","Down")), None)
+            if not up_token_id or not down_token_id:
+                log(f"Could not find Up/Down token IDs in {[t.get('outcome') for t in tokens]} — skip")
+                await asyncio.sleep(10)
+                continue
 
-                # Start new book subscription if contract changed
-                if condition_id != current_condition:
-                    if current_book_task:
-                        current_book_task.cancel()
-                    book = BookState()
-                    current_book_task = asyncio.create_task(
-                        run_clob_book(book, condition_id, up_token_id, down_token_id)
-                    )
-                    tasks.append(current_book_task)
-                    current_condition = condition_id
-                    await asyncio.sleep(1)  # let book populate
+            # Start new book subscription if contract changed
+            if condition_id != current_condition:
+                if current_book_task:
+                    current_book_task.cancel()
+                book = BookState()
+                current_book_task = asyncio.create_task(
+                    run_clob_book(book, condition_id, up_token_id, down_token_id)
+                )
+                tasks.append(current_book_task)
+                current_condition = condition_id
+                await asyncio.sleep(1)  # let book populate
 
-                await trade_contract(market, clob_info, book, spot, bundle, stats,
-                                     dry_run=dry_run, size_shares=size_shares)
-                seen_conditions.add(condition_id)
-                update_live_json(stats.to_dict())
+            await trade_contract(market, clob_info, book, spot, bundle, stats,
+                                 dry_run=dry_run, size_shares=size_shares)
+            seen_conditions.add(condition_id)
+            update_live_json(stats.to_dict())
 
-            except Exception as exc:
-                log(f"Main loop error: {exc}")
-                await asyncio.sleep(5)
+        except Exception as exc:
+            log(f"Main loop error: {exc}")
+            await asyncio.sleep(5)
 
 
 # ---------------------------------------------------------------------------

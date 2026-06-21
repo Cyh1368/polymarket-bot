@@ -19,7 +19,7 @@ import csv
 import json
 import math
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 
 APP_DIR    = Path(__file__).resolve().parent
@@ -50,8 +50,16 @@ def load_trades() -> list[dict]:
 def load_log_tail(n: int = 60) -> list[str]:
     if not LOG_PATH.exists():
         return []
-    lines = LOG_PATH.read_text().splitlines()
-    return lines[-n:]
+    # Read only the last 64 KB to avoid blocking on large files
+    try:
+        with open(LOG_PATH, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 65536))
+            tail = f.read().decode("utf-8", errors="replace")
+        return tail.splitlines()[-n:]
+    except Exception:
+        return []
 
 
 def compute_stats(trades: list[dict]) -> dict:
@@ -244,6 +252,8 @@ def build_html(session: dict, trades: list[dict], log_lines: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
+    timeout = 10  # drop connections that stall for >10s
+
     def log_message(self, *args):
         pass  # suppress access log
 
@@ -265,7 +275,7 @@ def main():
     parser.add_argument("--port", type=int, default=8093)
     args = parser.parse_args()
     addr = ("0.0.0.0", args.port)
-    server = HTTPServer(addr, Handler)
+    server = ThreadingHTTPServer(addr, Handler)
     print(f"XRP Maker display server: http://localhost:{args.port}")
     server.serve_forever()
 
