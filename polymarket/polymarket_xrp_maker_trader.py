@@ -739,8 +739,10 @@ async def trade_contract(
     stats.contracts_seen += 1
     log(f"Watching {market_slug}  close={iso_utc(close_dt)}  up_token={up_token_id[:12]}…")
 
-    # Fetch and log balance at contract start
+    # Fetch and log balance at contract start (dry-run uses placeholder)
     balance = get_balance()
+    if dry_run and balance is None:
+        balance = 10000.0  # placeholder for dry-run
     if balance is not None:
         stats.balance_history.append({
             "timestamp_utc": iso_utc(),
