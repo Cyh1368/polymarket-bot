@@ -16,6 +16,7 @@ APP_DIR    = Path(__file__).resolve().parent
 LIVE_JSON  = APP_DIR / "xrp_maker_live.json"
 TRADES_CSV = APP_DIR / "xrp_maker_trades.csv"
 LOG_PATH   = APP_DIR / "xrp_maker_trader.log"
+BALANCE_HISTORY_JSON = APP_DIR / "xrp_maker_balance_history.json"
 
 app = Flask(__name__)
 CORS(app)
@@ -110,11 +111,21 @@ def get_log() -> Response:
     return jsonify({"lines": load_log_tail(n)})
 
 
+def load_balance_history() -> list[dict]:
+    if not BALANCE_HISTORY_JSON.exists():
+        return []
+    try:
+        return json.loads(BALANCE_HISTORY_JSON.read_text())
+    except Exception:
+        return []
+
+
 @app.route("/stats")
 def get_stats() -> Response:
     trades  = load_trades()
     session = load_session()
     stats   = compute_stats(trades)
+    balance_history = load_balance_history()
 
     # Latest open/settled contract
     latest: dict = {}
@@ -139,9 +150,10 @@ def get_stats() -> Response:
             latest["status"] = "open"
 
     return jsonify({
-        "stats":   stats,
-        "session": session,
-        "latest":  latest,
+        "stats":             stats,
+        "session":           session,
+        "latest":            latest,
+        "balance_history":   balance_history,
     })
 
 
@@ -157,6 +169,7 @@ def index() -> Response:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>XRP Maker Trader</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0f0f14; color: #d0d0e0; font-family: 'Fira Mono', 'Consolas', monospace; font-size: 12.5px; min-height: 100vh; }
@@ -253,6 +266,11 @@ def index() -> Response:
     <div class="card">
       <h2>PnL History</h2>
       <svg id="spark" class="pnl-spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div class="card">
+      <h2>Balance Over Time</h2>
+      <canvas id="balanceChart" style="max-height:120px;"></canvas>
     </div>
 
     <div class="card">
@@ -361,6 +379,7 @@ function updateStats(data) {
     `W:${s.wins||0} L:${s.losses||0} skip:${sess.trades_skipped||0} pnl:${fmt(s.cumulative_pnl,4)}`;
 
   drawSparkline(s.pnl_history || []);
+  drawBalanceChart(data.balance_history || []);
 
   // Latest contract box
   let html = '';
@@ -385,6 +404,69 @@ function updateStats(data) {
     html = '<span class="skipped">Waiting for data…</span>';
   }
   document.getElementById('contract-box').innerHTML = html;
+}
+
+let balanceChartInstance = null;
+
+function drawBalanceChart(history) {
+  if (!history || history.length < 2) {
+    document.getElementById('balanceChart').style.display = 'none';
+    return;
+  }
+  document.getElementById('balanceChart').style.display = 'block';
+
+  const ctx = document.getElementById('balanceChart').getContext('2d');
+  const labels = history.map(h => {
+    const dt = new Date(h.timestamp_utc + 'Z');
+    return `${dt.getHours().toString().padStart(2,'0')}:${dt.getMinutes().toString().padStart(2,'0')}`;
+  });
+  const balances = history.map(h => parseFloat(h.balance || 0));
+
+  const minBalance = Math.min(...balances);
+  const maxBalance = Math.max(...balances);
+  const yMin = Math.floor(minBalance * 0.95);
+  const yMax = Math.ceil(maxBalance * 1.05);
+
+  if (balanceChartInstance) balanceChartInstance.destroy();
+
+  balanceChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Account Balance ($)',
+        data: balances,
+        borderColor: '#22e08a',
+        backgroundColor: 'rgba(34, 224, 138, 0.08)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.2,
+        pointRadius: 3,
+        pointBackgroundColor: '#22e08a',
+        pointBorderColor: '#0f0f14',
+        pointBorderWidth: 1,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        y: {
+          min: yMin,
+          max: yMax,
+          ticks: { color: '#6060a0', font: { size: 10 } },
+          grid: { color: 'rgba(96,96,160,0.1)' }
+        },
+        x: {
+          ticks: { color: '#6060a0', font: { size: 9 } },
+          grid: { display: false }
+        }
+      }
+    }
+  });
 }
 
 async function poll() {

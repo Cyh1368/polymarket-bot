@@ -77,6 +77,7 @@ HF_CSV     = REPO_ROOT / "kraken_hf" / f"trades_{COIN}.csv"
 LOG_PATH    = APP_DIR / "xrp_maker_trader.log"
 TRADES_CSV  = APP_DIR / "xrp_maker_trades.csv"
 LIVE_JSON   = APP_DIR / "xrp_maker_live.json"   # for display server
+BALANCE_HISTORY_JSON = APP_DIR / "xrp_maker_balance_history.json"  # balance over time
 
 TRADE_FIELDS = [
     "timestamp_utc", "event", "condition_id", "market_slug", "close_time_utc",
@@ -547,6 +548,7 @@ class SessionStats:
     trades_skipped: int = 0
     pnl_realized: float = 0.0
     open_position: dict | None = None   # {condition_id, side, limit_price, size, order_id}
+    balance_history: list[dict] = field(default_factory=list)  # [{timestamp_utc, balance}]
 
     def to_dict(self) -> dict:
         return {
@@ -563,6 +565,138 @@ class SessionStats:
 
 
 # ---------------------------------------------------------------------------
+# Balance and outcome tracking
+# ---------------------------------------------------------------------------
+
+def save_balance_history(stats: SessionStats) -> None:
+    """Save balance history to JSON for display server."""
+    try:
+        BALANCE_HISTORY_JSON.write_text(json.dumps(stats.balance_history, indent=2))
+    except Exception:
+        pass
+
+
+async def retry_pending_outcomes(
+    pending_outcomes: dict[str, dict],
+    stats: SessionStats,
+) -> None:
+    """Retry outcome fetches for unsettled contracts. Remove when successful."""
+    completed = []
+    for condition_id, info in list(pending_outcomes.items()):
+        market_slug = info["market_slug"]
+        attempts = info.get("attempts", 0)
+        if attempts >= 10:
+            # Give up after 10 retries (already tried for 10 min)
+            log(f"{market_slug}: giving up on outcome after 10 retries")
+            completed.append(condition_id)
+            continue
+
+        official_outcome = None
+        try:
+            async with httpx.AsyncClient(timeout=15) as http:
+                r = await http.get("https://gamma-api.polymarket.com/markets",
+                                   params={"condition_id": condition_id})
+                if r.status_code == 200:
+                    data = r.json()
+                    if data:
+                        market = data[0]
+                        if market.get("resolved"):
+                            for token in market.get("tokens", []):
+                                outcome_str = token.get("outcome", "").lower()
+                                price_val = float(token.get("price") or 0)
+                                if outcome_str in ("yes", "up") and price_val >= 0.95:
+                                    official_outcome = 1
+                                    break
+                                elif outcome_str in ("no", "down") and price_val >= 0.95:
+                                    official_outcome = 0
+                                    break
+        except Exception:
+            pass
+
+        if official_outcome is not None:
+            # Found outcome — compute correct flag and record it
+            info["official_outcome"] = official_outcome
+            order_side = info.get("order_side")
+            correct = (order_side == "YES" and official_outcome == 1) or (order_side == "NO" and official_outcome == 0)
+            info["correct"] = correct
+            filled = float(info.get("filled") or 0)
+            fill_px = float(info.get("fill_price") or 0)
+            if filled > 0 and official_outcome is not None:
+                if order_side == "YES":
+                    gross = (1.0 - fill_px) * official_outcome + (-fill_px) * (1 - official_outcome)
+                else:
+                    gross = (1.0 - fill_px) * (1 - official_outcome) + (-fill_px) * official_outcome
+                fee = math.ceil(0.07 * fill_px * (1 - fill_px) * 100) / 100 + MAKER_FEE
+                net_pnl = (gross - fee) * filled
+            else:
+                net_pnl = 0.0
+            info["net_pnl"] = net_pnl
+            _record_settlement(info, stats)
+            log(f"{market_slug}: SETTLED  filled={filled:.1f}  outcome={'Up' if official_outcome else 'Down'}  "
+                f"correct={correct}  pnl={net_pnl:+.4f}  cumulative={stats.pnl_realized:+.4f}")
+            completed.append(condition_id)
+        else:
+            # Still pending — increment attempt counter
+            pending_outcomes[condition_id]["attempts"] = attempts + 1
+
+    # Remove completed from pending
+    for cid in completed:
+        del pending_outcomes[cid]
+
+
+def _record_settlement(info: dict, stats: SessionStats) -> None:
+    """Compute PnL, update stats, and write settlement record to CSV."""
+    filled = float(info.get("filled") or 0)
+    fill_px = float(info.get("fill_price") or 0)
+    official_outcome = info.get("official_outcome")
+    order_side = info.get("order_side")
+
+    net_pnl = 0.0
+    if filled > 0 and official_outcome is not None:
+        # Compute gross P&L
+        if order_side == "YES":
+            gross = (1.0 - fill_px) * official_outcome + (-fill_px) * (1 - official_outcome)
+        else:
+            gross = (1.0 - fill_px) * (1 - official_outcome) + (-fill_px) * official_outcome
+        fee = math.ceil(0.07 * fill_px * (1 - fill_px) * 100) / 100 + MAKER_FEE
+        net_pnl_per = gross - fee
+        net_pnl = net_pnl_per * filled
+        stats.pnl_realized += net_pnl
+
+    try:
+        with open(TRADES_CSV, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=TRADE_FIELDS)
+            writer.writerow({
+                "timestamp_utc": info["timestamp_utc"],
+                "event": "settled",
+                "condition_id": info["condition_id"],
+                "market_slug": info["market_slug"],
+                "close_time_utc": info["close_time_utc"],
+                "seconds_to_close_at_entry": info.get("seconds_to_close_at_entry", ""),
+                "up_mid": info.get("up_mid", ""),
+                "up_ask": info.get("up_ask", ""),
+                "down_ask": info.get("down_ask", ""),
+                "hf_ret_60s": info.get("hf_ret_60s", ""),
+                "p_up_model": info.get("p_up_model", ""),
+                "ev_yes": info.get("ev_yes", ""),
+                "ev_no": info.get("ev_no", ""),
+                "side": order_side or "",
+                "token_id": info.get("token_id", ""),
+                "limit_price": info.get("limit_price", ""),
+                "size_shares": info.get("filled", ""),
+                "dry_run": "dry_run" if info.get("dry_run") else "",
+                "order_id": info.get("order_id", ""),
+                "order_status": info.get("status", ""),
+                "fill_price": fill_px,
+                "filled_shares": filled,
+                "official_outcome": official_outcome,
+                "net_pnl": round(net_pnl, 4),
+            })
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Main trading loop
 # ---------------------------------------------------------------------------
 
@@ -573,11 +707,16 @@ async def trade_contract(
     spot: SpotState,
     bundle: dict,
     stats: SessionStats,
+    pending_outcomes: dict[str, dict],
     *,
     dry_run: bool,
     size_shares: float,
 ) -> None:
-    """Manage one XRP 5m contract: wait for T=180s, decide, post limit, track fill."""
+    """Manage one XRP 5m contract: wait for T=180s, decide, post limit, return immediately.
+
+    Settlement and outcome fetching are handled asynchronously by retry_pending_outcomes()
+    in the main loop, so new contracts start on-time without being blocked by settlement delays.
+    """
 
     condition_id  = clob_info.get("condition_id") or market.get("conditionId", "")
     market_slug   = market.get("slug") or market.get("market_slug", "")
@@ -599,6 +738,16 @@ async def trade_contract(
 
     stats.contracts_seen += 1
     log(f"Watching {market_slug}  close={iso_utc(close_dt)}  up_token={up_token_id[:12]}…")
+
+    # Fetch and log balance at contract start
+    balance = get_balance()
+    if balance is not None:
+        stats.balance_history.append({
+            "timestamp_utc": iso_utc(),
+            "balance": round(balance, 2),
+            "contract_id": condition_id
+        })
+        save_balance_history(stats)
 
     order_id    = None
     order_side  = None
@@ -708,12 +857,11 @@ async def trade_contract(
 
         await asyncio.sleep(0.5)
 
-    # Contract closed — wait for outcome then log PnL
+    # Contract closed — collect settlement info and add to pending outcomes (don't wait)
     if entered:
         await asyncio.sleep(60)  # wait ~1 min after close for settlement
         if dry_run:
             # Assume full fill at limit price for dry-run PnL simulation
-            order_info = {}
             filled  = float(size_shares)
             fill_px = float(limit_price or 0)
             status  = "dry_run"
@@ -727,80 +875,39 @@ async def trade_contract(
             fill_px = float(order_info.get("average_price") or limit_price or 0)
             status  = str(order_info.get("status", "unknown"))
 
-        # Try to get official outcome from Gamma API (retry up to 10 times, 60s apart = ~10 min)
-        official_outcome = None
-        for attempt in range(10):
-            try:
-                async with httpx.AsyncClient(timeout=15) as http:
-                    r = await http.get("https://gamma-api.polymarket.com/markets",
-                                       params={"condition_id": condition_id})
-                    if r.status_code == 200:
-                        data = r.json()
-                        if not data:
-                            log(f"{market_slug}: Gamma API returned empty (attempt {attempt+1}/10)")
-                            continue
-                        market = data[0]
-                        resolved = market.get("resolved")
-                        # Check if market is resolved
-                        if resolved:
-                            # Find up/down token prices
-                            for token in market.get("tokens", []):
-                                outcome_str = token.get("outcome", "").lower()
-                                price_val = float(token.get("price") or 0)
-                                if outcome_str in ("yes", "up") and price_val >= 0.95:
-                                    official_outcome = 1
-                                    break
-                                elif outcome_str in ("no", "down") and price_val >= 0.95:
-                                    official_outcome = 0
-                                    break
-                        else:
-                            # Market not yet marked resolved
-                            pass
-                    else:
-                        log(f"{market_slug}: Gamma API {r.status_code} (attempt {attempt+1}/10)")
-            except Exception as e:
-                log(f"{market_slug}: outcome fetch error: {type(e).__name__}: {str(e)[:80]} (attempt {attempt+1}/10)")
-            if official_outcome is not None:
-                break
-            if attempt < 9:
-                log(f"{market_slug}: outcome not yet available — retrying in 60s")
-                await asyncio.sleep(60)
-
-        if filled > 0 and official_outcome is not None:
-            # Compute net PnL
-            if order_side == "YES":
-                gross = (1.0 - fill_px) * official_outcome + (-fill_px) * (1 - official_outcome)
-            else:
-                gross = (1.0 - fill_px) * (1 - official_outcome) + (-fill_px) * official_outcome
-            fee   = math.ceil(0.07 * fill_px * (1 - fill_px) * 100) / 100 + MAKER_FEE
-            net_pnl_per = gross - fee
-            net_pnl_total = net_pnl_per * filled
-            stats.pnl_realized += net_pnl_total
-            stats.trades_filled += 1
-            correct = (order_side == "YES" and official_outcome == 1) or \
-                      (order_side == "NO"  and official_outcome == 0)
-            log(f"{market_slug}: SETTLED  filled={filled:.1f}  outcome={'Up' if official_outcome else 'Down'}  "
-                f"correct={correct}  pnl={net_pnl_total:+.4f}  cumulative={stats.pnl_realized:+.4f}")
-        elif filled == 0:
-            log(f"{market_slug}: order expired unfilled (status={status})")
+        if filled > 0:
+            # Trade was filled — add to pending outcomes for later retrieval
+            pending_outcomes[condition_id] = {
+                "timestamp_utc": iso_utc(),
+                "condition_id": condition_id,
+                "market_slug": market_slug,
+                "close_time_utc": iso_utc(close_dt),
+                "seconds_to_close_at_entry": secs_to_close,
+                "up_mid": book.up_mid,
+                "up_ask": book.best_ask,
+                "down_ask": book.best_bid,
+                "hf_ret_60s": 0,
+                "p_up_model": 0,
+                "ev_yes": 0,
+                "ev_no": 0,
+                "order_side": order_side,
+                "token_id": token_id,
+                "limit_price": limit_price,
+                "filled": filled,
+                "fill_price": fill_px,
+                "order_id": order_id,
+                "status": status,
+                "dry_run": dry_run,
+                "attempts": 0,
+                "official_outcome": None,
+            }
+            # Will be resolved by retry_pending_outcomes() in main_loop
+            log(f"{market_slug}: added to pending outcomes (will retry for ~10 min)")
         else:
-            log(f"{market_slug}: filled={filled:.1f} but outcome unknown yet")
+            log(f"{market_slug}: order expired unfilled (status={status})")
 
         stats.open_position = None
-
-        log_trade({
-            "timestamp_utc": iso_utc(),
-            "event": "settled",
-            "condition_id": condition_id,
-            "market_slug": market_slug,
-            "order_status": status,
-            "fill_price": fill_px,
-            "filled_shares": filled,
-            "official_outcome": official_outcome,
-            "net_pnl": round(stats.pnl_realized, 6),
-        })
-
-    update_live_json(stats.to_dict())
+        update_live_json(stats.to_dict())
 
 
 async def run_heartbeat() -> None:
@@ -832,9 +939,14 @@ async def main_loop(*, dry_run: bool, size_shares: float) -> None:
     seen_conditions: set[str] = set()
     current_book_task: asyncio.Task | None = None
     current_condition: str = ""
+    pending_outcomes: dict[str, dict] = {}  # Track unsettled trades
 
     while True:
         try:
+            # Retry outcome fetches for previously settled contracts (non-blocking)
+            if pending_outcomes:
+                await retry_pending_outcomes(pending_outcomes, stats)
+
             log("Searching for active XRP 5m market…", overwrite_searching=True)
             # Fresh client each iteration — avoids stale connection pool hangs
             async with httpx.AsyncClient(timeout=12) as http:
@@ -882,7 +994,7 @@ async def main_loop(*, dry_run: bool, size_shares: float) -> None:
                 current_condition = condition_id
                 await asyncio.sleep(1)  # let book populate
 
-            await trade_contract(market, clob_info, book, spot, bundle, stats,
+            await trade_contract(market, clob_info, book, spot, bundle, stats, pending_outcomes,
                                  dry_run=dry_run, size_shares=size_shares)
             seen_conditions.add(condition_id)
             update_live_json(stats.to_dict())
