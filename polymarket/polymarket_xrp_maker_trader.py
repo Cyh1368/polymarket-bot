@@ -727,23 +727,28 @@ async def trade_contract(
             fill_px = float(order_info.get("average_price") or limit_price or 0)
             status  = str(order_info.get("status", "unknown"))
 
-        # Try to get official outcome from CLOB trades (retry up to 3 times, 60s apart)
+        # Try to get official outcome from Gamma API (retry up to 3 times, 60s apart)
         official_outcome = None
         for attempt in range(3):
             try:
-                async with httpx.AsyncClient() as http:
-                    r = await http.get(f"{CLOB_BASE_URL}/data/trades",
-                                       params={"market": condition_id, "taker_only": "false"},
-                                       timeout=10)
-                    if r.status_code == 200:
-                        trades_data = r.json()
-                        for t in (trades_data.get("data") or trades_data or []):
-                            price_val = float(t.get("price") or 0)
-                            if price_val >= 0.99:
-                                official_outcome = 1
-                            elif price_val <= 0.01:
-                                official_outcome = 0
-            except Exception:
+                async with httpx.AsyncClient(timeout=15) as http:
+                    r = await http.get("https://gamma-api.polymarket.com/markets",
+                                       params={"condition_id": condition_id})
+                    if r.status_code == 200 and r.json():
+                        market = r.json()[0]
+                        # Check if market is resolved
+                        if market.get("resolved"):
+                            # Find up/down token prices
+                            for token in market.get("tokens", []):
+                                outcome_str = token.get("outcome", "").lower()
+                                price_val = float(token.get("price") or 0)
+                                if outcome_str in ("yes", "up") and price_val >= 0.95:
+                                    official_outcome = 1
+                                    break
+                                elif outcome_str in ("no", "down") and price_val >= 0.95:
+                                    official_outcome = 0
+                                    break
+            except Exception as e:
                 pass
             if official_outcome is not None:
                 break
