@@ -106,7 +106,7 @@ def compute_stats(trades: list[dict]) -> dict:
 
 @app.route("/log")
 def get_log() -> Response:
-    n = int(request.args.get("n", 300))
+    n = min(int(request.args.get("n", 400)), 400)
     return jsonify({"lines": load_log_tail(n)})
 
 
@@ -390,7 +390,7 @@ function updateStats(data) {
 async function poll() {
   try {
     const [logRes, statsRes] = await Promise.all([
-      fetch('/log?n=300'), fetch('/stats')
+      fetch('/log?n=400'), fetch('/stats')
     ]);
     const logData   = await logRes.json();
     const statsData = await statsRes.json();

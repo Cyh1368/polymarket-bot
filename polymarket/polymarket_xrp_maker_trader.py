@@ -95,11 +95,38 @@ TRADE_FIELDS = [
 _log_file: Any = None
 _trades_writer: Any = None
 _trades_file: Any = None
+_SEARCHING_PREFIX = "Searching for active XRP 5m market"
 
 
-def log(msg: str) -> None:
+def _erase_last_searching_line() -> None:
+    """If the last line in the log file is a 'Searching…' line, remove it."""
+    if not _log_file:
+        return
+    try:
+        pos = _log_file.seek(0, 2)          # go to end
+        if pos == 0:
+            return
+        # Read up to 256 bytes from end to find last newline
+        read_back = min(pos, 256)
+        _log_file.seek(pos - read_back)
+        chunk = _log_file.read(read_back)
+        lines = chunk.split(b"\n") if isinstance(chunk, bytes) else chunk.encode().split(b"\n")
+        # Last element after split is "" (trailing newline), second-to-last is the last line
+        last_line = (lines[-2] if len(lines) >= 2 else lines[-1]).decode("utf-8", errors="replace")
+        if _SEARCHING_PREFIX in last_line:
+            # Truncate to remove that line (+1 for its newline)
+            new_pos = pos - len(last_line.encode()) - 1
+            _log_file.truncate(max(0, new_pos))
+            _log_file.seek(0, 2)
+    except Exception:
+        pass
+
+
+def log(msg: str, *, overwrite_searching: bool = False) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     line = f"{ts} {msg}"
+    if overwrite_searching and _log_file:
+        _erase_last_searching_line()
     print(line, flush=True)
     if _log_file:
         _log_file.write(line + "\n")
@@ -577,6 +604,7 @@ async def trade_contract(
     order_side  = None
     limit_price = None
     entered     = False
+    last_pmid_log = 0.0  # track last p_mid log time
 
     while True:
         now_s = time.time()
@@ -585,6 +613,13 @@ async def trade_contract(
         if secs_to_close < -30:
             # Contract well past close — done
             break
+
+        # ── Periodic p_mid log (every 60s while watching) ──
+        if not entered and now_s - last_pmid_log >= 60 and book.updated_at > 0:
+            async with book.lock:
+                um = book.up_mid
+            log(f"{market_slug} T={secs_to_close:.0f}s  p_mid={um:.3f}")
+            last_pmid_log = now_s
 
         # ── Cancel window: T < CANCEL_AT and we have an open order ──
         if secs_to_close < CANCEL_AT and order_id and not entered:
@@ -785,7 +820,7 @@ async def main_loop(*, dry_run: bool, size_shares: float) -> None:
 
     while True:
         try:
-            log("Searching for active XRP 5m market…")
+            log("Searching for active XRP 5m market…", overwrite_searching=True)
             # Fresh client each iteration — avoids stale connection pool hangs
             async with httpx.AsyncClient(timeout=12) as http:
                 market = await asyncio.wait_for(find_active_market(http), timeout=30)
