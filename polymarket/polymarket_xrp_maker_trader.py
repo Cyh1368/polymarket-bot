@@ -727,17 +727,22 @@ async def trade_contract(
             fill_px = float(order_info.get("average_price") or limit_price or 0)
             status  = str(order_info.get("status", "unknown"))
 
-        # Try to get official outcome from Gamma API (retry up to 3 times, 60s apart)
+        # Try to get official outcome from Gamma API (retry up to 10 times, 60s apart = ~10 min)
         official_outcome = None
-        for attempt in range(3):
+        for attempt in range(10):
             try:
                 async with httpx.AsyncClient(timeout=15) as http:
                     r = await http.get("https://gamma-api.polymarket.com/markets",
                                        params={"condition_id": condition_id})
-                    if r.status_code == 200 and r.json():
-                        market = r.json()[0]
+                    if r.status_code == 200:
+                        data = r.json()
+                        if not data:
+                            log(f"{market_slug}: Gamma API returned empty (attempt {attempt+1}/10)")
+                            continue
+                        market = data[0]
+                        resolved = market.get("resolved")
                         # Check if market is resolved
-                        if market.get("resolved"):
+                        if resolved:
                             # Find up/down token prices
                             for token in market.get("tokens", []):
                                 outcome_str = token.get("outcome", "").lower()
@@ -748,11 +753,16 @@ async def trade_contract(
                                 elif outcome_str in ("no", "down") and price_val >= 0.95:
                                     official_outcome = 0
                                     break
+                        else:
+                            # Market not yet marked resolved
+                            pass
+                    else:
+                        log(f"{market_slug}: Gamma API {r.status_code} (attempt {attempt+1}/10)")
             except Exception as e:
-                pass
+                log(f"{market_slug}: outcome fetch error: {type(e).__name__}: {str(e)[:80]} (attempt {attempt+1}/10)")
             if official_outcome is not None:
                 break
-            if attempt < 2:
+            if attempt < 9:
                 log(f"{market_slug}: outcome not yet available — retrying in 60s")
                 await asyncio.sleep(60)
 
